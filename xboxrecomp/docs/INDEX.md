@@ -22,7 +22,7 @@ One per stage, in the order you run them.
 - [Step 3: Function Identification](pipeline/03-function-id.md)
 - [Step 4: x86 to C Lifting](pipeline/04-lifting.md) — including jump tables the pattern match misses, and privileged registers
 - [Step 5: Building the Runtime](pipeline/05-runtime.md) — manual overrides (replace, don't wrap), and `RECOMP_ABI_CHECK` wiring
-- [Step 6: Iterative Debugging](pipeline/06-debugging.md) — including the ABI checker's standing reports, and guest registers in cdb
+- [Step 6: Iterative Debugging](pipeline/06-debugging.md) — hangs by section, freezes, vital signs, the ABI checker's standing reports
 
 ## Technical Deep Dives
 
@@ -31,20 +31,21 @@ One per stage, in the order you run them.
 - [The Register Model](technical/register-model.md) — Why global registers work and how the stack is simulated
 - [Indirect Call Dispatch](technical/indirect-calls.md) — The RECOMP_ICALL problem and how to solve it
 - [SEH and Exception Handling](technical/seh-handling.md) — Structured exception handling in recompiled code
-- [Recovering a Split Function](technical/function-coalescence.md) — When the detector splits one function at an interior branch target: `--coalesce-functions`
 - [MSVC RTTI Recovery](technical/rtti-recovery.md) — Class names, vtables and virtual methods from a title's RTTI, as seeds for disassembly
 - [Conformance Testing](technical/conformance-testing.md) — Lifted C against the real CPU, the oracle that cannot be wrong
 
 ### Runtime
 
-- [Memory Layout Reproduction](technical/memory-layout.md) — CreateFileMapping, mirror views, and address space tricks
-- [Xbox Kernel Replacement](technical/kernel-replacement.md) — Mapping Xbox kernel ordinals to Win32, and the gotchas
+- [Memory Layout Reproduction](technical/memory-layout.md) — CreateFileMapping, mirror views, the heap, memory above RAM, the contiguous arena
+- [Xbox Kernel Replacement](technical/kernel-replacement.md) — Kernel ordinals to Win32; threads, priorities, suspend and IRQL; USB
+- [APU Audio](technical/apu-audio.md) — From a reachable APU to a playable one: output rate, the APU interrupt, physical addresses, pitch and pacing
 
 ### Graphics
 
 - [D3D8 to D3D11 Translation](technical/d3d-translation.md) — Bridging Xbox's graphics API to modern DirectX
 - [NV2A Shader Translation](technical/nv2a-shaders.md) — Register combiners and vertex microcode to HLSL
-- [D3D8LTCG Device Context](technical/d3d8ltcg-device-context.md) — Device field map, PB ring management, stub calling conventions
+- [D3D8LTCG Device Context](technical/d3d8ltcg-device-context.md) — Device field map, PB ring management, the fence wait in every XDK D3D title
+- [Pushbuffer Executor](technical/pushbuffer-executor.md) — Executing a statically linked XDK D3D title's pushbuffer: DMA-engine walk, kickoff flags, transforms, vertex programs, render back ends
 
 ### Microsoft's own recompiler
 
@@ -94,13 +95,25 @@ Where to look when a title does something and says nothing about why.
 |---|---|
 | exits cleanly after two kernel calls | a thread start routine with no dispatch entry: `tools/seed_from_log`, [Functions the Detector Misses](pipeline/02-disassembly.md#functions-the-detector-misses) |
 | logs `[ICALL] Failed to resolve VA` between two functions | [Reached only through a pointer](pipeline/02-disassembly.md#reached-only-through-a-pointer) |
-| splits one function at an interior branch target | [Recovering a Split Function](technical/function-coalescence.md) |
 | logs it for an address *inside* a function | [Back-to-back functions, merged](pipeline/02-disassembly.md#back-to-back-functions-merged), or a [jump table the lifter missed](pipeline/04-lifting.md#tables-the-pattern-match-misses) |
 | starts no CRT thread at all | [A no-return call swallows the next function](pipeline/02-disassembly.md#a-no-return-call-swallows-the-next-function) |
 | crashes on its first movie | [Library sections with no functions at all](pipeline/02-disassembly.md#library-sections-with-no-functions-at-all) |
 | fails to build on `dr0`–`dr7` | [Privileged Registers](pipeline/04-lifting.md#privileged-registers) |
 | ignores an override in `recomp_manual.c` | [Replace, Don't Wrap](pipeline/05-runtime.md#replace-dont-wrap), [Registers in recomp_manual.c](pipeline/05-runtime.md#registers-in-recomp_manualc) |
+| hangs with a stack in `D3D` or `DSOUND` | [Game Hangs](pipeline/06-debugging.md#game-hangs-infinite-loop) |
+| freezes every thread at once | [Whole-Process Freezes](pipeline/06-debugging.md#whole-process-freezes) |
+| loops forever asking for `0x04000000` | [Memory Above RAM](technical/memory-layout.md#memory-above-ram) |
+| runs out of heap after a few cutscenes | [Dynamic Heap](technical/memory-layout.md#dynamic-heap) |
 | duplicates `NtCurrentThread()` forever | [Pseudo-Handles Are Negative](technical/kernel-replacement.md#pseudo-handles-are-negative) |
-| runs out of memory as the CRT heap grows | [The Heap Grows Only on 487](technical/kernel-replacement.md#the-heap-grows-only-on-487) |
 | slows to 1 FPS some minutes into a level | [Counters Outlive 32 Bits](technical/kernel-replacement.md#counters-outlive-32-bits) |
+| stalls for seconds after creating a thread | [Threads start when their creator lets them](technical/kernel-replacement.md#threads-start-when-their-creator-lets-them) |
+| never sees a controller | [Titles That Drive USB Themselves](technical/kernel-replacement.md#titles-that-drive-usb-themselves) |
+| draws nothing, or reports `draws 0` | [Pushbuffer Executor](technical/pushbuffer-executor.md) |
+| draws 3D as spikes from one point | [Primitives, Quads, Vertex Programs, Index Width](technical/pushbuffer-executor.md#primitives-quads-vertex-programs-index-width) |
+| draws black ground under a top-down camera | [Vertices Behind the Camera](technical/pushbuffer-executor.md#vertices-behind-the-camera) |
+| draws some objects black or wrongly blended | [When Something Does Read the Pushbuffer](technical/d3d8ltcg-device-context.md#when-something-does-read-the-pushbuffer) |
+| takes exactly 250 ms, 500 ms or 1 s per frame | the kickoff in [When Something Does Read the Pushbuffer](technical/d3d8ltcg-device-context.md#when-something-does-read-the-pushbuffer) |
+| looks frozen on a loading screen | [Kickoffs Must Not Wait for a Frame](technical/pushbuffer-executor.md#kickoffs-must-not-wait-for-a-frame) |
+| is silent | [The APU's Interrupt Was a Stub](technical/apu-audio.md#the-apus-interrupt-was-a-stub), [Sound Data Read From the Wrong Memory](technical/apu-audio.md#sound-data-read-from-the-wrong-memory) |
+| sounds like chipmunks, or crackles | [Pitch](technical/apu-audio.md#pitch), [Pacing](technical/apu-audio.md#pacing) |
 | reports ABI violations in CRT helpers | [Reports RECOMP_ABI_CHECK Always Gives](pipeline/06-debugging.md#reports-recomp_abi_check-always-gives) |

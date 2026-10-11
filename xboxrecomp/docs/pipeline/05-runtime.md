@@ -125,25 +125,13 @@ This makes GPU spin-waits return immediately (reading 0), which is correct since
 
 ### Heap Allocator
 
-The runtime provides a bump allocator for Xbox heap allocations (MmAllocateContiguousMemory, etc.):
-
-```c
-#define XBOX_HEAP_BASE  0x00880000   // above stack
-#define XBOX_HEAP_SIZE  (~55.5 MB)   // fills remaining 64 MB
-
-static uint32_t heap_cursor = XBOX_HEAP_BASE;
-
-uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment) {
-    heap_cursor = (heap_cursor + alignment - 1) & ~(alignment - 1);
-    uint32_t result = heap_cursor;
-    heap_cursor += size;
-    if (heap_cursor >= XBOX_HEAP_BASE + XBOX_HEAP_SIZE)
-        return 0;  // out of memory
-    return result;
-}
-```
-
-A bump allocator is sufficient because Xbox games rarely free memory -- they allocate during loading and hold everything for the level's duration.
+The runtime serves Xbox heap allocations (`MmAllocateContiguousMemory`,
+`NtAllocateVirtualMemory`, the CRT heap) from the RAM above the stack, starting
+at `XBOX_HEAP_BASE` (`0x00F80000`). It began as a bump allocator and is now a
+block table that frees, coalesces and reuses, because middleware churns even
+where the title itself does not. Contiguous memory comes from a separate
+arena, and addresses above RAM from a page tracker that honours a requested
+base. See [Memory Layout: Dynamic Heap](../technical/memory-layout.md#dynamic-heap).
 
 ## Kernel Shim
 
