@@ -1236,7 +1236,7 @@ static int s_cache_off = -1;
 static const char *cache_dir(void)
 {
 #if defined(__SWITCH__)
-    return "sdmc:/switch/nfsu2x/";
+    return "sdmc:/switch/" XBOXRECOMP_APP_NAME "/";
 #else
     return "";
 #endif
@@ -1966,7 +1966,7 @@ static int ready(void)
             layers[nlayers++] = "VK_LAYER_KHRONOS_validation";
     }
 #endif
-    ai.pApplicationName = "nfsu2x";
+    ai.pApplicationName = XBOXRECOMP_APP_NAME;
     ai.pEngineName = "xboxrecomp";
     ai.apiVersion = VK_API_VERSION_1_3;
     ici.pApplicationInfo = &ai;

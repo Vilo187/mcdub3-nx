@@ -27,6 +27,12 @@ add_compile_definitions(
 # ── Runtime Libraries ─────────────────────────────────────────
 
 # Platform: Win32/NT type vocabulary + POSIX implementation of generic
+# Per-port application name. On the Switch the renderers keep their caches in
+# sdmc:/switch/<name>/; Vulkan also reports it as the application name.
+set(XBOXRECOMP_APP_NAME "xboxrecomp" CACHE STRING
+    "Application name (Switch data directory sdmc:/switch/<name>/)")
+add_compile_definitions(XBOXRECOMP_APP_NAME="${XBOXRECOMP_APP_NAME}")
+
 # Win32 host primitives. Carries no Xbox semantics; provides the foundation
 # the kernel HLE and the graphics/audio/input layers build on.
 add_subdirectory(src/platform)

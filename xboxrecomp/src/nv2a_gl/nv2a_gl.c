@@ -863,7 +863,7 @@ static const char *prog_cache_path(void)
     if (e && *e)
         return e;
 #if defined(__SWITCH__)
-    return "sdmc:/switch/nfsu2x/progcache.bin";
+    return "sdmc:/switch/" XBOXRECOMP_APP_NAME "/progcache.bin";
 #else
     return "progcache.bin";
 #endif
