@@ -369,12 +369,23 @@ static inline void bql_unlock(void) {}
 #define qemu_mutex_unlock_iothread() bql_unlock()
 
 /* Timer */
+
+/* count * unit / freq without the 64-bit overflow of doing it in that order.
+ * POSIX hosts count QPC in nanoseconds since boot, so count * 1e9 wraps after
+ * 9 s of uptime and count * 1e6 after 2.6 hours (Windows' 10 MHz counter:
+ * 15 minutes and 11 days). Past that the clocks built on it returned garbage:
+ * the APU's frame pacing -- and with it DirectSound's play cursor, which
+ * times the movies -- and the XGSCNT sample counter. */
+static inline int64_t qemu_qpc_scale(int64_t count, int64_t freq, int64_t unit) {
+    return (count / freq) * unit + (count % freq) * unit / freq;
+}
+
 static inline int64_t qemu_clock_get_ns(int type) {
     (void)type;
     LARGE_INTEGER freq, count;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&count);
-    return (int64_t)(count.QuadPart * 1000000000LL / freq.QuadPart);
+    return qemu_qpc_scale(count.QuadPart, freq.QuadPart, 1000000000LL);
 }
 #define QEMU_CLOCK_VIRTUAL 0
 
