@@ -14,7 +14,7 @@ bash "$XBOXRECOMP_DIR/tools/linux/install_deps.sh"
 echo "== 2/4 tools: ninja, gdb, Vulkan (lavapipe for headless runs), rsync, python venv"
 sudo apt-get install -y ninja-build gdb rsync python3-venv python3-pip \
     libvulkan-dev vulkan-tools mesa-vulkan-drivers glslang-dev glslang-tools \
-    spirv-tools xvfb
+    spirv-tools xvfb mesa-utils
 
 echo "== 3/4 Python venv with capstone for the lift pipeline ($MC3_WORK/venv)"
 mkdir -p "$MC3_WORK"
@@ -28,7 +28,7 @@ grep -q 'mc3-work/venv' "$HOME/.bashrc" 2>/dev/null || {
 echo "== 4/4 devkitPro (devkitA64 + libnx + switch-sdl2 + switch-mesa)"
 if [ ! -x /opt/devkitpro/pacman/bin/pacman ] && ! command -v dkp-pacman >/dev/null; then
     # devkitPro's own installer; it picks the package for this CPU.
-    # If it refuses on ARM64, see docs/dev-environment.md ("devkitPro on ARM64").
+    # ARM64 is supported; if this fails, see docs/dev-environment.md.
     wget -q https://apt.devkitpro.org/install-devkitpro-pacman -O /tmp/install-devkitpro-pacman
     chmod +x /tmp/install-devkitpro-pacman
     sudo /tmp/install-devkitpro-pacman

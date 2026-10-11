@@ -5,8 +5,12 @@ the windowed Linux build with gdb, and Switch cross-builds. Why: [ADR 0003](deci
 
 ## Create the VM
 
-1. Install [UTM](https://mac.getutm.app) and download **Ubuntu 24.04 Desktop, ARM64**.
-2. New VM → **Virtualize** (not Emulate) → Linux → the ISO.
+1. Install [UTM](https://mac.getutm.app) and download an **Ubuntu LTS Desktop
+   ISO for ARM64** (24.04 or 26.04). If you only find the Server ISO for ARM64,
+   install that and add a desktop: `sudo apt install ubuntu-desktop-minimal`.
+2. New VM → **Virtualize** (not Emulate) → Linux → the ISO. Leave
+   **"Use Apple Virtualization" unchecked**: the QEMU backend is the one with
+   GPU-accelerated OpenGL for Linux guests.
    - **Memory: 10 GB** (16 GB Mac). Compiling the lifted C takes ~1.5 GB per
      parallel job; the scripts size `JOBS` from free memory.
    - **CPU: 6–8 cores.**
@@ -51,10 +55,26 @@ and `*.iso` are gitignored anyway.
 
 ## devkitPro on ARM64
 
-`vm/setup-ubuntu.sh` runs devkitPro's own installer. If it has no package for
-ARM64 Linux at the time you run it, use devkitPro's Docker image for Switch
-builds only (`devkitpro/devkita64`, x86-64, runs emulated and slower), or build
-the Switch NRO on any x86-64 Linux machine. The Linux debug loop is unaffected.
+ARM64 Linux is a supported devkitPro host: their official `devkitpro/devkita64`
+Docker image is built for both linux/amd64 and linux/arm64. `vm/setup-ubuntu.sh`
+runs devkitPro's own installer; if that ever fails, build the Switch NRO inside
+`docker run -v ~/mc3-work:/work -v ~/mcdub3-sw:/src devkitpro/devkita64`, which
+runs natively on the VM. The Linux debug loop is unaffected either way.
+
+## Graphics in the VM
+
+The window needs OpenGL 3.3 core (`nv2a_gl`). UTM's accelerated display
+(virtio-gpu-gl, QEMU backend) passes GL through to the Mac's GPU. Check with
+`glxinfo -B` (package `mesa-utils`). If it reports less than 3.3, or rendering
+is broken, rule the VM out first:
+
+- `LIBGL_ALWAYS_SOFTWARE=1 tools/run_linux.sh`: Mesa llvmpipe, GL 4.5 on the
+  CPU. Slow, but a correct reference renderer.
+- `VULKAN=1`: lavapipe (Vulkan on the CPU). There is no GPU Vulkan in the VM;
+  that is fine, as the Switch's Vulkan (NVK) gets tested on the console.
+
+`getconf PAGESIZE` should say 4096 (Ubuntu's generic ARM64 kernel; the Switch
+uses 4 KB pages too). The Xbox memory mirrors assume 4 KB pages.
 
 ## Sending builds to the Switch
 
