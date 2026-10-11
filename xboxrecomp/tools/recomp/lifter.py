@@ -424,7 +424,7 @@ _EFLAGS_PRESERVE = frozenset({
     "loop", "loope", "loopne",
     # pushfd READS the flags and leaves them alone, so it belongs here.
     # popfd does NOT -- see _FLAGS_UNDEFINED.
-    "pushfd", "pushal",
+    "pushfd", "pushal", "popal",
     "sgdt", "ljmp", "sfence",
     # SSE scalar float
     "movss", "movsd",
@@ -489,6 +489,26 @@ def _has_xmm_operand(ops):
     return any(op is not None and getattr(op, "type", None) == "reg"
                and (getattr(op, "reg", None) or "").startswith("xmm")
                for op in (ops or ()))
+
+
+SSE_COMPARES = ("comiss", "comisd", "ucomiss", "ucomisd")
+
+
+def _lahf_value(flag_setter, flag_ops):
+    """C expression for the byte LAHF loads, or None if a flag is unknown."""
+    if flag_setter in SSE_COMPARES:
+        # ZF, PF, CF = 1,1,1 unordered; 0,0,1 below; 1,0,0 equal; 0,0,0 above.
+        # SF (and OF, AF) are cleared.
+        un = "(_fca != _fca || _fcb != _fcb)"
+        return (f"(uint8_t)(0x02 | ((_fca == _fcb || {un}) ? 0x40 : 0)"
+                f" | ({un} ? 0x04 : 0) | ((_fca < _fcb || {un}) ? 0x01 : 0))")
+    bits = []
+    for jcc, bit in (("js", 0x80), ("je", 0x40), ("jp", 0x04), ("jb", 0x01)):
+        cond = _make_condition(jcc, flag_setter, flag_ops)
+        if not cond:
+            return None
+        bits.append(f"(({cond[0]}) ? 0x{bit:02X} : 0)")
+    return "(uint8_t)(0x02 | " + " | ".join(bits) + ")"
 
 
 def _make_condition(jcc, flag_setter, flag_ops):
@@ -1018,7 +1038,8 @@ def _emit_cond_goto(cond_expr, jcc, desc, target, lifter):
     if lifter and lifter._is_external_target(target):
         # Conditional tail call: same frame bridge as the unconditional tail
         # jmp in _lift_jmp, applied only on the taken path.
-        if target in lifter.manual_functions:
+        if (target in lifter.manual_functions
+                and target not in lifter.wrapped_functions):
             return (f"if ({cond_expr}) {{ g_seh_ebp = ebp; "
                     f"RECOMP_ITAIL(0x{target:08X}u); return; }}"
                     f" /* {jcc}: {desc}, manual tail */")
@@ -1268,6 +1289,11 @@ class Lifter:
         self.abi_db = abi_db or {}
         self.xbe_data = xbe_data
         self.manual_functions = set(manual_functions or ())
+        # Wrapped functions: the project defines sub_X itself around the
+        # generated sub_X_gen. Their callers call sub_X directly -- it is a
+        # plain symbol -- instead of resolving it through the dispatch
+        # table on every call like a declare-only manual function.
+        self.wrapped_functions = set()
         self._fp_top = 0  # FPU stack top index
         self.func_start = 0  # Set per-function by translator
         self.func_end = 0
@@ -1329,7 +1355,9 @@ class Lifter:
         function any naming pass had touched. Labels still cover call targets
         that are not known function starts.
         """
-        if addr in self.func_db:
+        if addr in self.wrapped_functions:
+            name = f"sub_{addr:08X}"
+        elif addr in self.func_db:
             name = self.func_db[addr].get("name", f"sub_{addr:08X}")
         elif addr in self.label_db:
             name = self.label_db[addr]
@@ -1372,6 +1400,20 @@ class Lifter:
             return self._lift_push(insn, ops)
         if m == "pop":
             return self._lift_pop(insn, ops)
+        # pushad/popad: all eight registers. popad skips the saved esp.
+        # These were RECOMP_UNIMPL, so a function bracketed by them handed
+        # its scratch registers back to the caller: EA's resampler
+        # (0x27CCF0) returned with its position/fraction/pointer registers,
+        # and the music mixer lost the resampling phase every 512 samples
+        # (hiss, music 0.2% slow).
+        if m in ("pushal", "pushad"):
+            return ["{ uint32_t _pa_esp = esp; PUSH32(esp, eax); PUSH32(esp, ecx);"
+                    " PUSH32(esp, edx); PUSH32(esp, ebx); PUSH32(esp, _pa_esp);"
+                    " PUSH32(esp, ebp); PUSH32(esp, esi); PUSH32(esp, edi); } /* pushal */"]
+        if m in ("popal", "popad"):
+            return ["POP32(esp, edi); POP32(esp, esi); POP32(esp, ebp); esp += 4;"
+                    " POP32(esp, ebx); POP32(esp, edx); POP32(esp, ecx); POP32(esp, eax);"
+                    " /* popal */"]
 
         # ── Arithmetic ──
         if m in ("add", "sub", "and", "or", "xor"):
@@ -2320,7 +2362,8 @@ class Lifter:
                     "if (!recomp_guest_longjmp(MEM32(esp), MEM32(esp + 4)))"
                     f" {{ PUSH32(esp, 0x{ret_va:08X}u); {name}(); }}"
                     f" /* longjmp 0x{insn.call_target:08X} */")
-            elif insn.call_target in self.manual_functions:
+            elif (insn.call_target in self.manual_functions
+                    and insn.call_target not in self.wrapped_functions):
                 # A function the project replaces by hand. recomp_lookup_manual
                 # is consulted on indirect calls, and without this a direct
                 # caller went straight to the generated body and bypassed the
@@ -2519,7 +2562,8 @@ class Lifter:
             if self._is_external_target(insn.jump_target):
                 # Tail call - no return address push (reuses current frame's)
                 # Bridge ebp so the target function can inherit our frame pointer.
-                if insn.jump_target in self.manual_functions:
+                if (insn.jump_target in self.manual_functions
+                        and insn.jump_target not in self.wrapped_functions):
                     tail = (
                         f"g_seh_ebp = ebp; "
                         f"RECOMP_ITAIL(0x{insn.jump_target:08X}u); return; "
@@ -3771,6 +3815,18 @@ def lift_basic_block(lifter, bb, flag_state=None):
             stmts.extend(lifter._lift_loop(curr, zf_expr))
             i += 1
             continue
+
+        # LAHF: AH = SF:ZF:0:AF:0:PF:1:CF. It lifted to a comment, so the
+        # compiler's float-compare idiom `ucomiss; lahf; test ah, 0x44; jnp`
+        # tested whatever AH held before -- NFSU2's audio engine decided its
+        # fades and pans with it. Built from the flags' owner where every bit
+        # has an expression; AF is left 0 (nothing tests it after a compare).
+        if curr.mnemonic == "lahf" and last_flag_setter:
+            ah = _lahf_value(last_flag_setter, last_flag_ops)
+            if ah:
+                stmts.append(f"SET_HI8(eax, {ah}); /* lahf */")
+                i += 1
+                continue
 
         # Check if this instruction uses flags (jcc, setcc, cmovcc)
         if curr.is_cond_jump and last_flag_setter:
