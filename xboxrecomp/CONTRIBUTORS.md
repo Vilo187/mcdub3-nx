@@ -677,6 +677,7 @@ nothing about it.
   DDS9 carries both forms, and returning the first match meant which one won
   depended on nothing but the lower address.
 
+<<<<<<< HEAD
 *v0.12.0 — twenty-four PRs (#90–#100, #102–#109, #118, #119, #122, #123, #125)*
 - **A join reached by `test X, X` and `cmp X, 0` inherited no flags (#122)** —
   the two leave every flag identical, but the snapshot reconstructs them
@@ -709,25 +710,32 @@ nothing about it.
   compared against hand-typed offsets instead of the header's constants, so the
   frame counter counted the wrong method, `WAIT_FOR_IDLE` was swallowed as a
   flip, and the real flip methods fell through to the unhandled path.
-
+=======
 ### BearddOddity — [@BearddOddity](https://github.com/BearddOddity)
 A bring-up batch on *X-Men Legends*, a title that links the XDK's own D3D,
-DirectSound and USB stack. Developed with Claude Code.
+DirectSound and USB stack. Almost every item was a wait on something the
+runtime was supposed to answer, and none of them said what it was waiting for.
+Developed with Claude Code.
 
-- **`XBOX_THREAD_LOCAL` tested `_WIN32`, not the compiler** — MinGW targets
-  Windows but is GCC, which ignores `__declspec(thread)` with only a warning,
-  so on that host every kernel thread-local was one process-wide variable.
-- **`NtCurrentThread()` widened as unsigned on x64** — `DuplicateHandle`
-  never recognised it, and the CRT retried forever.
-- **The kernel call counter wrapped after 2^31 calls** — and "log the first
-  N" became "log everything": about 1 FPS some minutes into a level.
-- **`STATUS_CONFLICTING_ADDRESSES` had no DOS error** — 487 is the only
-  answer on which the CRT heap tries another address when it grows.
-- **A short IN packet without bufferRounding is DATA UNDERRUN** — the OHCI
-  model reported success, and XAPI followed a dead TD link.
-- **Documented** — four ways function detection misses functions, lifter
-  gaps, template and build traps, the ABI checker's standing reports, two
-  Ghidra scripts for headless triage, and a documentation index by symptom.
+- **The pushbuffer executor draws a 3D level** — it walks the pushbuffer like
+  the DMA engine (JUMP, CALL/RETURN, ring wraps); primitive codes match
+  `nv2a_regs.h`, where every triangle strip had been a fan; quads, 32-bit
+  indices, vertex programs, the fixed-function transform, anti-aliased surfaces
+  and vertices behind the camera; and a render back-end interface.
+- **Every GPU kickoff waited for a whole frame** — the write-combine flush bit
+  was cleared by the thread that also draws. About sevenfold on frame rate.
+- **The APU plays** — its interrupt was a stub, it read physical addresses as
+  guest addresses, ignored pitch, spun on an empty voice, and the XAudio2 path
+  ran at four times real time. Output ends in a limiter below −6 dBFS.
+- **Threads, priorities and IRQL** — threads start when their creator yields,
+  KTHREADs exist (every priority change had failed silently), suspend waits for
+  a safe point, and IRQL at DISPATCH is enforced.
+- **Memory** — addresses above RAM honour a requested base, the CRT heap's
+  487, heap reuse that returns memory, and a contiguous arena that cannot be
+  mistaken for the image.
+- **Documented** — four ways function detection misses functions, lifter gaps,
+  template and build traps, and a documentation index by symptom.
+>>>>>>> pr-128
 
 ---
 

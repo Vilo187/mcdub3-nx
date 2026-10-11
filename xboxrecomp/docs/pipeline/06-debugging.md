@@ -295,6 +295,7 @@ void sub_001CFDD0(void) {  // NtFlushBuffersFile or push buffer wait
 ```
 Then add a stub in `recomp_manual.c` that returns immediately.
 
+<<<<<<< HEAD
 ### Runs, Never Draws a Frame
 
 **Symptom**: vblank and DPCs fire, threads run, nothing crashes, and no frame
@@ -322,6 +323,41 @@ Wreckless did exactly this and reached its main loop with no renderer set up.
 
 A shim that makes a wait return without making the thing it waits for happen
 usually moves the stall rather than fixing it. Find the probe that failed.
+=======
+That was the answer when nothing executed the pushbuffer. A title that links
+the XDK's own D3D and DirectSound hangs in more places, and most of them are a
+wait on something the runtime is supposed to answer. Set `RECOMP_WATCHDOG_SECS`
+and read the section the stack is in:
+
+| Stack in | Waiting for | See |
+|---|---|---|
+| `D3D`, under `Present`/`Swap` | GPU progress at `device + 0x30` | [D3D8LTCG: The Same Loop in Other Titles](../technical/d3d8ltcg-device-context.md#the-same-loop-in-other-titles) |
+| `D3D`, `CDevice::KickOff`, reading `nv2a + 0x100410` | the write-combine flush bit | [Pushbuffer Executor: Kickoffs](../technical/pushbuffer-executor.md#kickoffs-must-not-wait-for-a-frame) |
+| `DSOUND`, `KeStallExecutionProcessor` | the AC'97 codec | `RECOMP_AC97_READY` |
+| `DSOUND`, `MmGetPhysicalAddress` then a tight loop | the DSP command doorbell | `RECOMP_APU_DSP_ACK`, `apu_dsp.c` |
+
+A loop that *looks* frozen may be slow instead. Sample the main thread two or
+three times a few seconds apart (`cdb -p <pid> -c "~0kn 8; qd"`); if it is in
+the same polling loop most of the time and another thread is busy, the wait is
+being answered too late rather than never.
+
+### Whole-Process Freezes
+
+**Symptom**: every thread stops, no CPU use.
+
+**Cause**: a lock held by a thread that will not release it. A thread suspended
+inside a bridge call holding a bridge, heap or CRT lock
+([safe points](../technical/kernel-replacement.md#suspend-only-at-a-safe-point)),
+or a device thread spinning while holding its own lock
+([APU Audio](../technical/apu-audio.md#a-voice-with-nothing-to-play)).
+
+**Diagnosis**: every thread's stack, taken once. A title's own monitor can do
+this without a debugger: when no frame has been presented for 2 s, suspend each
+thread in turn, capture its context and walk its stack, resume it, and only
+then symbolise — symbolising while threads are suspended can deadlock on the
+very lock being diagnosed. One thread in `ZwSuspendThread` and the rest in
+`RtlEnterCriticalSection` is the suspend case.
+>>>>>>> pr-128
 
 ### Access Violation at 0x00000000
 
@@ -346,6 +382,29 @@ usually moves the stall rather than fixing it. Find the probe that failed.
 **Cause**: stack leak from failed ICALLs. Each failed indirect call leaks 4-16 bytes of simulated stack space. Over thousands of frames, the stack underflows.
 
 **Fix**: ensure all ICALL failure paths clean up the stack. Use `RECOMP_ICALL_SAFE` for stdcall callsites. Monitor `g_esp` trend.
+
+## Vital Signs
+
+A title that boots is not a title that plays. The runtime keeps counters a game
+project can poll once a second and print as one line, so a playthrough log says
+where it went wrong:
+
+| Getter | Returns |
+|---|---|
+| `xa2_get_stats(Xa2Stats *)` | blocks submitted and dropped, underruns, clipped samples, peak |
+| `apu_vp_get_stats(int *voices, float *peak)` | most voices active, VP mix peak |
+| `xbox_io_get_stats(uint64_t out[5], char *last, int n)` | opens, failed opens, reads, bytes, slowest read (µs); the last path opened |
+| `nv2a_pb_exec_get_stats(uint32_t out[4])` | batches drawn, batches skipped as untransformed, lit batches that came out black, triangles |
+| `nv2a_exec_busy_percent()` | pushbuffer executor load over the last second |
+
+Turning thresholds into event lines — fps below 40, any underrun or drop,
+clipping, a read slower than 100 ms, a burst of black lit batches — makes
+`grep "\[EVENT\]"` the first thing to run on a log. A frame gap over 100 ms
+is worth one more step: suspend the main thread once and name the function it
+is in.
+
+`RECOMP_KERNEL_LOG_BUDGET` sets how many kernel calls are logged (0 = none).
+Keep it small for long runs: logging is synchronous on stderr.
 
 ## Reports RECOMP_ABI_CHECK Always Gives
 
