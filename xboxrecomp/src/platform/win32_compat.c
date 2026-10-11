@@ -28,13 +28,25 @@
 #include <unistd.h>
 #include <sched.h>
 #include <fenv.h>
+#if defined(__SWITCH__)
+/* Horizon: no mmap. Memory is kernel objects mapped at chosen addresses
+ * (see "Virtual memory" below). Only the kernel headers are pulled in --
+ * the rest of libnx's names would collide with the Win32 vocabulary. */
+#include <switch/types.h>
+#include <switch/result.h>
+#include <switch/kernel/svc.h>
+#include <switch/kernel/virtmem.h>
+#include <switch/runtime/env.h>
+#include <malloc.h>
+#else
 #include <sys/mman.h>
+#endif
 #if defined(__APPLE__)
 #include <sys/sysctl.h>
 #include <sys/stat.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
-#else
+#elif !defined(__SWITCH__)
 #include <sys/sysinfo.h>
 #endif
 
@@ -55,6 +67,9 @@ LONG InterlockedIncrement(volatile LONG *p)        { return __atomic_add_fetch(p
 LONG InterlockedDecrement(volatile LONG *p)        { return __atomic_sub_fetch(p, 1, __ATOMIC_SEQ_CST); }
 LONG InterlockedExchange(volatile LONG *p, LONG v) { return __atomic_exchange_n(p, v, __ATOMIC_SEQ_CST); }
 LONG InterlockedExchangeAdd(volatile LONG *p, LONG v) { return __atomic_fetch_add(p, v, __ATOMIC_SEQ_CST); }
+/* Both return the original value, as Win32 does. */
+LONG InterlockedOr(volatile LONG *p, LONG v)          { return __atomic_fetch_or(p, v, __ATOMIC_SEQ_CST); }
+LONG InterlockedAnd(volatile LONG *p, LONG v)         { return __atomic_fetch_and(p, v, __ATOMIC_SEQ_CST); }
 
 LONG InterlockedCompareExchange(volatile LONG *p, LONG xchg, LONG cmp)
 {
@@ -284,6 +299,12 @@ typedef struct w32_object {
     LPTHREAD_START_ROUTINE start;
     LPVOID          start_param;
     int             priority;
+    int             host_rt;         /* host priority raised (host_priority_apply) */
+    int             host_base;       /* Linux: RT priority it started at */
+    volatile int    started;         /* Linux: o->thread is valid */
+#if defined(__SWITCH__)
+    Handle          nx_handle;       /* Horizon thread, once it runs */
+#endif
     PAPCFUNC        apc_func[W32_MAX_APC];
     ULONG_PTR       apc_data[W32_MAX_APC];
     int             apc_count;
@@ -292,6 +313,7 @@ typedef struct w32_object {
     int             timer_cancel;
     DWORD           timer_due;
     DWORD           timer_period;
+    uintptr_t       nx_view0;      /* Switch file mapping: its first view */
     WAITORTIMERCALLBACK timer_cb;
     PVOID           timer_param;
 
@@ -323,9 +345,91 @@ DWORD GetCurrentThreadId(void)
     return t_tid;
 }
 
+static w32_object *obj_from(HANDLE h);
+
+/* 0 for anything that is not a thread, as Win32 reports failure. */
+DWORD GetThreadId(HANDLE h)
+{
+    w32_object *o;
+
+    if (h == PSEUDO_CURRENT_THREAD)
+        return GetCurrentThreadId();
+    o = obj_from(h);
+    return (o && o->kind == K_THREAD) ? o->tid : 0;
+}
+
 DWORD GetCurrentProcessId(void) { return (DWORD)getpid(); }
 HANDLE GetCurrentThread(void)   { return t_self_obj ? (HANDLE)t_self_obj : PSEUDO_CURRENT_THREAD; }
 HANDLE GetCurrentProcess(void)  { return PSEUDO_CURRENT_PROCESS; }
+
+/* Registry of live objects.
+ *
+ * A HANDLE here is a w32_object pointer, and Win32 callers -- the kernel HLE
+ * above all -- pass values that are not handles at all: a guest dispatcher
+ * object's VA, a token from another table, a stale handle already closed.
+ * Windows answers those with ERROR_INVALID_HANDLE; dereferencing them faults.
+ * Every handle entry point resolves through obj_from(), which returns NULL for
+ * anything not registered here, so a bad handle fails the way it does on
+ * Windows instead of taking the process down. */
+#define W32_REG_SIZE 65536u            /* power of two */
+#define W32_REG_TOMB ((w32_object *)(uintptr_t)1)
+static w32_object     *s_reg[W32_REG_SIZE];
+static pthread_mutex_t s_reg_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static uint32_t reg_hash(const void *p)
+{
+    uintptr_t v = (uintptr_t)p >> 4;
+    return (uint32_t)((v * 0x9E3779B97F4A7C15ull) >> 40) & (W32_REG_SIZE - 1);
+}
+
+static void reg_add(w32_object *o)
+{
+    uint32_t i = reg_hash(o), n;
+    pthread_mutex_lock(&s_reg_lock);
+    for (n = 0; n < W32_REG_SIZE; n++, i = (i + 1) & (W32_REG_SIZE - 1)) {
+        if (!s_reg[i] || s_reg[i] == W32_REG_TOMB) {
+            s_reg[i] = o;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&s_reg_lock);
+}
+
+static void reg_remove(w32_object *o)
+{
+    uint32_t i = reg_hash(o), n;
+    pthread_mutex_lock(&s_reg_lock);
+    for (n = 0; n < W32_REG_SIZE && s_reg[i];
+         n++, i = (i + 1) & (W32_REG_SIZE - 1)) {
+        if (s_reg[i] == o) {
+            s_reg[i] = W32_REG_TOMB;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&s_reg_lock);
+}
+
+static w32_object *obj_from(HANDLE h)
+{
+    w32_object *o = (w32_object *)h, *hit = NULL;
+    uint32_t i, n;
+
+    if (!o || o == W32_REG_TOMB || h == INVALID_HANDLE_VALUE)
+        return NULL;
+    i = reg_hash(o);
+    pthread_mutex_lock(&s_reg_lock);
+    for (n = 0; n < W32_REG_SIZE && s_reg[i];
+         n++, i = (i + 1) & (W32_REG_SIZE - 1)) {
+        if (s_reg[i] == o) {
+            hit = o;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&s_reg_lock);
+    if (!hit)
+        SetLastError(ERROR_INVALID_HANDLE);
+    return hit;
+}
 
 static w32_object *obj_alloc(w32_kind kind)
 {
@@ -335,6 +439,7 @@ static w32_object *obj_alloc(w32_kind kind)
     pthread_mutex_init(&o->lock, NULL);
     pthread_cond_init(&o->cond, NULL);
     pthread_cond_init(&o->gate, NULL);
+    reg_add(o);
     return o;
 }
 
@@ -342,6 +447,7 @@ static void obj_release(w32_object *o)
 {
     if (InterlockedDecrement(&o->refcount) > 0)
         return;
+    reg_remove(o);
     if (o->kind == K_FILE) {
         if (o->fd >= 0) close(o->fd);
         free(o->file_path);
@@ -367,13 +473,13 @@ HANDLE w32_open_handle(int fd, const char *host_path)
 
 int w32_handle_fd(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     return (o && o->kind == K_FILE) ? o->fd : -1;
 }
 
 const char *w32_handle_path(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     return (o && o->kind == K_FILE) ? o->file_path : NULL;
 }
 
@@ -382,7 +488,12 @@ BOOL CloseHandle(HANDLE h)
     if (!h || h == PSEUDO_CURRENT_THREAD || h == PSEUDO_CURRENT_PROCESS ||
         h == INVALID_HANDLE_VALUE)
         return TRUE;
-    obj_release((w32_object *)h);
+    {
+        w32_object *o = obj_from(h);
+        if (!o)
+            return FALSE;
+        obj_release(o);
+    }
     return TRUE;
 }
 
@@ -394,7 +505,9 @@ BOOL DuplicateHandle(HANDLE srcProc, HANDLE src, HANDLE dstProc, PHANDLE dst,
     if (src == PSEUDO_CURRENT_THREAD)  src = GetCurrentThread();
     if (src == PSEUDO_CURRENT_PROCESS) { *dst = src; return TRUE; }
     if (src == PSEUDO_CURRENT_THREAD || !src) { *dst = src; return TRUE; }
-    w32_object *o = (w32_object *)src;
+    w32_object *o = obj_from(src);
+    if (!o)
+        return FALSE;
     InterlockedIncrement(&o->refcount);
     *dst = src;
     if (options & DUPLICATE_CLOSE_SOURCE)
@@ -514,7 +627,12 @@ DWORD WaitForSingleObject(HANDLE h, DWORD ms)
 {
     if (!h || h == PSEUDO_CURRENT_THREAD || h == PSEUDO_CURRENT_PROCESS)
         return WAIT_OBJECT_0;
-    return wait_single((w32_object *)h, ms);
+    {
+        w32_object *o = obj_from(h);
+        if (!o)
+            return WAIT_FAILED;
+        return wait_single(o, ms);
+    }
 }
 
 DWORD WaitForSingleObjectEx(HANDLE h, DWORD ms, BOOL alertable)
@@ -539,6 +657,13 @@ DWORD WaitForMultipleObjectsEx(DWORD count, const HANDLE *handles, BOOL waitAll,
     struct timespec ts;
     int timed = (ms != INFINITE);
     if (timed) deadline_from_ms(ms, &ts);
+
+    for (DWORD i = 0; i < count; i++) {
+        HANDLE h = handles[i];
+        if (h && h != PSEUDO_CURRENT_THREAD && h != PSEUDO_CURRENT_PROCESS
+                && !obj_from(h))
+            return WAIT_FAILED;
+    }
 
     for (;;) {
         if (alertable && drain_apcs() > 0)
@@ -586,7 +711,7 @@ HANDLE CreateEventW(LPSECURITY_ATTRIBUTES sa, BOOL manualReset, BOOL initialStat
 
 BOOL SetEvent(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_EVENT) return FALSE;
     pthread_mutex_lock(&o->lock);
     o->signaled = 1;
@@ -597,7 +722,7 @@ BOOL SetEvent(HANDLE h)
 
 BOOL ResetEvent(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_EVENT) return FALSE;
     pthread_mutex_lock(&o->lock);
     o->signaled = 0;
@@ -607,7 +732,7 @@ BOOL ResetEvent(HANDLE h)
 
 BOOL PulseEvent(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_EVENT) return FALSE;
     pthread_mutex_lock(&o->lock);
     o->signaled = 1;
@@ -637,7 +762,7 @@ HANDLE CreateSemaphoreW(LPSECURITY_ATTRIBUTES sa, LONG initial, LONG maximum, LP
 
 BOOL ReleaseSemaphore(HANDLE h, LONG releaseCount, PLONG previousCount)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_SEM) return FALSE;
     pthread_mutex_lock(&o->lock);
     if (previousCount) *previousCount = (LONG)o->sem_count;
@@ -667,7 +792,7 @@ HANDLE CreateMutexW(LPSECURITY_ATTRIBUTES sa, BOOL initialOwner, LPCWSTR name)
 
 BOOL ReleaseMutex(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_MUTEX) {
         SetLastError(ERROR_INVALID_HANDLE);
         return FALSE;
@@ -691,11 +816,239 @@ BOOL ReleaseMutex(HANDLE h)
 /* Threads                                                               */
 /* ===================================================================== */
 
+/* Spread threads over the application cores.
+ *
+ * libnx creates every pthread at priority 59 with the process's core mask
+ * but its default core as the preferred one, so all of them queue on core 0
+ * and reach cores 1-2 only by migration. Preferred cores are dealt out in
+ * turn instead. Cores 0-2 only: core 3 is the system's, and Horizon
+ * time-slices priority 59 on 0-2 alone -- two busy threads meeting on core 3
+ * (Eden reports mask 0xF) never yield to each other. */
+/* ── One core for the guest ────────────────────────────────────
+ *
+ * The Xbox has one CPU. Only one of a title's threads runs at a time, an
+ * interrupt pre-empts whatever runs rather than running beside it, and code
+ * written for that machine can rely on both without knowing it. Here every
+ * guest thread used to run truly in parallel, as did the interrupt and DPC
+ * work: NFSU2 then read a pointer from a block its allocator had only just
+ * filled with 0xAA and crashed after Start -- on the console nearly every
+ * time, on a PC once in a few runs.
+ *
+ * So the threads that run guest code share one core: guest threads at the
+ * time-sliced priority, the interrupt and DPC threads (xbox_guest_pin(1))
+ * above them, so they pre-empt a guest thread the way an interrupt does and
+ * never run alongside one. The runtime's own threads -- pushbuffer
+ * executor, audio, log -- keep the other cores. RECOMP_GUEST_ONE_CORE=1
+ * turns it on (2: guest threads only, interrupt threads float). */
+int xbox_guest_core(void)
+{
+    static int core = -2;
+    if (core == -2) {
+        const char *e = getenv("RECOMP_GUEST_ONE_CORE");
+        /* Opt-in: on Horizon it costs far too much. Its 10 ms slices at
+         * priority 59 do not carry a movie's worth of guest threads on one
+         * core without the title's own thread priorities, and throughput
+         * fell to a tenth once they started. */
+        int on = e && (*e == '1' || *e == '2');
+        core = -1;
+        if (on) {
+#if defined(__SWITCH__)
+            u64 mask = 0;
+            if (R_SUCCEEDED(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)))
+                for (int c = 2; c >= 0; c--)
+                    if ((mask >> c) & 1u) { core = c; break; }
+#else
+            long n = sysconf(_SC_NPROCESSORS_ONLN);
+            core = n > 1 ? (int)n - 1 : -1;
+#endif
+            if (core >= 0)
+                fprintf(stderr, "  [THREAD] guest code runs on core %d only\n", core);
+        }
+    }
+    return core;
+}
+
+void xbox_guest_pin(int interrupt)
+{
+    int core = xbox_guest_core();
+    const char *e = getenv("RECOMP_GUEST_ONE_CORE");
+    if (core < 0)
+        return;
+    if (interrupt && e && *e == '2')
+        return;                /* mode 2: guest threads only, interrupts float */
+#if defined(__SWITCH__)
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, core, 1u << core);
+    /* libnx threads start at 59, Horizon's time-sliced priority; an
+     * interrupt thread goes above it so it pre-empts guest threads. */
+    if (interrupt)
+        svcSetThreadPriority(CUR_THREAD_HANDLE, 0x2C);
+#else
+    {
+        cpu_set_t set;
+        CPU_ZERO(&set);
+        CPU_SET(core, &set);
+        pthread_setaffinity_np(pthread_self(), sizeof set, &set);
+        (void)interrupt;
+    }
+#endif
+}
+
+/* A runtime thread whose deadlines are audible (the APU frame thread): above
+ * the guest threads on Horizon (0x2C < 59). Priority 59 is the only one that
+ * time-slices, so there it waited behind whatever shared its core, in 10 ms
+ * slices -- the APU fell to 1283 of 1500 frames/s in a race once the game
+ * kept all three cores busy. It sleeps between blocks, so a higher,
+ * non-sliced priority costs the others only the microseconds a block takes.
+ * RECOMP_NX_AUDIO_PRIO=0 leaves it at 59. No-op elsewhere. */
+void xbox_nx_raise_host_thread(void)
+{
+#if defined(__SWITCH__)
+    const char *e = getenv("RECOMP_NX_AUDIO_PRIO");
+    if (e && *e == '0')
+        return;
+    svcSetThreadPriority(CUR_THREAD_HANDLE, 0x2C);
+#endif
+}
+
+#if defined(__SWITCH__)
+void xbox_nx_spread_thread(void)
+{
+    static int next = 1;                 /* core 0 is the loader's main thread */
+    u64 mask = 0;
+    int k, core;
+
+    if (R_FAILED(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)))
+        return;
+    mask &= 0x7u;
+    if (xbox_guest_core() >= 0 && (mask & ~(1u << xbox_guest_core())))
+        mask &= ~(1u << xbox_guest_core());   /* that core is the guest's */
+    if (!mask || !(mask & (mask - 1)))
+        return;                          /* one core: nothing to spread */
+    k = __atomic_fetch_add(&next, 1, __ATOMIC_RELAXED);
+    if (k == 1)
+        fprintf(stderr, "  [NX] threads spread over core mask 0x%llX\n",
+                (unsigned long long)mask);
+    k %= __builtin_popcountll(mask);
+    for (core = 0; core < 3; core++)
+        if (((mask >> core) & 1u) && k-- == 0)
+            break;
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, core, (u32)mask);
+}
+
+
+/* ── Per-thread CPU report (Switch) ────────────────────────────
+ *
+ * There is no profiler on the console. Each thread that goes through the
+ * trampolines is recorded with its entry point; xbox_nx_thread_report()
+ * (called by the Switch glue every 10 s) prints how much of a core each one
+ * used since the last report, as Horizon counts it. Entry points are
+ * printed relative to __start__, which is the ELF address:
+ *   aarch64-none-elf-addr2line -f -e nfsu2_recomp.elf 0x<offset> */
+Handle threadGetCurHandle(void);
+extern char __start__[];
+
+#define NX_MAX_TRACKED 64
+static struct { Handle h; uintptr_t entry; u64 last; } s_nx_threads[NX_MAX_TRACKED];
+static int s_nx_nthreads;
+
+void xbox_nx_track_thread(void *entry)
+{
+    int i = __atomic_fetch_add(&s_nx_nthreads, 1, __ATOMIC_RELAXED);
+    if (i >= NX_MAX_TRACKED)
+        return;
+    s_nx_threads[i].entry = (uintptr_t)entry;
+    s_nx_threads[i].h = threadGetCurHandle();
+}
+
+static int nx_thread_ticks(Handle h, u64 *out)
+{
+    return R_SUCCEEDED(svcGetInfo(out, InfoType_ThreadTickCount, h, (u64)-1))
+        || R_SUCCEEDED(svcGetInfo(out, InfoType_ThreadTickCountDeprecated, h, (u64)-1));
+}
+
+/* Tracked thread i for a sampling profiler (switch_nx.c): its handle and
+ * the entry it is named by (0 for the game's main thread). Returns 0 past
+ * the end of the table. */
+int xbox_nx_thread_at(int i, Handle *h, uintptr_t *entry)
+{
+    int n = s_nx_nthreads < NX_MAX_TRACKED ? s_nx_nthreads : NX_MAX_TRACKED;
+    if (i < 0 || i >= n || !s_nx_threads[i].h)
+        return 0;
+    *h = s_nx_threads[i].h;
+    *entry = s_nx_threads[i].entry;
+    return 1;
+}
+
+/* Guest threads all start in the bridge's trampoline; name them by the
+ * lifted function they run instead. */
+void xbox_nx_retag_thread(void *entry)
+{
+    Handle h = threadGetCurHandle();
+    int n = s_nx_nthreads < NX_MAX_TRACKED ? s_nx_nthreads : NX_MAX_TRACKED, i;
+    for (i = 0; i < n; i++)
+        if (s_nx_threads[i].h == h) {
+            s_nx_threads[i].entry = (uintptr_t)entry;
+            return;
+        }
+}
+
+void xbox_nx_thread_report(double interval_s)
+{
+    char line[1024];
+    int n = s_nx_nthreads < NX_MAX_TRACKED ? s_nx_nthreads : NX_MAX_TRACKED, i, len;
+
+    int failed = 0;
+    len = snprintf(line, sizeof line, "[perf] %% of a core per thread (%d tracked):", n);
+    for (i = 0; i < n && len < (int)sizeof line - 40; i++) {
+        u64 t = 0, d;
+        if (!s_nx_threads[i].h || !nx_thread_ticks(s_nx_threads[i].h, &t)) {
+            failed++;
+            continue;
+        }
+        d = t - s_nx_threads[i].last;
+        s_nx_threads[i].last = t;
+        if (d * 100 < (u64)(interval_s * 19200000.0))       /* under 1%: skip */
+            continue;
+        len += snprintf(line + len, sizeof line - len, " %s%lx=%.0f",
+                        s_nx_threads[i].entry ? "" : "game:",
+                        s_nx_threads[i].entry
+                            ? (unsigned long)(s_nx_threads[i].entry - (uintptr_t)__start__) : 0ul,
+                        (double)d / 19200000.0 / interval_s * 100.0);
+    }
+    if (n && failed == n)
+        len += snprintf(line + len, sizeof line - len, " (thread tick counts unavailable)");
+    fprintf(stderr, "%s\n", line);
+}
+#else
+void xbox_nx_spread_thread(void) { }
+void xbox_nx_track_thread(void *entry) { (void)entry; }
+void xbox_nx_retag_thread(void *entry) { (void)entry; }
+#endif
+
+static void host_priority_apply(w32_object *o);
+
 static void *thread_trampoline(void *arg)
 {
     w32_object *o = (w32_object *)arg;
+    xbox_nx_spread_thread();
+    xbox_nx_track_thread((void *)o->start);
     t_self_obj = o;
     t_tid      = o->tid;
+#if defined(__SWITCH__)
+    {
+        extern Handle threadGetCurHandle(void);   /* libnx */
+        o->nx_handle = threadGetCurHandle();
+    }
+#else
+    {
+        struct sched_param sp;
+        int pol;
+        if (pthread_getschedparam(pthread_self(), &pol, &sp) == 0)
+            o->host_base = sp.sched_priority;
+        o->started = 1;
+    }
+#endif
+    host_priority_apply(o);              /* a priority set before it ran */
 
     /* CREATE_SUSPENDED gate */
     pthread_mutex_lock(&o->lock);
@@ -730,6 +1083,13 @@ HANDLE CreateThread(LPSECURITY_ATTRIBUTES sa, SIZE_T stackSize,
 
     pthread_attr_t attr;
     pthread_attr_init(&attr);
+#if defined(__SWITCH__)
+    /* Recompiled code nests host calls as deep as the guest nests its own,
+     * and Horizon's default thread stack is a fraction of the 8 MB a Linux
+     * thread gets. Match Linux rather than find the overflow in a game. */
+    if (stackSize < 8u * 1024 * 1024)
+        stackSize = 8u * 1024 * 1024;
+#endif
     if (stackSize)
         pthread_attr_setstacksize(&attr, stackSize < 65536 ? 65536 : stackSize);
 
@@ -764,7 +1124,7 @@ VOID ExitThread(DWORD exitCode)
 
 BOOL GetExitCodeThread(HANDLE h, LPDWORD exitCode)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_THREAD || !exitCode) return FALSE;
     pthread_mutex_lock(&o->lock);
     *exitCode = o->exited ? o->exit_code : STILL_ACTIVE;
@@ -774,7 +1134,7 @@ BOOL GetExitCodeThread(HANDLE h, LPDWORD exitCode)
 
 DWORD ResumeThread(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_THREAD) return (DWORD)-1;
     pthread_mutex_lock(&o->lock);
     DWORD prev = (DWORD)o->suspend_count;
@@ -788,7 +1148,7 @@ DWORD SuspendThread(HANDLE h)
 {
     /* True mid-run suspension is not supported on POSIX; only the
      * CREATE_SUSPENDED start gate is. Track the count for ResumeThread. */
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_THREAD) return (DWORD)-1;
     pthread_mutex_lock(&o->lock);
     DWORD prev = (DWORD)o->suspend_count;
@@ -799,7 +1159,7 @@ DWORD SuspendThread(HANDLE h)
 
 BOOL TerminateThread(HANDLE h, DWORD exitCode)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_THREAD) return FALSE;
     pthread_cancel(o->thread);
     pthread_mutex_lock(&o->lock);
@@ -811,16 +1171,61 @@ BOOL TerminateThread(HANDLE h, DWORD exitCode)
     return TRUE;
 }
 
+/* Opt-in (RECOMP_NX_GUEST_RT=1): a guest thread at TIME_CRITICAL gets a
+ * host priority that pre-empts. On Horizon every guest thread runs at 59,
+ * the one priority that time-slices, so a thread with a deadline can wait a
+ * 10 ms slice behind whatever shares its core. NFSU2's EA mixer (entry
+ * 0x00274CA0, the only thread the title raises to time critical) refills its
+ * DirectSound ring 5-15 ms ahead of the play cursor; late, the VP plays the
+ * ring's 50 ms old contents (counted as stale in the [perf] APU ring line).
+ * nfsmw-nx fixed the same with 0x2D for its audio server. Not the default:
+ * the guest lock is a FIFO ticket lock, so the priority does not move the
+ * mixer up its queue, and a pre-emptive thread that polls starves the
+ * runtime threads sharing its core. Under a Linux SCHED_RR test (one core,
+ * RR slices) it did not help. Elsewhere real RT priorities need privileges:
+ * only a process already under SCHED_RR/FIFO is bumped. */
+static void host_priority_apply(w32_object *o)
+{
+    const char *e = getenv("RECOMP_NX_GUEST_RT");
+    int rt = o->priority >= THREAD_PRIORITY_TIME_CRITICAL;
+    if (!(e && *e == '1') || rt == o->host_rt)
+        return;
+#if defined(__SWITCH__)
+    if (!o->nx_handle)
+        return;                          /* not running yet: the trampoline applies it */
+    if (R_SUCCEEDED(svcSetThreadPriority(o->nx_handle, rt ? 0x2D : 0x3B))) {
+        o->host_rt = rt;
+        fprintf(stderr, "  [NX] guest thread %p at host priority 0x%X\n",
+                (void *)o->start, rt ? 0x2D : 0x3B);
+    }
+#else
+    {
+        struct sched_param sp;
+        int pol;
+        pthread_t th = (o == t_self_obj) ? pthread_self() : o->thread;
+        if (!o->started || pthread_getschedparam(th, &pol, &sp) ||
+            (pol != SCHED_RR && pol != SCHED_FIFO))
+            return;
+        sp.sched_priority = o->host_base + (rt ? 1 : 0);
+        if (pthread_setschedparam(th, pol, &sp) == 0)
+            o->host_rt = rt;
+    }
+#endif
+}
+
 BOOL SetThreadPriority(HANDLE h, int priority)
 {
-    w32_object *o = (h == PSEUDO_CURRENT_THREAD) ? t_self_obj : (w32_object *)h;
-    if (o && o->kind == K_THREAD) o->priority = priority;
-    return TRUE;   /* real RT priorities need privileges; tracked only */
+    w32_object *o = (h == PSEUDO_CURRENT_THREAD) ? t_self_obj : obj_from(h);
+    if (o && o->kind == K_THREAD) {
+        o->priority = priority;
+        host_priority_apply(o);
+    }
+    return TRUE;
 }
 
 int GetThreadPriority(HANDLE h)
 {
-    w32_object *o = (h == PSEUDO_CURRENT_THREAD) ? t_self_obj : (w32_object *)h;
+    w32_object *o = (h == PSEUDO_CURRENT_THREAD) ? t_self_obj : obj_from(h);
     return (o && o->kind == K_THREAD) ? o->priority : THREAD_PRIORITY_NORMAL;
 }
 
@@ -828,7 +1233,7 @@ VOID SwitchToThread(void) { sched_yield(); }
 
 DWORD QueueUserAPC(PAPCFUNC func, HANDLE thread, ULONG_PTR data)
 {
-    w32_object *o = (thread == PSEUDO_CURRENT_THREAD) ? t_self_obj : (w32_object *)thread;
+    w32_object *o = (thread == PSEUDO_CURRENT_THREAD) ? t_self_obj : obj_from(thread);
     if (!o || o->kind != K_THREAD) return 0;
     pthread_mutex_lock(&o->lock);
     DWORD ok = 0;
@@ -871,6 +1276,8 @@ static void *timer_thread(void *arg)
 {
     w32_object *o = (w32_object *)arg;
     int once = (o->timer_period == 0);
+
+    xbox_nx_spread_thread();
 
     /* initial due time */
     if (o->timer_due) Sleep(o->timer_due);
@@ -923,7 +1330,7 @@ BOOL CreateTimerQueueTimer(PHANDLE newTimer, HANDLE timerQueue,
 BOOL ChangeTimerQueueTimer(HANDLE timerQueue, HANDLE timer, ULONG dueTime, ULONG period)
 {
     (void)timerQueue;
-    w32_object *o = (w32_object *)timer;
+    w32_object *o = obj_from(timer);
     if (!o || o->kind != K_TIMER) return FALSE;
     o->timer_due    = dueTime;
     o->timer_period = period;
@@ -933,7 +1340,7 @@ BOOL ChangeTimerQueueTimer(HANDLE timerQueue, HANDLE timer, ULONG dueTime, ULONG
 BOOL DeleteTimerQueueTimer(HANDLE timerQueue, HANDLE timer, HANDLE completionEvent)
 {
     (void)timerQueue;
-    w32_object *o = (w32_object *)timer;
+    w32_object *o = obj_from(timer);
     if (!o || o->kind != K_TIMER) return FALSE;
     o->timer_cancel = 1;
     if (completionEvent) SetEvent(completionEvent);
@@ -946,6 +1353,7 @@ struct w32_tp_args { PTP_SIMPLE_CALLBACK cb; PVOID ctx; };
 static void *w32_tp_trampoline(void *arg)
 {
     struct w32_tp_args *a = (struct w32_tp_args *)arg;
+    xbox_nx_spread_thread();
     a->cb(NULL, a->ctx);
     free(a);
     return NULL;
@@ -980,7 +1388,7 @@ HANDLE CreateWaitableTimerW(LPSECURITY_ATTRIBUTES sa, BOOL manualReset, LPCWSTR 
 BOOL SetWaitableTimer(HANDLE h, const LARGE_INTEGER *dueTime, LONG period,
                       PTIMERAPCROUTINE completion, PVOID arg, BOOL resume)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     (void)completion; (void)arg; (void)resume;
     if (!o || o->kind != K_WAITABLE_TIMER || !dueTime) return FALSE;
     pthread_mutex_lock(&o->lock);
@@ -1012,7 +1420,7 @@ BOOL SetWaitableTimer(HANDLE h, const LARGE_INTEGER *dueTime, LONG period,
 
 BOOL CancelWaitableTimer(HANDLE h)
 {
-    w32_object *o = (w32_object *)h;
+    w32_object *o = obj_from(h);
     if (!o || o->kind != K_WAITABLE_TIMER) return FALSE;
     pthread_mutex_lock(&o->lock);
     o->waitable_triggered = 0;
@@ -1058,6 +1466,279 @@ SIZE_T HeapSize(HANDLE heap, DWORD flags, LPCVOID mem)
 /* Virtual memory                                                        */
 /* ===================================================================== */
 
+void view_register(void *addr, size_t len);
+size_t view_take(const void *addr);
+#if defined(__SWITCH__)
+/* Virtual memory on Horizon.
+ *
+ * Win32 semantics, which is what xbox_memory_layout.c is written against:
+ *
+ *   MEM_RESERVE         address space only. Taken from libnx's ASLR region
+ *                       as a reservation, so nothing else is placed there.
+ *                       The first reservation is widened to 4 GB + 64 KB:
+ *                       every guest aperture (0x80000000, 0xF0000000,
+ *                       0xFD000000...) must land at base + VA, and a smaller
+ *                       reservation would leave them to chance.
+ *   MEM_COMMIT at addr  a shared-memory object of that size, mapped there.
+ *                       The kernel hands it over zeroed.
+ *   MEM_COMMIT, no addr the heap, page aligned.
+ *   file mapping        a shared-memory object; each view maps it again.
+ *                       That is what makes the RAM mirrors and the tiled
+ *                       aperture true aliases, as on the console.
+ *
+ * Protection changes are accepted and ignored: shared memory is mapped RW
+ * and Horizon will not change a shared mapping's permissions, and nothing on
+ * this host traps faults anyway.
+ */
+typedef struct {
+    uintptr_t addr;
+    size_t    len;
+    Handle    shm;          /* shared- or code-memory object; 0 for heap */
+    int       owns_shm;     /* close the object on release */
+    int       heap;
+    void     *src;          /* code memory: the heap block behind the view */
+    uintptr_t alias_of;     /* svcMapProcessMemory view: the address it mirrors */
+} nx_region;
+
+#define NX_MAX_REGIONS 256
+static nx_region       s_nx[NX_MAX_REGIONS];
+static pthread_mutex_t s_nx_lock = PTHREAD_MUTEX_INITIALIZER;
+static int             s_nx_first_reserve = 1;
+
+/* How committed memory is obtained.
+ *
+ *   NX_SHARED    shared-memory objects: views alias.
+ *   NX_PHYSICAL  code memory -- the mechanism JITs use: a heap block wrapped
+ *                in a code-memory object, its owner view mapped read-write
+ *                at the address wanted. For hosts where svcCreateSharedMemory
+ *                is unavailable (Eden answers 0x4201 NotImplemented).
+ *                (svcMapPhysicalMemory would be simpler but needs a system
+ *                resource homebrew does not have: 0xFA01 InvalidState.)
+ *                One view per block, so a second view of a mapping cannot
+ *                alias the first: it fails, and the memory layout carries on
+ *                without the RAM mirrors and the tiled-aperture view. */
+enum { NX_UNKNOWN, NX_SHARED, NX_PHYSICAL };
+static int s_nx_mode = NX_UNKNOWN;
+
+static void nx_probe(void)
+{
+    Handle h;
+
+    if (s_nx_mode != NX_UNKNOWN)
+        return;
+    /* Ask the loader first. On the console an SVC outside the process's
+     * permitted set does not fail -- the kernel terminates the process, and
+     * hbloader does not grant homebrew CreateSharedMemory (0x50). The code-
+     * memory SVCs (0x4B/0x4C) are the ones JIT homebrew relies on. */
+    fprintf(stderr, "  [NX] syscall hints: CreateSharedMemory %d MapSharedMemory %d"
+                    " CreateCodeMemory %d ControlCodeMemory %d\n",
+            envIsSyscallHinted(0x50), envIsSyscallHinted(0x13),
+            envIsSyscallHinted(0x4B), envIsSyscallHinted(0x4C));
+    /* Code memory is the default: it is what runs in Eden, and a hint is
+     * not a promise on the console. RECOMP_NX_SHM=1 tries shared memory
+     * (aliasing mirrors) where the loader offers it. */
+    if (getenv("RECOMP_NX_SHM") && strcmp(getenv("RECOMP_NX_SHM"), "1") == 0
+            && envIsSyscallHinted(0x50) && envIsSyscallHinted(0x13)
+            && R_SUCCEEDED(svcCreateSharedMemory(&h, 0x1000, Perm_Rw, Perm_R))) {
+        svcCloseHandle(h);
+        s_nx_mode = NX_SHARED;
+    } else {
+        s_nx_mode = NX_PHYSICAL;
+    }
+    if (s_nx_mode == NX_PHYSICAL && !(envIsSyscallHinted(0x4B) && envIsSyscallHinted(0x4C)))
+        fprintf(stderr, "  [NX] WARNING: code-memory SVCs are not hinted either;"
+                        " guest memory cannot be mapped\n");
+    fprintf(stderr, "  [NX] guest memory from %s\n",
+            s_nx_mode == NX_SHARED ? "shared-memory objects (aliasing views)"
+                                   : "code-memory views of heap blocks (no aliasing)");
+}
+
+static size_t nx_page(size_t n) { return (n + 0xFFFu) & ~(size_t)0xFFFu; }
+
+static nx_region *nx_find(uintptr_t addr)
+{
+    int i;
+    for (i = 0; i < NX_MAX_REGIONS; i++)
+        if (s_nx[i].len && addr >= s_nx[i].addr && addr < s_nx[i].addr + s_nx[i].len)
+            return &s_nx[i];
+    return NULL;
+}
+
+static nx_region *nx_add(uintptr_t addr, size_t len, Handle shm, int owns, int heap);
+
+/* Fresh memory at `a` by whichever mechanism this host has. */
+static int nx_commit(uintptr_t a, size_t len)
+{
+    Handle shm = 0;
+    Result rc;
+
+    if (s_nx_mode == NX_PHYSICAL) {
+        void *src = memalign(0x1000, len);
+        nx_region *r;
+        if (!src) {
+            fprintf(stderr, "  [NX] out of heap for %zu KB at %p\n", len / 1024, (void *)a);
+            return 0;
+        }
+        rc = svcCreateCodeMemory(&shm, src, len);
+        if (R_SUCCEEDED(rc))
+            rc = svcControlCodeMemory(shm, CodeMapOperation_MapOwner, (void *)a, len,
+                                      Perm_Rw);
+        if (R_FAILED(rc)) {
+            fprintf(stderr, "  [NX] code-memory view of %zu KB at %p failed: 0x%X\n",
+                    len / 1024, (void *)a, rc);
+            if (shm) svcCloseHandle(shm);
+            free(src);
+            return 0;
+        }
+        memset((void *)a, 0, len);
+        r = nx_add(a, len, shm, 1, 0);
+        if (r) r->src = src;
+        return 1;
+    }
+    rc = svcCreateSharedMemory(&shm, len, Perm_Rw, Perm_R);
+    if (R_FAILED(rc)) {
+        fprintf(stderr, "  [NX] create %zu KB of shared memory failed: 0x%X\n",
+                len / 1024, rc);
+        return 0;
+    }
+    rc = svcMapSharedMemory(shm, (void *)a, len, Perm_Rw);
+    if (R_FAILED(rc)) {
+        fprintf(stderr, "  [NX] map shared memory at %p (+%zu KB) failed: 0x%X\n",
+                (void *)a, len / 1024, rc);
+        svcCloseHandle(shm);
+        return 0;
+    }
+    nx_add(a, len, shm, 1, 0);
+    return 1;
+}
+
+static nx_region *nx_add(uintptr_t addr, size_t len, Handle shm, int owns, int heap)
+{
+    int i;
+    for (i = 0; i < NX_MAX_REGIONS; i++)
+        if (!s_nx[i].len) {
+            s_nx[i].addr = addr; s_nx[i].len = len; s_nx[i].shm = shm;
+            s_nx[i].owns_shm = owns; s_nx[i].heap = heap;
+            return &s_nx[i];
+        }
+    return NULL;
+}
+
+/* Map `len` bytes of shared-memory object `shm` at `addr`. */
+static int nx_map_shm(Handle shm, uintptr_t addr, size_t len)
+{
+    Result rc = svcMapSharedMemory(shm, (void *)addr, len, Perm_Rw);
+    if (R_FAILED(rc)) {
+        fprintf(stderr, "  [NX] map shared memory at %p (+%zu KB) failed: 0x%X\n",
+                (void *)addr, len / 1024, rc);
+        return 0;
+    }
+    return 1;
+}
+
+LPVOID VirtualAlloc(LPVOID address, SIZE_T size, DWORD allocationType, DWORD protect)
+{
+    size_t len = nx_page(size);
+    (void)protect;
+
+    if (!len) { SetLastError(ERROR_INVALID_PARAMETER); return NULL; }
+    pthread_mutex_lock(&s_nx_lock);
+    nx_probe();
+
+    if (!address && !(allocationType & MEM_COMMIT)) {           /* reserve */
+        size_t want = len;
+        void *at;
+        if (s_nx_first_reserve) {
+            s_nx_first_reserve = 0;
+            if (want < 0x100010000ull) want = 0x100010000ull;
+        }
+        virtmemLock();
+        at = virtmemFindAslr(want, 0x10000);
+        if (at) virtmemAddReservation(at, want);
+        virtmemUnlock();
+        pthread_mutex_unlock(&s_nx_lock);
+        if (!at) { SetLastError(ERROR_NOT_ENOUGH_MEMORY); return NULL; }
+        fprintf(stderr, "  [NX] reserved %zu MB at %p\n", want >> 20, at);
+        return at;
+    }
+
+    if (!address) {                                             /* heap */
+        void *p = memalign(0x1000, len);
+        if (p) {
+            memset(p, 0, len);
+            nx_add((uintptr_t)p, len, 0, 0, 1);
+            view_register(p, len);
+        }
+        pthread_mutex_unlock(&s_nx_lock);
+        if (!p) SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return p;
+    }
+
+    if (!(allocationType & MEM_COMMIT)) {                       /* reserve at addr */
+        pthread_mutex_unlock(&s_nx_lock);
+        return address;         /* inside our own reservation: nothing to do */
+    }
+
+    {                                                           /* commit at addr */
+        uintptr_t a = (uintptr_t)address & ~(uintptr_t)0xFFF;
+        nx_region *r = nx_find(a);
+
+        if (r && a + len <= r->addr + r->len) {                 /* already there */
+            pthread_mutex_unlock(&s_nx_lock);
+            return address;
+        }
+        if (!nx_commit(a, len)) {
+            pthread_mutex_unlock(&s_nx_lock);
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return NULL;
+        }
+        view_register((void *)a, len);
+        pthread_mutex_unlock(&s_nx_lock);
+        return (LPVOID)a;
+    }
+}
+
+BOOL VirtualFree(LPVOID address, SIZE_T size, DWORD freeType)
+{
+    nx_region *r;
+    (void)size;
+
+    if (!(freeType & MEM_RELEASE))
+        return TRUE;                              /* decommit: keep it */
+    pthread_mutex_lock(&s_nx_lock);
+    r = nx_find((uintptr_t)address);
+    if (r && r->addr == (uintptr_t)address) {
+        view_take(address);
+        if (r->heap) {
+            free((void *)r->addr);
+        } else if (r->alias_of) {
+            svcUnmapProcessMemory((void *)r->addr, envGetOwnProcessHandle(),
+                                  (u64)r->alias_of, r->len);
+        } else if (r->src) {
+            svcControlCodeMemory(r->shm, CodeMapOperation_UnmapOwner,
+                                 (void *)r->addr, r->len, 0);
+            svcCloseHandle(r->shm);
+            free(r->src);
+        } else {
+            svcUnmapSharedMemory(r->shm, (void *)r->addr, r->len);
+            if (r->owns_shm)
+                svcCloseHandle(r->shm);
+        }
+        memset(r, 0, sizeof *r);
+    }
+    /* Releasing a slice of a reservation (to map a view into it) is a
+     * no-op here: reservations are bookkeeping, and the view maps over it. */
+    pthread_mutex_unlock(&s_nx_lock);
+    return TRUE;
+}
+
+BOOL VirtualProtect(LPVOID address, SIZE_T size, DWORD newProtect, PDWORD oldProtect)
+{
+    (void)address; (void)size; (void)newProtect;
+    if (oldProtect) *oldProtect = PAGE_READWRITE;
+    return TRUE;
+}
+#else
 static int prot_from_page(DWORD protect)
 {
     switch (protect & 0xFF) {
@@ -1071,6 +1752,10 @@ static int prot_from_page(DWORD protect)
     }
 }
 
+/* Length registry, defined with the view helpers below. Win32 frees by address
+ * alone -- UnmapViewOfFile takes no length and VirtualFree(MEM_RELEASE) is
+ * documented to take size 0 -- so the length has to be recoverable here or
+ * munmap cannot be called at all. */
 #if defined(__APPLE__)
 /* Darwin has no MAP_FIXED_NOREPLACE, and the two mmap options are both wrong
  * for VirtualAlloc: MAP_FIXED silently unmaps whatever already occupies the
@@ -1087,12 +1772,6 @@ static int prot_from_page(DWORD protect)
  * Memory from mach_vm_map is released by munmap like any other, because the
  * BSD and Mach halves of Darwin share one VM map, so VirtualFree is unchanged.
  */
-/* Length registry, defined with the view helpers below. Win32 frees by address
- * alone -- UnmapViewOfFile takes no length and VirtualFree(MEM_RELEASE) is
- * documented to take size 0 -- so the length has to be recoverable here or
- * munmap cannot be called at all. */
-void view_register(void *addr, size_t len);
-size_t view_take(const void *addr);
 
 static void *mach_map_fixed(void *address, size_t size, int prot)
 {
@@ -1192,6 +1871,8 @@ BOOL VirtualProtect(LPVOID address, SIZE_T size, DWORD newProtect, PDWORD oldPro
     if (oldProtect) *oldProtect = PAGE_READWRITE;
     return mprotect(address, size, prot_from_page(newProtect)) == 0;
 }
+
+#endif /* __SWITCH__ */
 
 /* ===================================================================== */
 /* Time                                                                  */
@@ -1591,6 +2272,131 @@ size_t view_take(const void *addr)
     return len;
 }
 
+#if defined(__SWITCH__)
+/* File mappings on Horizon: a shared-memory object per mapping, mapped
+ * again for every view -- see "Virtual memory on Horizon" above. */
+HANDLE CreateFileMappingA(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect,
+                          DWORD maxSizeHigh, DWORD maxSizeLow, LPCSTR name)
+{
+    SIZE_T size = ((SIZE_T)maxSizeHigh << 32) | maxSizeLow;
+    Handle shm;
+    Result rc;
+    w32_object *o;
+
+    (void)file; (void)sa; (void)protect; (void)name;
+    if (!size) { SetLastError(ERROR_INVALID_PARAMETER); return NULL; }
+    pthread_mutex_lock(&s_nx_lock);
+    nx_probe();
+    pthread_mutex_unlock(&s_nx_lock);
+    if (s_nx_mode == NX_PHYSICAL) {
+        /* No object to share: the first view gets fresh memory, and later
+         * views -- which would need to alias it -- fail (MapViewOfFileEx). */
+        o = obj_alloc(K_FILEMAP);
+        o->fd       = -1;
+        o->map_size = size;
+        return (HANDLE)o;
+    }
+    rc = svcCreateSharedMemory(&shm, nx_page(size), Perm_Rw, Perm_R);
+    if (R_FAILED(rc)) {
+        fprintf(stderr, "  [NX] file mapping of %zu KB failed: 0x%X\n",
+                (size_t)size / 1024, rc);
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return NULL;
+    }
+    o = obj_alloc(K_FILEMAP);
+    o->fd       = (int)shm;
+    o->map_size = size;
+    return (HANDLE)o;
+}
+
+HANDLE CreateFileMappingW(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect,
+                          DWORD maxSizeHigh, DWORD maxSizeLow, LPCWSTR name)
+{
+    (void)name;
+    return CreateFileMappingA(file, sa, protect, maxSizeHigh, maxSizeLow, NULL);
+}
+
+LPVOID MapViewOfFileEx(HANDLE mapping, DWORD access, DWORD offHigh, DWORD offLow,
+                       SIZE_T count, LPVOID baseAddr)
+{
+    w32_object *o = obj_from(mapping);
+    size_t len;
+    uintptr_t at;
+
+    (void)access; (void)count;
+    if (!o || o->kind != K_FILEMAP) { SetLastError(ERROR_INVALID_HANDLE); return NULL; }
+    if (offHigh || offLow) { SetLastError(ERROR_INVALID_PARAMETER); return NULL; }
+    /* Horizon maps a shared-memory object whole. */
+    len = nx_page(o->map_size);
+    pthread_mutex_lock(&s_nx_lock);
+    if (baseAddr) {
+        at = (uintptr_t)baseAddr;
+    } else {
+        virtmemLock();
+        at = (uintptr_t)virtmemFindAslr(len, 0x10000);
+        virtmemUnlock();
+    }
+    if (o->fd == -1) {                              /* NX_PHYSICAL */
+        if (o->timer_due) {                         /* already has its first view */
+            /* A second view has to be the same memory: the Xbox reaches RAM
+             * at 0x00000000 and again at 0x80000000, and a title writes
+             * through one and reads through the other -- without the alias
+             * a pointer read back through 0x80xxxxxx was stale (0xAAAAAAAA)
+             * and crashed the console build after Start. svcMapProcessMemory
+             * on our own process maps the first view's pages again. */
+            static int said;
+            Result rc = (Result)-1;
+            if (at && o->nx_view0 && envIsSyscallHinted(0x74))
+                rc = svcMapProcessMemory((void *)at, envGetOwnProcessHandle(),
+                                         (u64)o->nx_view0, len);
+            if (R_SUCCEEDED(rc)) {
+                nx_region *r = nx_add(at, len, 0, 0, 0);
+                if (r) r->alias_of = o->nx_view0;
+                if (!said++)
+                    fprintf(stderr, "  [NX] aliasing views with svcMapProcessMemory\n");
+                view_register((void *)at, len);
+                pthread_mutex_unlock(&s_nx_lock);
+                return (LPVOID)at;
+            }
+            if (!said++)
+                fprintf(stderr, "  [NX] second view of a mapping refused (0x%X): this host"
+                        " cannot alias memory\n", rc);
+            pthread_mutex_unlock(&s_nx_lock);
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return NULL;
+        }
+        if (!baseAddr) {
+            virtmemLock();
+            at = (uintptr_t)virtmemFindAslr(len, 0x10000);
+            virtmemUnlock();
+        }
+        if (!at || !nx_commit(at, len)) {
+            pthread_mutex_unlock(&s_nx_lock);
+            SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+            return NULL;
+        }
+        o->timer_due = 1;
+        o->nx_view0 = at;
+        view_register((void *)at, len);
+        pthread_mutex_unlock(&s_nx_lock);
+        return (LPVOID)at;
+    }
+    if (!at || !nx_map_shm((Handle)o->fd, at, len)) {
+        pthread_mutex_unlock(&s_nx_lock);
+        SetLastError(ERROR_NOT_ENOUGH_MEMORY);
+        return NULL;
+    }
+    nx_add(at, len, (Handle)o->fd, 0, 0);
+    view_register((void *)at, len);
+    pthread_mutex_unlock(&s_nx_lock);
+    return (LPVOID)at;
+}
+
+BOOL UnmapViewOfFile(LPCVOID baseAddr)
+{
+    return VirtualFree((LPVOID)baseAddr, 0, MEM_RELEASE);
+}
+#else
 /* An unnamed file descriptor that ftruncate and mmap both accept. Linux has
  * memfd_create for this; elsewhere an immediately-unlinked temp file does. */
 static int anon_map_fd(const char *name)
@@ -1640,7 +2446,7 @@ HANDLE CreateFileMappingW(HANDLE file, LPSECURITY_ATTRIBUTES sa, DWORD protect,
 LPVOID MapViewOfFileEx(HANDLE mapping, DWORD access, DWORD offHigh, DWORD offLow,
                        SIZE_T count, LPVOID baseAddr)
 {
-    w32_object *o = (w32_object *)mapping;
+    w32_object *o = obj_from(mapping);
     if (!o || o->kind != K_FILEMAP) { SetLastError(ERROR_INVALID_HANDLE); return NULL; }
 
     off_t  off = ((off_t)offHigh << 32) | offLow;
@@ -1695,6 +2501,8 @@ BOOL UnmapViewOfFile(LPCVOID baseAddr)
     if (len == 0) return FALSE;
     return munmap((void *)baseAddr, len) == 0;
 }
+
+#endif /* __SWITCH__ */
 
 /* ===================================================================== */
 /* VirtualQuery                                                           */
@@ -1753,7 +2561,17 @@ SIZE_T VirtualQuery(LPCVOID address, PMEMORY_BASIC_INFORMATION buffer, SIZE_T le
 BOOL GlobalMemoryStatusEx(LPMEMORYSTATUSEX b)
 {
     if (!b) return FALSE;
-#if defined(__APPLE__)
+#if defined(__SWITCH__)
+    {
+        u64 total = 0, used = 0;
+        svcGetInfo(&total, InfoType_TotalMemorySize, CUR_PROCESS_HANDLE, 0);
+        svcGetInfo(&used, InfoType_UsedMemorySize, CUR_PROCESS_HANDLE, 0);
+        b->ullTotalPhys = total;
+        b->ullAvailPhys = total > used ? total - used : 0;
+        b->ullTotalPageFile = b->ullTotalPhys;
+        b->ullAvailPageFile = b->ullAvailPhys;
+    }
+#elif defined(__APPLE__)
     /* Darwin has no sysinfo(2): physical memory comes from sysctl hw.memsize,
      * swap from vm.swapusage, the free page count from the Mach VM statistics. */
     uint64_t memsize = 0;
@@ -1810,7 +2628,12 @@ void *_aligned_malloc(SIZE_T size, SIZE_T alignment)
     SIZE_T a = sizeof(void *);
     while (a < alignment) a <<= 1;
     void *p = NULL;
+#if defined(__SWITCH__)
+    p = memalign(a, size ? size : 1);   /* newlib has no posix_memalign */
+    if (!p) return NULL;
+#else
     if (posix_memalign(&p, a, size ? size : 1) != 0) return NULL;
+#endif
     return p;
 }
 
@@ -1862,6 +2685,24 @@ WCHAR *xbox_wcscpy(WCHAR *dst, const WCHAR *src)
 /* ===================================================================== */
 /* Time conversion                                                        */
 /* ===================================================================== */
+
+#if defined(__SWITCH__)
+/* newlib has no timegm. UTC calendar date to seconds since 1970, from the
+ * civil-from-days inverse (valid for the proleptic Gregorian calendar). */
+static time_t timegm(const struct tm *tm)
+{
+    long long y = (long long)tm->tm_year + 1900, m = tm->tm_mon + 1, d = tm->tm_mday;
+    long long era, yoe, doy, doe, days;
+
+    y -= m <= 2;
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = y - era * 400;
+    doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    days = era * 146097 + doe - 719468;
+    return (time_t)(days * 86400 + tm->tm_hour * 3600 + tm->tm_min * 60 + tm->tm_sec);
+}
+#endif
 
 BOOL SystemTimeToFileTime(const SYSTEMTIME *st, LPFILETIME ft)
 {

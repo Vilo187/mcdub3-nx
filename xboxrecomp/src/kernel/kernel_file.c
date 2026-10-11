@@ -68,6 +68,7 @@ uint32_t xbox_LastFileError(void)
 }
 
 #if defined(_WIN32)
+void xbox_dir_forget(HANDLE h);
 /* ====================  Win32 backend  =================================== */
 /* ======================================================================== */
 
@@ -309,6 +310,7 @@ NTSTATUS __stdcall xbox_NtClose(HANDLE Handle)
 {
     XBOX_TRACE(XBOX_LOG_FILE, "NtClose(handle=%p)", Handle);
     if (Handle && Handle != INVALID_HANDLE_VALUE) {
+        xbox_dir_forget(Handle);
         CloseHandle(Handle);
         return STATUS_SUCCESS;
     }
@@ -614,6 +616,9 @@ static DIR_CONTEXT* find_or_create_dir_context(HANDLE FileHandle, BOOL create)
     return NULL;
 }
 
+/* Windows: enumerations are FindFirstFile handles; nothing kept here. */
+void xbox_dir_forget(HANDLE h) { (void)h; }
+
 NTSTATUS __stdcall xbox_NtQueryDirectoryFile(
     HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext,
     PXBOX_IO_STATUS_BLOCK IoStatusBlock, PVOID FileInformation, ULONG Length,
@@ -782,6 +787,89 @@ static NTSTATUS errno_to_status(int e)
     }
 }
 
+/* The descriptor of a directory handle on hosts that cannot open() one. */
+#define XBOX_DIR_FD (-2)
+
+#if defined(__SWITCH__)
+#include <pthread.h>
+
+/* File I/O never touches guest memory directly on Horizon.
+ *
+ * Guest RAM is code memory (svcCreateCodeMemory + MapOwner), and a read() or
+ * write() on the SD card hands its buffer to the fs service over IPC. The
+ * title's page-sized reads into its heap go through, but the save code's
+ * small reads into buffers that don't start on a page -- SaveMeta.xbx's
+ * 2-byte BOM, then 280 bytes -- never came back: the console froze with
+ * nothing more in the log (ams.mitm, which fronts the SD card, has aborted
+ * on the same path). Eden doesn't check IPC buffers, so only hardware showed
+ * it. Everything goes through an ordinary .bss buffer instead. */
+#define XBOX_IO_BOUNCE (256u * 1024u)
+static char s_io_bounce[XBOX_IO_BOUNCE] __attribute__((aligned(0x1000)));
+static pthread_mutex_t s_io_bounce_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static ssize_t host_read(int fd, void *buf, size_t len)
+{
+    size_t done = 0;
+
+    pthread_mutex_lock(&s_io_bounce_lock);
+    while (done < len) {
+        size_t want = len - done < XBOX_IO_BOUNCE ? len - done : XBOX_IO_BOUNCE;
+        ssize_t n = read(fd, s_io_bounce, want);
+        if (n < 0) {
+            if (!done) {
+                pthread_mutex_unlock(&s_io_bounce_lock);
+                return -1;
+            }
+            break;
+        }
+        memcpy((char *)buf + done, s_io_bounce, (size_t)n);
+        done += (size_t)n;
+        if ((size_t)n < want)
+            break;                          /* end of file */
+    }
+    pthread_mutex_unlock(&s_io_bounce_lock);
+    return (ssize_t)done;
+}
+
+static ssize_t host_write(int fd, const void *buf, size_t len)
+{
+    size_t done = 0;
+
+    pthread_mutex_lock(&s_io_bounce_lock);
+    while (done < len) {
+        size_t want = len - done < XBOX_IO_BOUNCE ? len - done : XBOX_IO_BOUNCE;
+        ssize_t n;
+        memcpy(s_io_bounce, (const char *)buf + done, want);
+        n = write(fd, s_io_bounce, want);
+        if (n < 0) {
+            if (!done) {
+                pthread_mutex_unlock(&s_io_bounce_lock);
+                return -1;
+            }
+            break;
+        }
+        done += (size_t)n;
+        if ((size_t)n < want)
+            break;
+    }
+    pthread_mutex_unlock(&s_io_bounce_lock);
+    return (ssize_t)done;
+}
+#else
+#define host_read  read
+#define host_write write
+#endif
+
+/* fstat, or stat of the handle's path for a directory handle. */
+static int handle_stat(HANDLE h, int fd, struct stat *st)
+{
+    if (fd == XBOX_DIR_FD) {
+        const char *p = w32_handle_path(h);
+        return p ? stat(p, st) : -1;
+    }
+    return fstat(fd, st);
+}
+
 NTSTATUS __stdcall xbox_NtCreateFile(
     PHANDLE FileHandle, ACCESS_MASK DesiredAccess,
     PXBOX_OBJECT_ATTRIBUTES ObjectAttributes, PXBOX_IO_STATUS_BLOCK IoStatusBlock,
@@ -804,12 +892,28 @@ NTSTATUS __stdcall xbox_NtCreateFile(
     if (CreateOptions & XBOX_FILE_DIRECTORY_FILE) {
         if (CreateDisposition == XBOX_FILE_CREATE || CreateDisposition == XBOX_FILE_OPEN_IF)
             mkdir(host_path, 0755);   /* EEXIST is fine */
+#if defined(__SWITCH__)
+        /* Horizon's filesystem layer cannot open() a directory. A
+         * directory handle only needs its path (enumeration uses opendir on
+         * it), so it gets a descriptor that names no file; the calls that
+         * would fstat it stat the path instead (handle_stat). */
+        {
+            struct stat dst;
+            if (stat(host_path, &dst) == 0 && S_ISDIR(dst.st_mode)) {
+                fd = XBOX_DIR_FD;
+            } else {
+                errno = ENOENT;
+                fd = -1;
+            }
+        }
+#else
         fd = open(host_path, O_RDONLY | O_DIRECTORY);
+#endif
     } else {
         fd = open(host_path, posix_open_flags(DesiredAccess, CreateDisposition), 0644);
     }
 
-    if (fd < 0) {
+    if (fd < 0 && fd != XBOX_DIR_FD) {
         int e = errno;
         XBOX_TRACE(XBOX_LOG_FILE, "NtCreateFile FAILED: %s (errno=%d)", host_path, e);
         if (IoStatusBlock) {
@@ -828,6 +932,8 @@ NTSTATUS __stdcall xbox_NtCreateFile(
     return STATUS_SUCCESS;
 }
 
+void (*xbox_file_read_hook)(void *buf, size_t len, int64_t offset);
+
 NTSTATUS __stdcall xbox_NtReadFile(
     HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext,
     PXBOX_IO_STATUS_BLOCK IoStatusBlock, PVOID Buffer, ULONG Length,
@@ -843,10 +949,15 @@ NTSTATUS __stdcall xbox_NtReadFile(
         return STATUS_INVALID_HANDLE;
     }
 
-    if (ByteOffset && ByteOffset->QuadPart >= 0)
+    int64_t pos = -1;
+    if (ByteOffset && ByteOffset->QuadPart >= 0) {
         lseek(fd, (off_t)ByteOffset->QuadPart, SEEK_SET);
+        pos = ByteOffset->QuadPart;
+    } else if (xbox_file_read_hook) {
+        pos = (int64_t)lseek(fd, 0, SEEK_CUR);
+    }
 
-    ssize_t n = read(fd, Buffer, Length);
+    ssize_t n = host_read(fd, Buffer, Length);
     if (n < 0) {
         XBOX_TRACE(XBOX_LOG_FILE, "NtReadFile(handle=%p) errno=%d", FileHandle, errno);
         IoStatusBlock->Status = STATUS_UNSUCCESSFUL;
@@ -859,6 +970,8 @@ NTSTATUS __stdcall xbox_NtReadFile(
         IoStatusBlock->Status = STATUS_END_OF_FILE;
         return STATUS_END_OF_FILE;
     }
+    if (xbox_file_read_hook && n > 0)
+        xbox_file_read_hook(Buffer, (size_t)n, pos);
     IoStatusBlock->Status = STATUS_SUCCESS;
     if (Event) SetEvent(Event);
     return STATUS_SUCCESS;
@@ -882,7 +995,7 @@ NTSTATUS __stdcall xbox_NtWriteFile(
     if (ByteOffset && ByteOffset->QuadPart >= 0)
         lseek(fd, (off_t)ByteOffset->QuadPart, SEEK_SET);
 
-    ssize_t n = write(fd, Buffer, Length);
+    ssize_t n = host_write(fd, Buffer, Length);
     if (n < 0) {
         XBOX_TRACE(XBOX_LOG_FILE, "NtWriteFile(handle=%p) errno=%d", FileHandle, errno);
         IoStatusBlock->Status = STATUS_UNSUCCESSFUL;
@@ -896,10 +1009,13 @@ NTSTATUS __stdcall xbox_NtWriteFile(
     return STATUS_SUCCESS;
 }
 
+void xbox_dir_forget(HANDLE h);
+
 NTSTATUS __stdcall xbox_NtClose(HANDLE Handle)
 {
     XBOX_TRACE(XBOX_LOG_FILE, "NtClose(handle=%p)", Handle);
     if (Handle && Handle != INVALID_HANDLE_VALUE) {
+        xbox_dir_forget(Handle);
         CloseHandle(Handle);
         return STATUS_SUCCESS;
     }
@@ -927,12 +1043,12 @@ NTSTATUS __stdcall xbox_NtQueryInformationFile(
         return STATUS_INVALID_PARAMETER;
 
     int fd = w32_handle_fd(FileHandle);
-    if (fd < 0)
+    if (fd < 0 && fd != XBOX_DIR_FD)
         return STATUS_INVALID_HANDLE;
 
     struct stat st;
     if (FileInformationClass != XboxFilePositionInformation) {
-        if (fstat(fd, &st) != 0)
+        if (handle_stat(FileHandle, fd, &st) != 0)
             return STATUS_UNSUCCESSFUL;
     }
 
@@ -1060,7 +1176,12 @@ NTSTATUS __stdcall xbox_NtQueryVolumeInformationFile(
              * XBOX_SECTORS_PER_CLUSTER above. */
             info->BytesPerSector = XBOX_BYTES_PER_SECTOR;
             info->SectorsPerAllocationUnit = XBOX_SECTORS_PER_CLUSTER;
+#if defined(__SWITCH__)
+            (void)vfs;
+            if (0) {                    /* newlib has no fstatvfs */
+#else
             if (fd >= 0 && fstatvfs(fd, &vfs) == 0) {
+#endif
                 ULONGLONG cs = (ULONGLONG)info->BytesPerSector * info->SectorsPerAllocationUnit;
                 ULONGLONG total = (ULONGLONG)vfs.f_blocks * vfs.f_frsize;
                 ULONGLONG avail = (ULONGLONG)vfs.f_bavail * vfs.f_frsize;
@@ -1128,6 +1249,31 @@ typedef struct {
 static DIR_CONTEXT s_dir_contexts[MAX_DIR_CONTEXTS];
 static CRITICAL_SECTION s_dir_cs;
 static BOOL s_dir_cs_init = FALSE;
+
+/* NtClose on a directory handle: drop its enumeration.
+ *
+ * A context was only released when a scan ran to the end. Titles stop early
+ * -- NFSU2 lists its save folder until it finds the entry it wants, then
+ * closes the handle -- so every such scan left a DIR* open for good. On a
+ * Switch each one is a session in Atmosphere's SD layer (ams.mitm), which
+ * after enough of them calls std::abort() and takes the whole console down
+ * ("A fatal error occurred when running Atmosphere", program 010041544D530000)
+ * -- or hangs it -- a few Start presses into the save checks. The stale
+ * context was also found again by any later handle that reused the value. */
+void xbox_dir_forget(HANDLE h)
+{
+    if (!h || !s_dir_cs_init)
+        return;
+    EnterCriticalSection(&s_dir_cs);
+    for (int i = 0; i < MAX_DIR_CONTEXTS; i++)
+        if (s_dir_contexts[i].handle == h) {
+            if (s_dir_contexts[i].dir)
+                closedir(s_dir_contexts[i].dir);
+            s_dir_contexts[i].dir = NULL;
+            s_dir_contexts[i].handle = NULL;
+        }
+    LeaveCriticalSection(&s_dir_cs);
+}
 
 NTSTATUS __stdcall xbox_NtQueryDirectoryFile(
     HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext,
