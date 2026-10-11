@@ -78,6 +78,13 @@ else()
     set(MC3_GEN_OPT "-O1" CACHE STRING "Optimisation for the lifted code")
 endif()
 set(MC3_GEN_FLAGS "${MC3_GEN_OPT};-w;-fno-strict-aliasing;-fwrapv")
+# Debug info for the lifted C is gigabytes per build tree. Off by default:
+# backtraces and gdb breakpoints still name every sub_XXXXXXXX (symbols stay);
+# turn it on to step through lifted C line by line.
+option(MC3_GEN_DEBUGINFO "Debug info (-g) for the lifted code" OFF)
+if(NOT MC3_GEN_DEBUGINFO)
+    list(APPEND MC3_GEN_FLAGS "-g0")
+endif()
 
 # Link-time optimisation of the lifted code and the manual overrides, so lifted
 # callers inline each other (~1-2 GB of RAM per LTO job).
