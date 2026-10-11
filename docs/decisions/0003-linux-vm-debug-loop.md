@@ -10,7 +10,7 @@ development machine is an M1 Pro Mac (16 GB).
 
 ## Decision
 
-One Ubuntu ARM64 VM in UTM for lifting, the windowed Linux build with gdb, and
+One Ubuntu ARM64 VM (Parallels Desktop or UTM) for lifting, the windowed Linux build with gdb, and
 Switch cross-builds (docs/dev-environment.md). Heavy data lives on the VM disk
 in `$MC3_WORK`, never in the repo or a shared folder.
 

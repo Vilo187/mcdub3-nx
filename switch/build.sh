@@ -62,8 +62,10 @@ ELF_KEEP="$MC3_WORK/elf/$NRO_NAME-$(md5sum "$DEST/$NRO_NAME.nro" | cut -c1-8).el
 cp "$BUILD/mc3_recomp.elf" "$ELF_KEEP"
 if [ "${NO_GAME:-0}" != "1" ]; then
     [ -f "$MC3_GAME_DIR/default.xbe" ] || mc3_fail "no extracted disc in $MC3_GAME_DIR"
-    # The disc is gigabytes: copy only what changed.
-    rsync -a --size-only "$MC3_GAME_DIR/" "$DEST/game/" --exclude '*_analysis.json'
+    # The disc is gigabytes: hard-link it from $MC3_GAME_DIR instead of
+    # copying (same disk, no extra space); only changed files are copied.
+    rsync -a --size-only --link-dest="$MC3_GAME_DIR/" \
+        "$MC3_GAME_DIR/" "$DEST/game/" --exclude '*_analysis.json'
 fi
 echo
 echo "staged $DEST"
