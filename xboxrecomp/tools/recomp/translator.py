@@ -41,6 +41,15 @@ def _merge_flag_states(states):
     first = states[0]
     if all(state == first for state in states[1:]):
         return first
+    # comiss/ucomiss (ss and sd) all snapshot into the same _fca/_fcb, so a
+    # consumer after a join reads whichever compare ran. The operands only
+    # feed the comment. Refusing this merge turned the jb after two comiss
+    # predecessors into `if (_flags)` -- never taken.
+    from .lifter import SSE_COMPARES
+    if first[0] in SSE_COMPARES:
+        if all(kind in SSE_COMPARES for kind, _ in states[1:]):
+            return first
+        return None
     if first[0] in ("cmp", "test") and len(first[1]) == 2:
         width = _operand_width(first[1][0]) or _operand_width(first[1][1])
         for kind, ops in states[1:]:
@@ -115,6 +124,230 @@ def write_if_changed(path, text):
     with open(path, "w", encoding="utf-8") as f:
         f.write(text)
     return True
+
+
+# Instructions a leaf may contain and still keep its registers in C locals:
+# each lifts to explicit reads and writes of the registers it names, with no
+# helper that reaches the globals behind the generated code's back.
+_LEAF_INT_OPS = frozenset({
+    "mov", "movzx", "movsx", "lea", "add", "sub", "inc", "dec", "neg", "not",
+    "and", "or", "xor", "cmp", "test", "shl", "sal", "shr", "sar",
+    "push", "pop", "nop",
+})
+_LEAF_MMX_OPS = (frozenset(Lifter._MMX_BINARY) | frozenset(Lifter._MMX_SHIFT)
+                 | frozenset({"movq", "movd", "emms",
+                              "pand", "pandn", "por", "pxor"}))
+_LEAF_REGS = (("eax", "uint32_t"), ("ecx", "uint32_t"), ("edx", "uint32_t"),
+              ("ebx", "uint32_t"), ("esi", "uint32_t"), ("edi", "uint32_t")) \
+    + tuple((f"mm{i}", "RecompMmx") for i in range(8))
+
+
+def _localize_leaf_registers(lines, instructions, start, end):
+    """Keep an MMX leaf's registers in C locals.
+
+    The guest registers are thread-local globals, so every lifted instruction
+    loads its operands from memory and stores its result back, and nothing
+    stays in a host register -- a store through a guest pointer might alias
+    any of them. Cheap on an x86 desktop; on the Switch's A57 it is most of
+    the cost of the movie decoder's IDCT and motion compensation, which are
+    straight-line MMX (sub_0026EB34, sub_0025ECB4 in NFSU2).
+
+    A leaf -- no calls, branches only inside itself, only instructions that
+    name the registers they use -- can instead declare locals that shadow the
+    globals for its whole body (so even a macro expanding to g_eax reaches
+    the local), loaded after the pre-emption point and written back at every
+    return. esp stays global: interrupt delivery pushes through it.
+
+    Only functions that use MMX are rewritten; that is where the win is, and
+    it keeps the change away from the integer code everything else runs on.
+    """
+    import re
+    for insn in instructions:
+        m = insn.mnemonic
+        if insn.is_ret:
+            continue
+        if insn.is_branch:
+            t = insn.jump_target
+            if t is None or not (start <= t < end):
+                return lines
+            continue
+        if m not in _LEAF_INT_OPS and m not in _LEAF_MMX_OPS:
+            return lines
+        if any(s in insn.op_str for s in ("xmm", "fs:", "gs:", "st(")):
+            return lines
+
+    try:
+        at = next(i for i, l in enumerate(lines)
+                  if l.strip() == "RECOMP_PREEMPT();")
+    except StopIteration:
+        return lines
+    body = "\n".join(lines[at + 1:])
+    if ("RECOMP_ICALL" in body or "RECOMP_SPIN" in body
+            or re.search(r"\bsub_[0-9A-Fa-f]+(?:_gen)?\s*\(", body)):
+        return lines
+    used = [(r, t) for r, t in _LEAF_REGS if re.search(rf"\b{r}\b", body)]
+    if not any(r.startswith("mm") for r, _ in used):
+        return lines
+    if not re.search(r"\breturn;", body):
+        return lines
+
+    loads = [f"    {t} g_{r} = recomp_leaf_ld_{r}(); /* leaf: register in a local */"
+             for r, t in used]
+    store = " ".join(f"recomp_leaf_st_{r}(g_{r});" for r, _ in used)
+    out = lines[:at + 1] + loads
+    for l in lines[at + 1:]:
+        out.append(re.sub(r"\breturn;", f"{{ {store} return; }}", l))
+    return out
+
+
+def _wrap_calls(line, call_re, spill, reload):
+    """Put `spill` right before every call in `line` and `reload` right after
+    the call's own statement, so pushes on the same line (arguments, the
+    return address) happen before the spill and statements after the call
+    see the reloaded state. Returns in the line spill first."""
+    import re
+    if spill:
+        line = re.sub(r"\breturn;", f"{{ {spill} return; }}", line)
+    hits = list(call_re.finditer(line))
+    for m in reversed(hits):
+        start = m.start()
+        # End of the call's statement: the ';' after its balanced (...).
+        i = line.find("(", start)
+        depth, j = 0, i
+        while j < len(line):
+            if line[j] == "(":
+                depth += 1
+            elif line[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            j += 1
+        k = line.find(";", j)
+        if i < 0 or k < 0:
+            continue
+        line = line[:k + 1] + f" {reload}" + line[k + 1:]
+        line = line[:start] + f"{spill} " + line[start:]
+    return line
+
+
+# A line that can run other lifted code: a direct, ABI-wrapped or indirect
+# call, or an indirect tail call. Whatever runs there may use the x87 stack.
+_X87_CALL_RE = None
+
+
+def _localize_x87_stack(lines):
+    """Keep a function's x87 stack in C locals.
+
+    g_fp_stack[8] and g_fp_top are thread-local globals, so every fld, fstp
+    and fmul the lifter emits is a read-modify-write of memory -- on the
+    Switch through a __aarch64_read_tp call each time -- and, the lifted code
+    being built -fno-strict-aliasing, any guest store may alias them, so no
+    value ever stays in a host register. NFSU2's hot render and physics code
+    is x87 (sub_0009A330, sub_000A3CA0, sub_002A68EC), and that was most of
+    its main thread on the console.
+
+    Instead the function declares locals that shadow the globals (the fp_*
+    macros and the lifter's g_fp_stack[...] expressions then name them): the
+    top index as an int, loaded after the pre-emption point, and the stack as
+    a pointer to this thread's array, taken once. Every line that can run
+    other lifted code stores the index back first and reloads it after, and
+    every return stores it, so callers and callees see the stack exactly as
+    before. (Copying all eight slots at each call instead was slower than
+    the globals: 2985 functions use the x87 stack, at a median of nine x87
+    operations per call.) RECOMP_X87_LOCALS=0 at regen turns it off.
+    """
+    import re
+    global _X87_CALL_RE
+    if _X87_CALL_RE is None:
+        _X87_CALL_RE = re.compile(
+            r"RECOMP_ABI_CALL\(|RECOMP_ICALL|RECOMP_ITAIL|"
+            r"\bsub_[0-9A-Fa-f]{8}(?:_gen)?\s*\(\s*\)")
+    try:
+        at = next(i for i, l in enumerate(lines)
+                  if l.strip() == "RECOMP_PREEMPT();")
+    except StopIteration:
+        return lines
+    body = lines[at + 1:]
+    text = "\n".join(body)
+    nfp = len(re.findall(r"\bfp_(?:push|pop|top|st1?)\b|\bg_fp_stack\b", text))
+    if not nfp:
+        return lines
+    # Anything that reaches the stack behind the macros' back, or can leave
+    # the function other than by a call or a return, keeps the globals.
+    if re.search(r"setjmp|longjmp|RECOMP_SEH|recomp_fsave|recomp_frstor|"
+                 r"recomp_fxsave|recomp_fxrstor|recomp_fldenv|recomp_fstenv", text):
+        return lines
+    spill = "recomp_fp_top_st(g_fp_top);"
+    reload = "g_fp_top = recomp_fp_top_ld();"
+    out = lines[:at + 1]
+    out.append("    double *const g_fp_stack = recomp_fp_base(); "
+               "int g_fp_top = recomp_fp_top_ld(); /* x87 top in a local */")
+    for l in body:
+        out.append(_wrap_calls(l, _X87_CALL_RE, spill, reload))
+    # Control that runs off the end returns too (steps after this one add
+    # the closing brace).
+    out.append(f"    {spill} /* x87 top back at the end */")
+    return out
+
+
+# Lines that can run other lifted code or read and write the registers
+# behind a function's back: calls of every kind, the kernel (through ICALL),
+# the unimplemented-instruction logger, the debug service, and the spin
+# hint, which may hand the guest lock to another thread.
+_REG_CALL_RE = None
+_REG_NAMES = ("eax", "ecx", "edx", "ebx", "esi", "edi", "esp")
+
+
+def _localize_registers(lines):
+    """Keep a function's integer registers in C locals.
+
+    The guest registers are thread-local globals (RECOMP_TLS): on the Switch
+    each access goes through a __aarch64_read_tp call (4.6% of NFSU2's main
+    thread on its own), and since the lifted code is built
+    -fno-strict-aliasing, every guest store may alias every register, so
+    none stays in a host register across a store. The whole game's integer
+    code pays that, not only its x87 code.
+
+    The function declares locals that shadow g_eax .. g_esp by name (the
+    eax .. esp macros then reach them), loaded after the pre-emption point.
+    Every line that can run other code or look at the registers -- a call,
+    an indirect call or tail call, a kernel call, the spin hint's yield --
+    stores all of them back first and reloads them after; every return
+    stores them. Callers, callees, the kernel bridges and interrupt delivery
+    therefore see the registers exactly where they used to. Functions with
+    their own register locals (MMX leaves) or with setjmp/SEH are left alone.
+    RECOMP_REG_LOCALS=0 at regen turns it off.
+    """
+    import re
+    global _REG_CALL_RE
+    if _REG_CALL_RE is None:
+        _REG_CALL_RE = re.compile(
+            r"RECOMP_ABI_CALL\(|RECOMP_ICALL|RECOMP_ITAIL|RECOMP_UNIMPL\(|"
+            r"RECOMP_SPIN_HINT|recomp_debug_service\(|xbe_entry_point\(|"
+            r"\bsub_[0-9A-Fa-f]{8}(?:_gen)?\s*\(\s*\)")
+    try:
+        at = next(i for i, l in enumerate(lines)
+                  if l.strip() == "RECOMP_PREEMPT();")
+    except StopIteration:
+        return lines
+    body = lines[at + 1:]
+    text = "\n".join(body)
+    if ("leaf: register in a local" in text
+            or re.search(r"setjmp|longjmp|RECOMP_SEH", text)):
+        return lines
+    used = [r for r in _REG_NAMES if re.search(rf"\b{r}\b", text)]
+    if not used:
+        return lines
+
+    spill = " ".join(f"recomp_leaf_st_{r}(g_{r});" for r in used)
+    reload = " ".join(f"g_{r} = recomp_leaf_ld_{r}();" for r in used)
+    out = lines[:at + 1]
+    out.append("    " + " ".join(f"uint32_t g_{r} = recomp_leaf_ld_{r}();" for r in used)
+               + " /* registers in locals */")
+    for l in body:
+        out.append(_wrap_calls(l, _REG_CALL_RE, spill, reload))
+    out.append(f"    {spill} /* registers back at the end */")
+    return out
 
 
 def _fixup_icall_esp_save(lines):
@@ -1331,6 +1564,7 @@ class FunctionTranslator:
             "cmpsb": {"esi", "edi"}, "cmpsw": {"esi", "edi"},
             "loop": {"ecx"}, "loope": {"ecx"}, "loopne": {"ecx"},
             "leave": {"esp", "ebp"}, "popad": set(full_registers),
+            "popal": set(full_registers),
             "xlat": {"eax"}, "xlatb": {"eax"},
         }
 
@@ -1919,6 +2153,10 @@ class FunctionTranslator:
         # Ensure ebp tracked if function uses 'leave' (implicit ebp)
         if any(insn.mnemonic == "leave" for insn in instructions):
             used_regs.add("ebp")
+        # pushad/popad name all eight registers without operands.
+        if any(insn.mnemonic in ("pushal", "popal", "pushad", "popad")
+               for insn in instructions):
+            used_regs |= {"eax", "ebx", "ecx", "edx", "esi", "edi", "ebp", "esp"}
 
         # Guest control leaves the bottom of this function when its last
         # instruction neither returns, jumps, nor traps. A function the lifter
@@ -2085,6 +2323,10 @@ class FunctionTranslator:
             lines.append("    ebp = g_ebp;  /* prologue saves caller's frame */")
         elif "ebp" in used_regs:
             lines.append("    ebp = g_ebp;  /* frameless: caller's frame */")
+
+        # A pre-emption point: yields the guest lock when another guest
+        # thread has been waiting for it (recomp_types.h, kernel_bridge.c).
+        lines.append("    RECOMP_PREEMPT();")
 
         # Add _flags variable if function has conditional instructions
         has_conditionals = any(
@@ -2320,6 +2562,13 @@ class FunctionTranslator:
         # PUSH32(esp, <retva>); RECOMP_ICALL_SAFE(...).
         # We insert "uint32_t _icall_esp = g_esp;" before the first arg push.
         lines = _fixup_icall_esp_save(lines)
+
+        if os.environ.get("RECOMP_LEAF_LOCALS", "1") != "0":
+            lines = _localize_leaf_registers(lines, instructions, start, end)
+        if os.environ.get("RECOMP_X87_LOCALS", "1") != "0":
+            lines = _localize_x87_stack(lines)
+        if os.environ.get("RECOMP_REG_LOCALS", "1") != "0":
+            lines = _localize_registers(lines)
 
         # Validate: comment out goto targets that reference missing labels
         # (dead code after unconditional jumps may reference non-existent labels)
@@ -2673,7 +2922,8 @@ class BatchTranslator:
 
     def translate_batch_split(self, func_list, output_dir, chunk_size=1000,
                               header_name="recomp_funcs.h",
-                              prefix="recomp", verbose=False, manual=None):
+                              prefix="recomp", verbose=False, manual=None,
+                              wrapped=None, mmio_sections=None):
         """
         Translate functions into multiple .c files + a shared header.
 
@@ -2690,20 +2940,39 @@ class BatchTranslator:
         is how a game replaces a recompiled XDK routine (a D3D8 entry point,
         say) with one that drives the host runtime instead of the hardware.
 
+        wrapped: addresses the project wraps -- it defines sub_X itself and
+        calls the generated body, emitted as sub_X_gen. Their bodies ARE
+        generated, but every call to them, direct or through the dispatch
+        table, has to reach the wrapper: routed like `manual`, and entered in
+        the dispatch table under the wrapper's plain name.
+
+        mmio_sections: XBE section names (e.g. {"DSOUND"}) whose functions
+        drive hardware registers. Their memory accesses are rewritten to the
+        MMIO_RD/MMIO_WR accessors (see mmio_rewrite.py), so a device model can
+        answer them on a host with no fault handling.
+
         Returns dict with stats and list of generated files.
         """
         import sys
+        from .mmio_rewrite import rewrite as mmio_rewrite
+        from .spin_hint import rewrite as spin_hint
 
         os.makedirs(output_dir, exist_ok=True)
+        mmio_sections = set(mmio_sections or ())
 
         func_list = [item for item in func_list
                      if item[0] not in self.translator.owned_function_starts]
         manual = set(manual or ())
+        wrapped = set(wrapped or ()) - manual
         # Hand the set to the lifter so a *direct* call to a replaced
         # function routes through recomp_lookup_manual too. Without this
         # the override only took effect through a function pointer, and
-        # every direct caller silently reached the generated body.
-        self.translator.lifter.manual_functions = manual
+        # every direct caller silently reached the generated body. Wrapped
+        # functions are routed the same way: renaming the body to sub_X_gen
+        # renamed every direct call site with it, so the wrapper only ever
+        # ran when something reached it through a function pointer.
+        self.translator.lifter.manual_functions = manual | wrapped
+        self.translator.lifter.wrapped_functions = wrapped
         manual_decls = {}
 
         # Translate all functions first, collecting results
@@ -2727,6 +2996,13 @@ class BatchTranslator:
                 continue
 
             code = self.translator.translate_function(addr, func_info)
+            if code and func_info.get("section") in mmio_sections:
+                code = mmio_rewrite(code)
+                stats["mmio_functions"] = stats.get("mmio_functions", 0) + 1
+            if code:
+                code, spins = spin_hint(code)
+                if spins:
+                    stats["spin_loops"] = stats.get("spin_loops", 0) + spins
             if code:
                 translations.append((addr, name, code))
                 stats["translated"] += 1
@@ -2747,6 +3023,7 @@ class BatchTranslator:
         # translated chunks.
         defined = {name for _, name, _ in translations}
         defined |= set(manual_decls.values())   # hand-written, but defined
+        defined |= {f"sub_{a:08X}" for a in wrapped}  # the project's wrappers
         unresolved = {
             addr: name
             for addr, name in self.translator.lifter.referenced_calls.items()
@@ -2788,6 +3065,14 @@ class BatchTranslator:
             for addr in sorted(manual_decls):
                 header_lines.append(
                     f"void {manual_decls[addr]}(void);  /* 0x{addr:08X} */")
+
+        if wrapped:
+            header_lines.append("")
+            header_lines.append("/* Hand-written wrappers around a generated "
+                                "sub_X_gen (defined by the project) */")
+            for addr in sorted(wrapped):
+                header_lines.append(
+                    f"void sub_{addr:08X}(void);  /* 0x{addr:08X} */")
 
         if unresolved:
             header_lines.append("")
@@ -2954,8 +3239,9 @@ class BatchTranslator:
         # Sorted by address: recomp_lookup binary-searches this array, so an
         # appended entry would silently break every lookup past it.
         dispatch_entries = sorted(
-            list(translations) + [(addr, name, None)
-                                  for addr, name in manual_decls.items()],
+            [(addr, f"sub_{addr:08X}" if addr in wrapped else name, code)
+             for addr, name, code in translations]
+            + [(addr, name, None) for addr, name in manual_decls.items()],
             key=lambda e: e[0])
         dispatch_path = os.path.join(output_dir, f"{prefix}_dispatch.c")
         self._write_dispatch_table(dispatch_entries, dispatch_path, header_name)

@@ -172,6 +172,13 @@ extern RECOMP_TLS uint32_t g_ebx, g_esi, g_edi;
 extern RECOMP_TLS double g_fp_stack[8];
 extern RECOMP_TLS int g_fp_top;
 
+/* A function whose x87 top index lives in a local (the translator's
+ * _localize_x87_stack) takes this thread's stack once, and loads and stores
+ * the index around everything that can run other lifted code. */
+static inline double *recomp_fp_base(void) { return g_fp_stack; }
+static inline int recomp_fp_top_ld(void) { return g_fp_top; }
+static inline void recomp_fp_top_st(int top) { g_fp_top = top; }
+
 /**
  * SEH frame pointer bridge.
  *
@@ -225,9 +232,84 @@ extern RECOMP_TLS uint32_t g_seh_ebp;
 #include <intrin.h>
 #define RECOMP_ATOMIC_ADD32(p, v)     ((uint32_t)_InterlockedExchangeAdd((volatile long *)(p), (long)(v)))
 #define RECOMP_ATOMIC_CAS32(p, cmp, val)     ((uint32_t)_InterlockedCompareExchange((volatile long *)(p),                                            (long)(val), (long)(cmp)))
+#elif defined(__aarch64__)
+/* x86 does a lock-prefixed read-modify-write at any address; AArch64's
+ * exclusive and LSE atomics take an alignment fault on one that is not
+ * naturally aligned -- and titles do it: NFSU2's XNet does an interlocked OR
+ * on a field at ...306 once the player presses Start, which kills the process
+ * on a Switch (Eden does not model the fault). Aligned addresses keep the
+ * real atomic; a misaligned one goes through a single spinlock, which is
+ * atomic against every other misaligned access -- the only kind that can
+ * reach the same bytes, short of overlapping aligned ones. */
+#include <string.h>
+__attribute__((weak)) volatile int g_recomp_unaligned_atomic_lock;
+static inline uint32_t recomp_unaligned_rmw32(volatile void *p, int cas,
+                                              uint32_t cmp, uint32_t val)
+{
+    uint32_t old, nv;
+    while (__atomic_exchange_n(&g_recomp_unaligned_atomic_lock, 1, __ATOMIC_ACQUIRE))
+        while (__atomic_load_n(&g_recomp_unaligned_atomic_lock, __ATOMIC_RELAXED)) { }
+    memcpy(&old, (const void *)p, 4);
+    nv = cas ? val : old + val;
+    if (!cas || old == cmp)
+        memcpy((void *)p, &nv, 4);
+    __atomic_store_n(&g_recomp_unaligned_atomic_lock, 0, __ATOMIC_RELEASE);
+    return old;
+}
+static inline uint32_t recomp_atomic_add32(volatile void *p, uint32_t v)
+{
+    if (__builtin_expect(((uintptr_t)p & 3u) == 0, 1))
+        return __sync_fetch_and_add((volatile uint32_t *)p, v);
+    return recomp_unaligned_rmw32(p, 0, 0, v);
+}
+static inline uint32_t recomp_atomic_cas32(volatile void *p, uint32_t cmp, uint32_t val)
+{
+    if (__builtin_expect(((uintptr_t)p & 3u) == 0, 1))
+        return __sync_val_compare_and_swap((volatile uint32_t *)p, cmp, val);
+    return recomp_unaligned_rmw32(p, 1, cmp, val);
+}
+#define RECOMP_ATOMIC_ADD32(p, v)         recomp_atomic_add32((volatile void *)(uintptr_t)(p), (uint32_t)(v))
+#define RECOMP_ATOMIC_CAS32(p, cmp, val)  recomp_atomic_cas32((volatile void *)(uintptr_t)(p), (uint32_t)(cmp), (uint32_t)(val))
 #else
 #define RECOMP_ATOMIC_ADD32(p, v)     ((uint32_t)__sync_fetch_and_add((volatile uint32_t *)(p), (uint32_t)(v)))
 #define RECOMP_ATOMIC_CAS32(p, cmp, val)     ((uint32_t)__sync_val_compare_and_swap((volatile uint32_t *)(p),                                            (uint32_t)(cmp), (uint32_t)(val)))
+#endif
+
+/* The back edge of a poll loop (tools/recomp/spin_hint.py): a loop that only
+ * re-reads memory until another thread, the GPU or the APU changes it. The
+ * console time-sliced such a thread; a host core runs it flat out, which on a
+ * three-core Switch starves the very thread being waited for. A CPU pause
+ * hint every turn, a wake for the runtime's sleeping hardware threads every
+ * 16, a host yield every 64 -- which also hands the guest lock (kernel_bridge.c)
+ * to whichever guest thread, ISR or DPC the loop is waiting for. */
+#if defined(_MSC_VER)
+#define RECOMP_SPIN_HINT() _mm_pause()
+extern volatile int g_gil_contended;
+void recomp_preempt(void);
+#define RECOMP_PREEMPT() do { if (g_gil_contended) recomp_preempt(); } while (0)
+#else
+#include <sched.h>
+void recomp_spin_wake(void);        /* runtime: wake the hardware threads */
+void recomp_spin_yield(void);       /* runtime: yield, and the guest lock with it */
+/* At every lifted function entry: yield if another guest thread has been
+ * waiting for the guest lock (kernel_bridge.c). One load when nobody is. */
+extern volatile int g_gil_contended;
+void recomp_preempt(void);
+#define RECOMP_PREEMPT() do { if (__builtin_expect(g_gil_contended, 0)) recomp_preempt(); } while (0)
+static inline void recomp_spin_hint(void)
+{
+    static RECOMP_TLS unsigned turns;
+#if defined(__aarch64__)
+    __asm__ __volatile__("yield");
+#elif defined(__x86_64__) || defined(__i386__)
+    __builtin_ia32_pause();
+#endif
+    if ((++turns & 15u) == 0)
+        recomp_spin_wake();         /* someone is waiting: answer now */
+    if ((turns & 63u) == 0)
+        recomp_spin_yield();        /* lets other guest threads and ISRs run */
+}
+#define RECOMP_SPIN_HINT() recomp_spin_hint()
 #endif
 
 #include <setjmp.h>
@@ -389,20 +471,49 @@ void recomp_trace_esp(const char *name, const char *tag);
  */
 #define XBOX_PTR(addr) ((uintptr_t)(uint32_t)(addr) + g_xbox_mem_offset)
 
+/* Guest RAM accesses are volatile by default: a poll loop that re-reads a
+ * flag another thread (or the runtime) writes must not have its load hoisted.
+ * -DRECOMP_MEM_VOLATILE= builds them as plain accesses, for measuring what
+ * that costs; loops the spin-hint pass marks call out every few turns, which
+ * keeps them correct without volatile. */
+#ifndef RECOMP_MEM_VOLATILE
+#define RECOMP_MEM_VOLATILE volatile
+#endif
+
 /** Read/write N bytes at a flat Xbox memory address. */
-#define MEM8(addr)   (*(volatile uint8_t  *)XBOX_PTR(addr))
-#define MEM16(addr)  (*(volatile uint16_t *)XBOX_PTR(addr))
-#define MEM32(addr)  (*(volatile uint32_t *)XBOX_PTR(addr))
+#define MEM8(addr)   (*(RECOMP_MEM_VOLATILE uint8_t  *)XBOX_PTR(addr))
+#define MEM16(addr)  (*(RECOMP_MEM_VOLATILE uint16_t *)XBOX_PTR(addr))
+#define MEM32(addr)  (*(RECOMP_MEM_VOLATILE uint32_t *)XBOX_PTR(addr))
 
 /** Signed memory reads. */
-#define SMEM8(addr)  (*(volatile int8_t   *)XBOX_PTR(addr))
-#define SMEM16(addr) (*(volatile int16_t  *)XBOX_PTR(addr))
-#define SMEM32(addr) (*(volatile int32_t  *)XBOX_PTR(addr))
-#define SMEM64(addr) (*(volatile int64_t  *)XBOX_PTR(addr))
+#define SMEM8(addr)  (*(RECOMP_MEM_VOLATILE int8_t   *)XBOX_PTR(addr))
+#define SMEM16(addr) (*(RECOMP_MEM_VOLATILE int16_t  *)XBOX_PTR(addr))
+#define SMEM32(addr) (*(RECOMP_MEM_VOLATILE int32_t  *)XBOX_PTR(addr))
+#define SMEM64(addr) (*(RECOMP_MEM_VOLATILE int64_t  *)XBOX_PTR(addr))
 
 /** Float/double memory access. */
-#define MEMF(addr)   (*(volatile float    *)XBOX_PTR(addr))
-#define MEMD(addr)   (*(volatile double   *)XBOX_PTR(addr))
+#define MEMF(addr)   (*(RECOMP_MEM_VOLATILE float    *)XBOX_PTR(addr))
+#define MEMD(addr)   (*(RECOMP_MEM_VOLATILE double   *)XBOX_PTR(addr))
+
+/* Device-aware accesses, emitted only for functions in the sections given to
+ * tools.recomp --mmio-sections (the XDK's DSOUND, say). Addresses at or above
+ * 0xFD000000 -- the NV2A, MCPX and flash apertures -- go to the runtime,
+ * which hands the ones a device model owns to that model and treats the rest
+ * as the plain memory the apertures are backed with. Everything below is an
+ * ordinary access, so the cost outside the device range is one compare. */
+#define XBOX_MMIO_BASE 0xFD000000u
+uint32_t xbox_mmio_read(uint32_t va, unsigned size);
+void     xbox_mmio_write(uint32_t va, uint32_t val, unsigned size);
+#define XBOX_IS_MMIO(addr) ((uint32_t)(addr) >= XBOX_MMIO_BASE)
+#define MMIO_RD8(addr)  (XBOX_IS_MMIO(addr) ? (uint8_t)xbox_mmio_read((uint32_t)(addr), 1) : MEM8(addr))
+#define MMIO_RD16(addr) (XBOX_IS_MMIO(addr) ? (uint16_t)xbox_mmio_read((uint32_t)(addr), 2) : MEM16(addr))
+#define MMIO_RD32(addr) (XBOX_IS_MMIO(addr) ? xbox_mmio_read((uint32_t)(addr), 4) : MEM32(addr))
+#define MMIO_WR8(addr, v)  do { uint32_t _ma = (uint32_t)(addr); uint8_t _mv = (uint8_t)(v); \
+    if (XBOX_IS_MMIO(_ma)) xbox_mmio_write(_ma, _mv, 1); else MEM8(_ma) = _mv; } while (0)
+#define MMIO_WR16(addr, v) do { uint32_t _ma = (uint32_t)(addr); uint16_t _mv = (uint16_t)(v); \
+    if (XBOX_IS_MMIO(_ma)) xbox_mmio_write(_ma, _mv, 2); else MEM16(_ma) = _mv; } while (0)
+#define MMIO_WR32(addr, v) do { uint32_t _ma = (uint32_t)(addr); uint32_t _mv = (uint32_t)(v); \
+    if (XBOX_IS_MMIO(_ma)) xbox_mmio_write(_ma, _mv, 4); else MEM32(_ma) = _mv; } while (0)
 
 /* ================================================================
  * SSE / XMM register state
@@ -882,9 +993,13 @@ recomp_func_t recomp_lookup_manual(uint32_t xbox_va);
 void recomp_abi_violation_log(uint32_t va, uint32_t ebx0, uint32_t esi0,
                               uint32_t edi0, uint32_t esp0);
 #define RECOMP_ABI_CALL(va, fn) do { \
-    uint32_t _ab = g_ebx, _as = g_esi, _ad = g_edi, _ap = g_esp; \
+    /* The real registers, not a caller's register locals (the translator's */ \
+    /* _localize_registers spills them just before this, reloads after). */ \
+    uint32_t _ab = recomp_leaf_ld_ebx(), _as = recomp_leaf_ld_esi(), \
+             _ad = recomp_leaf_ld_edi(), _ap = recomp_leaf_ld_esp(); \
     (fn)(); \
-    if (g_ebx != _ab || g_esi != _as || g_edi != _ad || g_esp < _ap + 4) \
+    if (recomp_leaf_ld_ebx() != _ab || recomp_leaf_ld_esi() != _as || \
+        recomp_leaf_ld_edi() != _ad || recomp_leaf_ld_esp() < _ap + 4) \
         recomp_abi_violation_log((va), _ab, _as, _ad, _ap); \
 } while(0)
 #else
@@ -932,7 +1047,7 @@ extern volatile uint64_t g_icall_guard_misses;
     /* Skip garbage VAs outside code section + kernel thunk range */ \
     if (!RECOMP_ICALL_IS_CODE(_va)) { \
         recomp_icall_not_code_log(_va); \
-        g_esp += 4; eax = 0; break; \
+        g_esp += 4; eax = 0; RECOMP_ICALL_FAIL_SYNC(); break; \
     } \
     recomp_func_t _fn = recomp_lookup_manual(_va); \
     if (!_fn) _fn = recomp_lookup(_va); \
@@ -940,7 +1055,7 @@ extern volatile uint64_t g_icall_guard_misses;
     if (_fn) { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_RESOLVED); \
                RECOMP_ABI_CALL(_va, _fn); } \
     else { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_UNRESOLVED); \
-           recomp_icall_fail_log(_va); g_esp += 4; eax = 0; } \
+           recomp_icall_fail_log(_va); g_esp += 4; eax = 0; RECOMP_ICALL_FAIL_SYNC(); } \
 } while(0)
 
 /**
@@ -958,7 +1073,7 @@ extern volatile uint64_t g_icall_guard_misses;
     g_icall_count++; \
     if (!RECOMP_ICALL_IS_CODE(_va)) { \
         recomp_icall_not_code_log(_va); \
-        g_esp = (saved_esp); eax = 0; break; \
+        g_esp = (saved_esp); eax = 0; RECOMP_ICALL_FAIL_SYNC(); break; \
     } \
     recomp_func_t _fn = recomp_lookup_manual(_va); \
     if (!_fn) _fn = recomp_lookup(_va); \
@@ -966,7 +1081,7 @@ extern volatile uint64_t g_icall_guard_misses;
     if (_fn) { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_RESOLVED); \
                RECOMP_ABI_CALL(_va, _fn); } \
     else { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_UNRESOLVED); \
-           recomp_icall_fail_log(_va); g_esp = (saved_esp); eax = 0; } \
+           recomp_icall_fail_log(_va); g_esp = (saved_esp); eax = 0; RECOMP_ICALL_FAIL_SYNC(); } \
 } while(0)
 
 /**
@@ -984,7 +1099,7 @@ extern volatile uint64_t g_icall_guard_misses;
     g_icall_count++; \
     if (!RECOMP_ICALL_IS_CODE(_va)) { \
         recomp_icall_not_code_log(_va); \
-        g_esp = (saved_esp); eax = 0; break; \
+        g_esp = (saved_esp); eax = 0; RECOMP_ICALL_FAIL_SYNC(); break; \
     } \
     RECOMP_ICALL_OBSERVE_SITE((site), _va); \
     recomp_func_t _fn = recomp_lookup_manual(_va); \
@@ -993,7 +1108,7 @@ extern volatile uint64_t g_icall_guard_misses;
     if (_fn) { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_RESOLVED); \
                RECOMP_ABI_CALL(_va, _fn); } \
     else { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_UNRESOLVED); \
-           recomp_icall_fail_log(_va); g_esp = (saved_esp); eax = 0; } \
+           recomp_icall_fail_log(_va); g_esp = (saved_esp); eax = 0; RECOMP_ICALL_FAIL_SYNC(); } \
 } while(0)
 
 /**
@@ -1011,7 +1126,7 @@ extern volatile uint64_t g_icall_guard_misses;
     if (_fn) { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_RESOLVED); \
                RECOMP_ABI_CALL(_va, _fn); } \
     else { RECOMP_ICALL_OBSERVE(_va, RECOMP_ICALL_SEEN_UNRESOLVED); \
-           recomp_icall_fail_log(_va); g_esp += 4; g_eax = 0; } \
+           recomp_icall_fail_log(_va); g_esp += 4; g_eax = 0; RECOMP_ICALL_FAIL_SYNC(); } \
 } while(0)
 
 /* ================================================================
@@ -1066,6 +1181,30 @@ typedef union RecompMmx {
 
 extern RECOMP_TLS RecompMmx g_mm0, g_mm1, g_mm2, g_mm3;
 extern RECOMP_TLS RecompMmx g_mm4, g_mm5, g_mm6, g_mm7;
+
+/* Loads and stores for a leaf function that keeps registers in C locals
+ * (translator.py, _localize_leaf_registers). The locals shadow the globals
+ * by name, so the function reaches the real register only through these. */
+#define RECOMP_LEAF_REG(T, R)                                               \
+    static inline T recomp_leaf_ld_##R(void) { return g_##R; }              \
+    static inline void recomp_leaf_st_##R(T v) { g_##R = v; }
+RECOMP_LEAF_REG(uint32_t, eax) RECOMP_LEAF_REG(uint32_t, ecx)
+RECOMP_LEAF_REG(uint32_t, edx) RECOMP_LEAF_REG(uint32_t, ebx)
+RECOMP_LEAF_REG(uint32_t, esi) RECOMP_LEAF_REG(uint32_t, edi)
+RECOMP_LEAF_REG(uint32_t, esp)
+RECOMP_LEAF_REG(RecompMmx, mm0) RECOMP_LEAF_REG(RecompMmx, mm1)
+RECOMP_LEAF_REG(RecompMmx, mm2) RECOMP_LEAF_REG(RecompMmx, mm3)
+RECOMP_LEAF_REG(RecompMmx, mm4) RECOMP_LEAF_REG(RecompMmx, mm5)
+RECOMP_LEAF_REG(RecompMmx, mm6) RECOMP_LEAF_REG(RecompMmx, mm7)
+#undef RECOMP_LEAF_REG
+
+/* An indirect call that finds no target sets esp and eax itself. In a
+ * function whose registers are C locals (translator _localize_registers)
+ * that wrote the locals, and the reload after the call put the old values
+ * back: store them through to the real registers too. Elsewhere this
+ * rewrites the globals with what they already hold. */
+#define RECOMP_ICALL_FAIL_SYNC() do { recomp_leaf_st_esp(g_esp); recomp_leaf_st_eax(g_eax); } while (0)
+
 
 static inline RecompMmx MMX_ZERO(void) { RecompMmx r; r.q = 0; return r; }
 

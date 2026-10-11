@@ -250,6 +250,12 @@ def main():
                              "not implement yet: the body still runs, only "
                              "the answer changes, and the emitted code is "
                              "inert unless RECOMP_FORCE_RETURN is set")
+    parser.add_argument("--mmio-sections", metavar="NAMES", default="",
+                        help="Comma-separated XBE sections (e.g. DSOUND) whose "
+                             "functions access hardware registers. Their memory "
+                             "accesses go through MMIO_RD/MMIO_WR so the runtime "
+                             "can route device addresses to a device model "
+                             "without trapping faults")
     parser.add_argument("--coalesce-functions", metavar="JSON", action="append",
                         help="Explicit owner bounds and false interior starts "
                              "to merge before translation; repeatable")
@@ -442,6 +448,7 @@ def main():
         # kept in sync with it. Everything below maps onto mechanisms already
         # used above -- the `manual` set (declare-only) and func_db name pinning
         # -- so the translator needs no changes.
+        wrapped_addrs = set()
         if args.exclude_manual:
             skip, wrap, referenced = manual_scan_result
             known = set(translator.func_db)
@@ -463,6 +470,7 @@ def main():
             # still needed) -- just rename them so the emitted body is sub_X_gen.
             for addr in wrap & known:
                 translator.func_db[addr]["name"] = f"sub_{addr:08X}_gen"
+            wrapped_addrs = wrap & known
 
             # skip - wrap: defined by hand and not wrapped -> declare-only, which
             # is exactly what membership in `manual` produces.
@@ -480,7 +488,16 @@ def main():
             chunk_size=args.split,
             verbose=args.verbose,
             manual=manual,
+            wrapped=wrapped_addrs,
+            mmio_sections={n.strip() for n in args.mmio_sections.split(",")
+                           if n.strip()},
         )
+        if stats.get("spin_loops"):
+            print(f"Poll loops marked with RECOMP_SPIN_HINT: {stats['spin_loops']}",
+                  file=sys.stderr)
+        if stats.get("mmio_functions"):
+            print(f"MMIO accessors: {stats['mmio_functions']} functions in "
+                  f"{args.mmio_sections}", file=sys.stderr)
 
         t_translate = time.time() - t0
         print(f"\n=== Split Translation Complete ({t_translate:.1f}s) ===",
