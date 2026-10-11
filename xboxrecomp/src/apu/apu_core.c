@@ -42,6 +42,12 @@ static bool g_mixer_initialized = false;
 struct McpxApuDebug g_dbg;
 struct McpxApuDebug g_dbg_cache;
 int g_dbg_voice_monitor = -1;
+
+/* APU frames run in the last second (1500 is real time: 48 kHz / 32) and the
+ * share of that second the frame thread spent working, for hosts with no
+ * other profiler. */
+int mcpx_apu_frames_per_second(void) { return g_dbg.frames_processed; }
+float mcpx_apu_utilization(void) { return g_dbg.utilization; }
 uint64_t g_dbg_muted_voices[4] = { 0 };
 
 /* Global audio mute — disables all AWD/mixer sound playback */
@@ -55,8 +61,18 @@ void mcpx_debug_begin_frame(void) {}
 void mcpx_debug_end_frame(void) {}
 
 /* ============================================================
- * IRQ handling (stubbed - no PCI bus in standalone)
+ * IRQ handling: the APU's line goes to the kernel, which calls the
+ * title's connected ISR (DirectSound's) on vector 5.
  * ============================================================ */
+
+/* Every host: the line used to be raised on Windows only, and elsewhere the
+ * no-op stub in qemu_shim.h left DirectSound's ISR uncalled, so no voice
+ * ever started and the output stayed silent. */
+extern void xbox_set_irq_line(uint32_t vector, int level);
+#undef pci_irq_assert
+#undef pci_irq_deassert
+#define pci_irq_assert(dev)   xbox_set_irq_line(5, 1)
+#define pci_irq_deassert(dev) xbox_set_irq_line(5, 0)
 
 static void update_irq(MCPXAPUState *d)
 {
@@ -212,7 +228,7 @@ void mcpx_apu_monitor_init(MCPXAPUState *d, Error **errp)
 
     /* Try XAudio2 first (lower latency) */
     if (xa2_init()) {
-        fprintf(stderr, "[APU] Using XAudio2 audio backend\n");
+        fprintf(stderr, "[APU] host audio output active\n");
         return;
     }
     fprintf(stderr, "[APU] XAudio2 unavailable, falling back to waveOut\n");
@@ -274,37 +290,36 @@ void mcpx_apu_monitor_frame(MCPXAPUState *d)
         return;
     }
 
-    /* XAudio2 path: render and submit a buffer */
+    /* XAudio2 path: one block per 8 EP frames.
+     *
+     * The DSP stage has just written this block's 256 samples (8 frames x 32)
+     * into frame_buf -- the guest's own audio. This used to clear frame_buf
+     * first and then submit 1024 samples per call: every sample the game
+     * produced was erased (the output was silent, peak -99 dB, in menus,
+     * movies and levels alike), and four times real time was pushed, so the
+     * queue dropped ~140 blocks a second. Now the block is kept, the software
+     * mixer and test tone are added on top, exactly 256 samples go out, and
+     * the buffer is cleared afterwards for the next block. */
     if (xa2_is_active()) {
-        int buf_size = xa2_get_buffer_size();
-        int16_t xa2_tmp[1024][2];  /* matches XA2_BUF_SAMPLES max */
-        int remaining = buf_size;
-        int out_offset = 0;
+        int n = MIXER_FRAME_SAMPLES;
 
-        while (remaining > 0) {
-            int chunk = (remaining < MIXER_FRAME_SAMPLES) ? remaining : MIXER_FRAME_SAMPLES;
-            memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
-
-            if (g_test_tone.active && !g_audio_muted) {
-                for (int i = 0; i < chunk; i++) {
-                    int16_t s = (int16_t)(sin(g_test_tone.phase) * g_test_tone.amplitude);
-                    d->monitor.frame_buf[i][0] = s;
-                    d->monitor.frame_buf[i][1] = s;
-                    g_test_tone.phase += g_test_tone.phase_inc;
-                    if (g_test_tone.phase >= 2.0 * M_PI)
-                        g_test_tone.phase -= 2.0 * M_PI;
-                }
+        if (g_test_tone.active && !g_audio_muted) {
+            for (int i = 0; i < n; i++) {
+                int16_t s = (int16_t)(sin(g_test_tone.phase) * g_test_tone.amplitude);
+                d->monitor.frame_buf[i][0] = s;
+                d->monitor.frame_buf[i][1] = s;
+                g_test_tone.phase += g_test_tone.phase_inc;
+                if (g_test_tone.phase >= 2.0 * M_PI)
+                    g_test_tone.phase -= 2.0 * M_PI;
             }
-
-            if (!g_audio_muted)
-                mixer_render(d->monitor.frame_buf, chunk);
-
-            memcpy(xa2_tmp + out_offset, d->monitor.frame_buf, chunk * 2 * sizeof(int16_t));
-            out_offset += chunk;
-            remaining -= chunk;
         }
+        if (g_audio_muted)
+            memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
+        else
+            mixer_render(d->monitor.frame_buf, n);
 
-        xa2_submit_samples((const int16_t *)xa2_tmp, buf_size);
+        xa2_submit_samples((const int16_t *)d->monitor.frame_buf, n);
+        memset(d->monitor.frame_buf, 0, sizeof(d->monitor.frame_buf));
         return;
     }
 
@@ -354,6 +369,9 @@ void mcpx_apu_monitor_frame(MCPXAPUState *d)
         remaining -= chunk;
     }
 
+    /* Volume + limiter, as on the XAudio2 path. */
+    apu_output_safety(out, out, WAVEOUT_BUF_SAMPLES * 2);
+
     /* Submit to waveOut */
     hdr->dwFlags &= ~WHDR_DONE;
     waveOutWrite(g_waveout.hwo, hdr, sizeof(WAVEHDR));
@@ -366,16 +384,98 @@ void mcpx_apu_monitor_frame(MCPXAPUState *d)
  * Throttle (timing control for frame pacing)
  * ============================================================ */
 
+/* Pacing statistics for the [perf] report (mcpx_apu_pacing_stats): timed
+ * waits, requested vs slept, the SDL low-queue path, clock restarts after
+ * EP_CATCHUP_US of lateness (time lost for good) and the worst lateness. */
+static volatile int64_t s_thr_waits, s_thr_req_us, s_thr_slept_us, s_thr_lowq,
+                        s_thr_resets, s_thr_lost_us, s_thr_late_max_us, s_thr_blocks,
+                        s_thr_traps, s_thr_trap_us;
+
+int mcpx_apu_pacing_stats(char *buf, int cap)
+{
+    int n = snprintf(buf, (size_t)cap,
+                     "%lld blocks, %lld waits (asked %lld ms, slept %lld ms), %lld low-queue,"
+                     " %lld clock restarts (%lld ms lost), worst lateness %lld ms,"
+                     " %lld front-end traps (%lld ms)",
+                     (long long)s_thr_blocks, (long long)s_thr_waits,
+                     (long long)(s_thr_req_us / 1000), (long long)(s_thr_slept_us / 1000),
+                     (long long)s_thr_lowq, (long long)s_thr_resets,
+                     (long long)(s_thr_lost_us / 1000), (long long)(s_thr_late_max_us / 1000),
+                     (long long)s_thr_traps, (long long)(s_thr_trap_us / 1000));
+    s_thr_blocks = s_thr_waits = s_thr_req_us = s_thr_slept_us = s_thr_lowq = 0;
+    s_thr_resets = s_thr_lost_us = s_thr_late_max_us = 0;
+    s_thr_traps = s_thr_trap_us = 0;
+    return n;
+}
+
 static void throttle(MCPXAPUState *d)
 {
     if (d->ep_frame_div % 8) {
         return;
     }
 
-    int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    /* With XAudio2, pace by its queue: render the next 256-sample block once
+     * fewer than 8 (43 ms) are waiting. 4 (21 ms) still ran dry: this thread
+     * was measured going 20-44 ms between blocks while the game was busy. The sound card's clock drains the
+     * queue, so output never drifts from it, and a stall is caught up with a
+     * burst instead of being forgotten. The wall-clock pacing below reset
+     * itself after any stall longer than one frame, so every stall was lost
+     * for good and the queue ran dry: 4-10 underruns a second, heard as
+     * crackle. */
+#if defined(_WIN32)
+    if (xa2_is_active()) {
+        int64_t t0 = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+        /* Let a guest register write in once per block even when behind and
+         * not waiting: that writer can be holding the dispatch lock. */
+        qemu_mutex_unlock(&d->lock);
+        SwitchToThread();
+        qemu_mutex_lock(&d->lock);
+        while (!d->pause_requested && xa2_queued() >= xa2_queue_target())
+            qemu_cond_timedwait(&d->cond, &d->lock, 1);
+        d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - t0);
+        return;
+    }
+#endif
 
+    int64_t now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+    int64_t wait_start_us = now_us;
+
+    /* SDL output (Linux, Switch) never paces the APU: an audio server that
+     * does not drain its queue (WSLg's PulseAudio) held every block for the
+     * full wait, the APU clock crawled, and the title booted at a fraction
+     * of its speed. The wall clock below stays the APU's clock; the device
+     * is only fed. When its queue runs low (its clock is a little faster
+     * than ours) one block is rendered without waiting and without moving
+     * the deadline, so the APU follows the device instead of underrunning;
+     * a full queue drops blocks in the backend. */
+    s_thr_blocks++;
+    if (d->next_frame_time_us && now_us - d->next_frame_time_us > s_thr_late_max_us)
+        s_thr_late_max_us = now_us - d->next_frame_time_us;
+    if (xa2_is_active() && xa2_queued() < xa2_queue_target() / 2) {
+        s_thr_lowq++;
+        qemu_mutex_unlock(&d->lock);
+        SwitchToThread();
+        qemu_mutex_lock(&d->lock);
+        if (d->next_frame_time_us == 0 ||
+            now_us - d->next_frame_time_us > EP_CATCHUP_US)
+            d->next_frame_time_us = now_us;
+        return;
+    }
+
+    /* Without a sound card to drain a queue, this deadline is the APU's
+     * clock, and DirectSound's play cursor -- which paces the title's movies
+     * -- follows it. Resetting it after any block that ran late threw the
+     * lateness away for good. On Horizon, where busy cores time-slice in
+     * 10 ms quanta, a 5 ms wait regularly overshoots, and movies played
+     * visibly slow. A late block is now made up by running the next ones
+     * back to back; only a stall long enough to be a pause (a debugger, a
+     * suspended applet) restarts the clock. */
     if (d->next_frame_time_us == 0 ||
-        now_us - d->next_frame_time_us > EP_FRAME_US) {
+        now_us - d->next_frame_time_us > EP_CATCHUP_US) {
+        if (d->next_frame_time_us) {
+            s_thr_resets++;
+            s_thr_lost_us += now_us - d->next_frame_time_us;
+        }
         d->next_frame_time_us = now_us;
     }
 
@@ -383,14 +483,18 @@ static void throttle(MCPXAPUState *d)
         now_us = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
         int64_t remaining_ms = (d->next_frame_time_us - now_us) / 1000;
         if (remaining_ms > 0) {
+            int64_t w0 = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
             qemu_cond_timedwait(&d->cond, &d->lock, (int)remaining_ms);
+            s_thr_waits++;
+            s_thr_req_us += remaining_ms * 1000;
+            s_thr_slept_us += qemu_clock_get_us(QEMU_CLOCK_REALTIME) - w0;
         } else {
             break;
         }
     }
     d->next_frame_time_us += EP_FRAME_US;
 
-    d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - now_us);
+    d->sleep_acc_us += (int)(qemu_clock_get_us(QEMU_CLOCK_REALTIME) - wait_start_us);
 }
 
 /* ============================================================
@@ -425,6 +529,13 @@ static void se_frame(MCPXAPUState *d)
 
     d->ep_frame_div++;
 
+    /* The front end trapped this frame (an idle voice the driver asked to
+     * hear about): raise it now, or the trap halts the pipeline unseen. */
+    if (d->set_irq) {
+        d->set_irq = false;
+        update_irq(d);
+    }
+
     mcpx_debug_end_frame();
 }
 
@@ -435,6 +546,13 @@ static void se_frame(MCPXAPUState *d)
 static void *mcpx_apu_frame_thread(void *arg)
 {
     MCPXAPUState *d = MCPX_APU_DEVICE(arg);
+    /* Audio misses are audible, a late game frame is not: stay ahead of the
+     * game's busy threads for the few microseconds a block takes. */
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+    {
+        extern void xbox_nx_raise_host_thread(void);   /* win32_compat.c */
+        xbox_nx_raise_host_thread();                    /* the above, on Horizon */
+    }
     qemu_mutex_lock(&d->lock);
 
     while (!qatomic_read(&d->exiting)) {
@@ -446,14 +564,36 @@ static void *mcpx_apu_frame_thread(void *arg)
             continue;
         }
 
+        int xcntmode = GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
+                                NV_PAPU_SECTL_XCNTMODE);
+        uint32_t fectl = qatomic_read(&d->regs[NV_PAPU_FECTL]);
+
+        /* Front end trapped (an idle voice the driver asked to hear about)
+         * or halted: the pipeline stops until the driver's interrupt handler
+         * clears it, and so does time, as in xemu. This used to run silent
+         * monitor frames and let the clock run on: in races the handler is
+         * late (the guest is busy), ~17% of frames went out as silence --
+         * the audio stutter -- and the APU fell to 1250-1300 frames/s. Now
+         * no frame is lost: throttle() catches up afterwards (up to
+         * EP_CATCHUP_US). */
+        if (xcntmode != NV_PAPU_SECTL_XCNTMODE_OFF && !g_test_tone.active &&
+            (fectl & (NV_PAPU_FECTL_FEMETHMODE_TRAPPED | NV_PAPU_FECTL_FEMETHMODE_HALTED))) {
+            int64_t t0 = qemu_clock_get_us(QEMU_CLOCK_REALTIME);
+            if (!d->in_trap) {
+                d->in_trap = true;
+                s_thr_traps++;
+            }
+            qemu_cond_timedwait(&d->cond, &d->lock, 1);
+            s_thr_trap_us += qemu_clock_get_us(QEMU_CLOCK_REALTIME) - t0;
+            continue;
+        }
+        d->in_trap = false;
+
         /* Always run the audio output loop — the software mixer and test tone
          * need continuous frame delivery regardless of APU register state.
          * The VP/DSP pipeline (se_frame) only runs when registers allow it. */
         throttle(d);
 
-        int xcntmode = GET_MASK(qatomic_read(&d->regs[NV_PAPU_SECTL]),
-                                NV_PAPU_SECTL_XCNTMODE);
-        uint32_t fectl = qatomic_read(&d->regs[NV_PAPU_FECTL]);
         bool apu_active = (xcntmode != NV_PAPU_SECTL_XCNTMODE_OFF) &&
                           !(fectl & NV_PAPU_FECTL_FEMETHMODE_TRAPPED) &&
                           !(fectl & NV_PAPU_FECTL_FEMETHMODE_HALTED);
@@ -466,6 +606,10 @@ static void *mcpx_apu_frame_thread(void *arg)
             mcpx_apu_monitor_frame(d);
             d->ep_frame_div++;
         }
+
+        /* Hand the lock to a waiting guest thread (mcpx_apu_lock_guest). */
+        while (d->lock_waiters && !qatomic_read(&d->exiting))
+            qemu_cond_timedwait(&d->cond, &d->lock, 1);
     }
 
     qemu_mutex_unlock(&d->lock);
@@ -792,7 +936,7 @@ void apu_mixer_play(int slot, int looping)
     /* The frame thread takes the APU lock before the mixer lock. */
     extern MCPXAPUState *g_state;
     if (g_state) {
-        qemu_mutex_lock(&g_state->lock);
+        mcpx_apu_lock_guest(g_state);
         g_state->pause_requested = false;
         qemu_cond_signal(&g_state->cond);
         qemu_mutex_unlock(&g_state->lock);

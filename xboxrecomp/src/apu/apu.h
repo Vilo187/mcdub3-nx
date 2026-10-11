@@ -52,6 +52,11 @@ typedef struct APUMixerVoice {
     float            volume;       /* 0.0 to 1.0 */
 } APUMixerVoice;
 
+/* APU frames processed in the last second (1500 = real time) and the frame
+ * thread's busy share of it. */
+int   mcpx_apu_frames_per_second(void);
+float mcpx_apu_utilization(void);
+
 /* Allocate a mixer voice slot. Returns slot index or -1 if full. */
 int apu_mixer_alloc_voice(void);
 
