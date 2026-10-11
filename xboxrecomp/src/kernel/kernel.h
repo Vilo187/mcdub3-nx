@@ -659,6 +659,11 @@ NTSTATUS __stdcall xbox_NtReadFile(
     PXBOX_IO_STATUS_BLOCK IoStatusBlock, PVOID Buffer, ULONG Length,
     PLARGE_INTEGER ByteOffset);
 
+/* Called after every successful NtReadFile (POSIX/Switch) with the bytes read
+ * and the file offset they came from, so a port can patch game data as it
+ * loads. NULL (the default) = no hook. */
+extern void (*xbox_file_read_hook)(void *buf, size_t len, int64_t offset);
+
 NTSTATUS __stdcall xbox_NtWriteFile(
     HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext,
     PXBOX_IO_STATUS_BLOCK IoStatusBlock, PVOID Buffer, ULONG Length,
@@ -790,6 +795,10 @@ int     xbox_IrqlRaisedCount(void);
 int     xbox_IrqlTransitions(void);
 void    xbox_IrqlDumpHolders(void);
 VOID    __fastcall xbox_KfLowerIrql(KIRQL NewIrql);
+
+/* This thread entering (+1) or leaving (-1) kernel code that may hold host
+ * locks; NtSuspendThread only leaves a thread suspended outside it. */
+void    xbox_kernel_busy(int delta);
 KIRQL   __stdcall xbox_KeRaiseIrqlToDpcLevel(void);
 
 VOID    __stdcall xbox_KeStallExecutionProcessor(ULONG MicroSeconds);
@@ -1039,11 +1048,20 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(ULONG ValueIndex, ULONG Type, P
 #define XC_PARENTAL_CONTROL       XC_P_CONTROL_GAMES
 #define XC_PARENTAL_PASSWORD      XC_P_CONTROL_PASSWORD
 
-/* Video standard flags in XC_VIDEO */
-#define XC_VIDEO_FLAGS_WIDESCREEN   0x01
-#define XC_VIDEO_FLAGS_HDTV         0x02
-#define XC_VIDEO_FLAGS_PAL_I        0x04
-#define XC_VIDEO_FLAGS_LETTERBOX    0x10
+/* Flags in XC_VIDEO, as the EEPROM stores them: XAPI's XGetVideoFlags
+ * returns (value >> 16) & 0x5F, so the XDK's XC_VIDEO_FLAGS_* bits sit in
+ * the upper half. */
+#define XC_VIDEO_FLAGS_WIDESCREEN   0x00010000
+#define XC_VIDEO_FLAGS_HDTV_720p    0x00020000
+#define XC_VIDEO_FLAGS_HDTV_1080i   0x00040000
+#define XC_VIDEO_FLAGS_HDTV_480p    0x00080000
+#define XC_VIDEO_FLAGS_LETTERBOX    0x00100000
+#define XC_VIDEO_FLAGS_PAL_60Hz     0x00400000
+
+/* Whether the title is told the TV is 16:9 (RECOMP_WIDESCREEN, default 1).
+ * A title that honours it renders 640x480 anamorphic, and the presenter
+ * stretches it to 16:9. */
+int xbox_video_widescreen(void);
 
 /* Unknown ordinals - stub */
 VOID    __stdcall xbox_Unknown_8(void);

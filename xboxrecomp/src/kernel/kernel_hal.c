@@ -166,6 +166,75 @@ static void irql_track(KIRQL old_level, KIRQL new_level, void *ra)
     }
 }
 
+/* The one-CPU guarantee IRQL gives, on a many-CPU host.
+ *
+ * On the Xbox, code at DISPATCH_LEVEL or above cannot be interrupted by a DPC
+ * or (at device IRQL) by an ISR, because there is one CPU and it is busy. Here
+ * ISRs and DPCs run on the kernel timer thread, in parallel with the game, so
+ * a driver's protected section (DirectSound walking its voice lists) could
+ * be torn by its own interrupt handler. Every thread that goes to DISPATCH or
+ * above therefore holds this lock until it drops below, and the timer thread
+ * raises to DISPATCH (taking it) before calling any ISR or DPC.
+ *
+ * ponytail: one lock for DISPATCH and every device IRQL alike; a thread that
+ * waits while raised (illegal on hardware) would stall ISRs and DPCs.
+ */
+static CRITICAL_SECTION g_dispatch_lock;
+static INIT_ONCE        g_dispatch_once = INIT_ONCE_STATIC_INIT;
+
+static BOOL CALLBACK dispatch_lock_init(PINIT_ONCE o, PVOID p, PVOID *c)
+{
+    (void)o; (void)p; (void)c;
+    InitializeCriticalSection(&g_dispatch_lock);
+    return TRUE;
+}
+
+/* Whether this thread holds the dispatch lock. IRQL itself (g_current_irql)
+ * is one value for the one emulated CPU, so "is IRQL raised?" answers for
+ * whoever raised it last; decisions about *this* thread -- may it be
+ * pre-empted, is it a DPC waiting for the guest lock -- ask this instead. */
+#ifdef _MSC_VER
+static __declspec(thread) int t_dispatch_held;
+#else
+static _Thread_local int t_dispatch_held;
+#endif
+int xbox_thread_holds_dispatch(void) { return t_dispatch_held; }
+
+int  xbox_gil_suspend(void);
+void xbox_gil_resume(int depth);
+
+static void irql_transition(KIRQL from, KIRQL to)
+{
+    InitOnceExecuteOnce(&g_dispatch_once, dispatch_lock_init, NULL, NULL);
+    /* Raised also counts as busy for NtSuspendThread: suspension is an APC,
+     * which the Xbox only delivers below DISPATCH, and a thread frozen here
+     * would hold the dispatch lock (every ISR, DPC and raised section) with
+     * it.
+     *
+     * The IRQL calls keep the guest lock (kernel_call_keeps_gil): DirectSound
+     * raises and lowers around every voice-list update, and handing the lock
+     * over at each one let the main thread in between a DPC's raises, with
+     * the DPC then waiting for it while holding the dispatch lock. Blocking
+     * here with the guest lock held could deadlock against a DPC that holds
+     * the dispatch lock and wants the guest lock, so a contended raise lets
+     * go of it first (a no-op when the caller does not hold it). */
+    if (from < DISPATCH_LEVEL && to >= DISPATCH_LEVEL) {
+        if (!TryEnterCriticalSection(&g_dispatch_lock)) {
+            int gil = xbox_gil_suspend();
+            EnterCriticalSection(&g_dispatch_lock);
+            xbox_gil_resume(gil);
+        }
+        t_dispatch_held = 1;
+        xbox_kernel_busy(1);
+    } else if (from >= DISPATCH_LEVEL && to < DISPATCH_LEVEL) {
+        xbox_kernel_busy(-1);
+        t_dispatch_held = 0;
+        LeaveCriticalSection(&g_dispatch_lock);
+    }
+}
+
+KIRQL xbox_CurrentIrql(void) { return g_current_irql; }
+
 /*
  * KfRaiseIrql - Raises IRQL to the specified level.
  * Returns the previous IRQL. Uses __fastcall (ECX = NewIrql).
@@ -181,6 +250,7 @@ KIRQL __fastcall xbox_KfRaiseIrql(KIRQL NewIrql)
     }
 
     irql_track(old, NewIrql, IRQL_CALLER());
+    irql_transition(old, NewIrql);
     g_current_irql = NewIrql;
     return old;
 }
@@ -217,6 +287,7 @@ VOID __fastcall xbox_KfLowerIrql(KIRQL NewIrql)
     }
 
     irql_track(g_current_irql, NewIrql, IRQL_CALLER());
+    irql_transition(g_current_irql, NewIrql);
     g_current_irql = NewIrql;
 }
 
@@ -228,6 +299,7 @@ KIRQL __stdcall xbox_KeRaiseIrqlToDpcLevel(void)
     KIRQL old = g_current_irql;
 
     irql_track(old, DISPATCH_LEVEL, IRQL_CALLER());
+    irql_transition(old, DISPATCH_LEVEL);
     g_current_irql = DISPATCH_LEVEL;
     return old;
 }
@@ -655,9 +727,13 @@ VOID __stdcall xbox_AvSendTVEncoderOption(
          * HDTV pack keeps 480p/720p available to titles that offer them;
          * NTSC-M and 60Hz are the North American retail default, and match
          * the region reported by ExQueryNonVolatileSetting. */
+        /* The real kernel also ORs in the EEPROM video flags; D3D's
+         * CreateDevice fails a D3DPRESENTFLAG_WIDESCREEN request unless the
+         * widescreen bit (0x00010000) is here. */
         *Result = AV_PACK_HDTV
                 | (AV_STANDARD_NTSC_M << AV_STANDARD_SHIFT)
-                | AV_REFRESH_60Hz;
+                | AV_REFRESH_60Hz
+                | (xbox_video_widescreen() ? XC_VIDEO_FLAGS_WIDESCREEN : 0);
         break;
 
     case AV_OPTION_QUERY_MODE:

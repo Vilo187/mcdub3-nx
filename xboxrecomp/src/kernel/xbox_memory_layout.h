@@ -187,10 +187,51 @@ uint32_t xbox_GetDisplayFramebuffer(uint32_t *pitch);
 /* Allocate from the contiguous (physical-mirror) arena. Returns a guest VA
  * below 256 MB, or 0 when the arena is exhausted. */
 uint32_t xbox_ContiguousAlloc(uint32_t size, uint32_t alignment);
+/* Give a block back; 0 if va is not one the arena handed out. */
+int xbox_ContiguousFree(uint32_t va);
+/* Size of the live block containing va, or 0. */
+uint32_t xbox_ContiguousBlockSize(uint32_t va);
+/* The physical range the contiguous arena has handed out (xbox_devbus.c). */
+void xbox_ContiguousSetPhysicalRange(uint32_t lo, uint32_t hi);
+int  xbox_ContiguousIsPhysical(uint32_t phys);
 uint32_t xbox_ContiguousAllocatedBytes(void);
 
 int xbox_Nv2aMirrorFence(uint32_t device_ptr_va,
                          uint32_t put_off, uint32_t get_ptr_off);
+
+/* Complete an audio-DSP command word as soon as the title posts one: the
+ * polling thread zeroes it whenever it reads non-zero. The API form of
+ * RECOMP_DSP_ACK, for a project that can compute the word's address from the
+ * title's own objects. There is no DSP behind this -- the command is dropped,
+ * which is what lets DirectSound finish initialising. Returns 0, or -1 when
+ * the table (8 entries) is full. */
+int xbox_ApuDspAckWord(uint32_t va);
+
+/* Keep the runtime from zeroing PMC_INTR_0 / PGRAPH_INTR while a device model
+ * has a GPU interrupt pending (counted; pair every on with an off). */
+void xbox_Nv2aHoldInterrupts(int on);
+
+/* Keep the vblank bits (PMC_INTR_0 bit 24, PCRTC_INTR_0 bit 0) set from the
+ * moment they are raised until the DPC that services them has had time to
+ * read them: Hold when raising, Release when that DPC starts (they then clear
+ * a moment later), Drop when nothing will service them. */
+void xbox_Nv2aVblankHold(void);
+void xbox_Nv2aVblankRelease(void);
+void xbox_Nv2aVblankDrop(void);
+/* Called by a project's wrapper around the title's vblank handler. */
+void xbox_Nv2aVblankTaken(void);
+
+/* Route guest addresses [lo, hi) to a device model for code lifted with
+ * tools.recomp --mmio-sections (its MMIO_RD/MMIO_WR accessors call
+ * xbox_mmio_read/xbox_mmio_write). `offset` is relative to lo. Returns 0, or
+ * -1 when the table (8 entries) is full. */
+int xbox_MmioRegister(uint32_t lo, uint32_t hi,
+                      uint32_t (*read)(void *opaque, uint32_t offset, unsigned size),
+                      void (*write)(void *opaque, uint32_t offset, uint32_t val,
+                                    unsigned size),
+                      void *opaque);
+uint32_t xbox_mmio_read(uint32_t va, unsigned size);
+void     xbox_mmio_write(uint32_t va, uint32_t val, unsigned size);
 
 void xbox_MemoryLayoutShutdown(void);
 
