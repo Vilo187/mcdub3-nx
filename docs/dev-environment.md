@@ -26,6 +26,16 @@ UTM both work. Why: [ADR 0003](decisions/0003-linux-vm-debug-loop.md).
    shared folder is very slow. (Alternative: clone the repo inside the VM.)
 4. `bash ~/mcdub3-sw/vm/setup-ubuntu.sh`, then open a new shell.
 
+### Ubuntu 22.04
+
+Works for everything except the **Linux Vulkan build** (`VULKAN=1
+tools/build_linux.sh`): the toolkit's Vulkan renderer needs glslang 12+ (the
+`glslang-default-resource-limits` CMake target), and 22.04 ships 11.8. The
+default OpenGL build, the lift pipeline (Python 3.10 is the minimum) and the
+Switch builds (devkitPro brings its own toolchain) are unaffected. If you
+need Linux Vulkan later, build glslang from source into `~/mc3-work/deps` and
+pass `-Dglslang_DIR`, or move to 24.04.
+
 ### Check the VM (5 minutes, before anything else)
 
 ```sh
