@@ -10,6 +10,7 @@
 # The build and the Switch both read the unpacked files, never the ISO.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+mc3_python
 
 ISO="${1:-}"
 [ -n "$ISO" ] && [ -f "$ISO" ] || mc3_fail "usage: $0 <disc image>"
@@ -17,8 +18,8 @@ ISO="${1:-}"
 
 mkdir -p "$MC3_GAME_DIR"
 cd "$XBOXRECOMP_DIR"
-python3 -m tools.xiso ls "$ISO" | head -5
-python3 -m tools.xiso unpack "$ISO" -o "$MC3_GAME_DIR"
+"$MC3_PYTHON" -m tools.xiso ls "$ISO" | head -5
+"$MC3_PYTHON" -m tools.xiso unpack "$ISO" -o "$MC3_GAME_DIR"
 
 [ -f "$MC3_GAME_DIR/default.xbe" ] || mc3_fail "no default.xbe after unpacking"
 echo

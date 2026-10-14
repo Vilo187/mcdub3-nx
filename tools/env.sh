@@ -24,8 +24,21 @@ export MC3_XBE="${MC3_XBE:-$MC3_GAME_DIR/default.xbe}"
 export MC3_ANALYSIS_DIR="${MC3_ANALYSIS_DIR:-$MC3_WORK/analysis}"
 export MC3_GEN_DIR="${MC3_GEN_DIR:-$MC3_WORK/gen}"
 
-# The lift pipeline's Python (capstone) from vm/setup-ubuntu.sh, if present.
-[ -x "$MC3_WORK/venv/bin/python3" ] && export PATH="$MC3_WORK/venv/bin:$PATH"
+# The lift pipeline's Python: the first that can import capstone, from the
+# project venv (vm/setup-ubuntu.sh) or the system. Scripts call mc3_python.
+mc3_python() {
+    local py
+    for py in "$MC3_WORK/venv/bin/python3" python3; do
+        if "$py" -c 'import capstone' >/dev/null 2>&1; then
+            MC3_PYTHON="$py"
+            return 0
+        fi
+    done
+    echo "error: no Python with capstone (the x86 disassembler the lift needs)" >&2
+    echo "  - re-run the setup, which creates work/venv:  bash vm/setup-ubuntu.sh" >&2
+    echo "  - or install it for your user:                python3 -m pip install --user capstone" >&2
+    exit 1
+}
 
 # The Switch app name: sdmc:/switch/$MC3_APP/ on the card.
 export MC3_APP="${MC3_APP:-mcdub3}"
