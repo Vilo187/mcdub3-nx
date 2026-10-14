@@ -53,6 +53,67 @@ is all it takes.
 overrides; building is the part you repeat all day. Keeping them apart means
 an ordinary code change never re-runs the lift.
 
+## How our changes sit on top of the game
+
+**The generated C in `work/gen/` is never edited.** It is a build product,
+like an object file: rewritten from scratch by every lift, and never committed.
+The game itself (`game/default.xbe`) is never edited either. Everything we
+change lives in our own files, applied on top of the untouched base every
+time:
+
+```
+   game/default.xbe  (the base: never changes)
+          │
+          │  stage 1 lift, steered by our inputs:
+          │    config/seed_functions.json   extra function starts
+          │    src/recomp_manual.c          which functions NOT to generate
+          │    xboxrecomp/tools/            translator fixes
+          ▼
+   work/gen/*.c  (disposable output)
+          │
+          │  stage 2 build, linked with our code:
+          │    src/recomp_manual.c          our versions of those functions
+          │    src/main.c, src/switch_nx.c  boot, data patches, platform glue
+          │    xboxrecomp/src/              the runtime: the "Xbox hardware"
+          ▼
+   mc3_recomp / .nro
+```
+
+How each kind of change is applied:
+
+| To change | Put it in | How it takes effect |
+|---|---|---|
+| a game function (bug fix, native replacement, stub) | `src/recomp_manual.c`: define `void sub_XXXXXXXX(void)` | the lift skips that function (`--exclude-manual`); the linker uses ours, for direct calls and indirect calls (the dispatch table points at the same symbol) |
+| a game function, but keep the original | declare `extern void sub_XXXXXXXX_gen(void);`, define `sub_XXXXXXXX` and call `sub_XXXXXXXX_gen()` inside it | the lift emits the original body under the `_gen` name, so ours wraps it (trace, fix up arguments or results) |
+| keep an override around but switched off | wrap it in `#if 0 … #endif` | the lift ignores it and generates the original again (relift) |
+| a missing function | `config/seed_functions.json` (with a note) | the disassembler treats it as a function start; it gets lifted like the rest |
+| game data or settings (a constant, a limit) | `src/main.c`, after the memory is mapped: write to the guest address | patched in memory at boot; the XBE file stays untouched |
+| how the Xbox hardware or kernel behaves | `xboxrecomp/src/` (commit as `xboxrecomp:`) | rebuilt and linked |
+| how x86 is translated | `xboxrecomp/tools/recomp/` (commit as `xboxrecomp:`) | the next lift produces different C |
+
+So "moving our changes back into the source" never happens: our changes *are*
+source (`src/`, `config/`, `xboxrecomp/`), and each lift re-creates the base
+from the XBE. A new lift never loses a fix, because no fix lives in `work/gen/`.
+
+### Regen or just build?
+
+| You changed | Run | Why |
+|---|---|---|
+| `src/main.c`, `src/switch_nx.c`, `xboxrecomp/src/` (runtime) | `make build` | plain C; the lift is unaffected |
+| the *body* of an existing override in `src/recomp_manual.c` | `make build` | same set of functions replaced; only our code changed |
+| *added or removed* an override in `src/recomp_manual.c` | `make relift build` | the lift must drop (or restore) the lifted body; fast: skips the analysis steps |
+| `xboxrecomp/tools/recomp/` (translator) | `make relift build` | same analysis, different C |
+| `config/seed_functions.json`, `xboxrecomp/tools/disasm`, `func_id`, `abi_analysis` | `make regen build` | the analysis itself changes (which functions exist) |
+| the disc (`game/`) | `make lift build` | new base |
+
+`make build` checks this for you: it stops, and names the step to run, when
+the seeds are newer than the lifted C or the set of overrides in
+`src/recomp_manual.c` differs from the one the last lift saw (read with the
+toolkit's own scanner, `xboxrecomp/tools/recomp/manual_scan.py`, so the check
+and the lifter always agree). Any of `relift`
+and `regen` rewrites `work/gen/`, so the next build recompiles every chunk
+(the long build); a plain `make build` only recompiles what changed.
+
 ## Project layout
 
 What sits where, who writes it, and whether git tracks it. Every path is

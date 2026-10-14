@@ -32,7 +32,8 @@ Technical docs (stages, what sits where, VM, the loop): CONTRIBUTING.md, the sou
 | Change | Then |
 |---|---|
 | `src/*.c` (not overrides) | `make build run` |
-| `src/recomp_manual.c` overrides, translator | `make relift build run` |
+| body of an existing override in `src/recomp_manual.c` | `make build run` |
+| added/removed an override, translator | `make relift build run` |
 | `config/seed_functions.json`, disasm/func_id | `make regen build run` |
 | runtime (`xboxrecomp/src`) | `make build run` |
 | ready for console | `make switch send`, Eden, then hardware |
