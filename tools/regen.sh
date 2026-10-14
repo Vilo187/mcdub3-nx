@@ -20,6 +20,7 @@
 # fault trapping. Set after reading the section list from the first parse.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+mc3_python
 
 SEEDS="$MC3_REPO/config/seed_functions.json"
 MANUAL="$MC3_REPO/src/recomp_manual.c"
@@ -34,23 +35,23 @@ cd "$XBOXRECOMP_DIR"
 XBE_JSON="${MC3_XBE%.xbe}_analysis.json"
 
 if [ "${LIFT_ONLY:-0}" != "1" ]; then
-    python3 -m tools.xbe_parser "$MC3_XBE" --json "$XBE_JSON" --quiet
+    "$MC3_PYTHON" -m tools.xbe_parser "$MC3_XBE" --json "$XBE_JSON" --quiet
     cp "$XBE_JSON" "$A/xbe_analysis.json"
-    python3 -m tools.disasm "$MC3_XBE" -o "$A/disasm" \
+    "$MC3_PYTHON" -m tools.disasm "$MC3_XBE" -o "$A/disasm" \
         --analysis-json "$XBE_JSON" --seed-functions "$SEEDS" \
         ${MC3_DISASM_ARGS:-}
-    python3 -m tools.func_id "$MC3_XBE" -o "$A/func_id" \
+    "$MC3_PYTHON" -m tools.func_id "$MC3_XBE" -o "$A/func_id" \
         --functions "$A/disasm/functions.json" \
         --strings "$A/disasm/strings.json" \
         --xrefs "$A/disasm/xrefs.json"
-    python3 -m tools.abi_analysis "$MC3_XBE" --output-dir "$A/abi" \
+    "$MC3_PYTHON" -m tools.abi_analysis "$MC3_XBE" --output-dir "$A/abi" \
         --disasm-dir "$A/disasm" --func-id-dir "$A/func_id"
 fi
 
 # recomp_types.h is written only when absent, so a stale copy would hide
 # register-model changes in the toolkit. Nothing edits it by hand.
 rm -f "$MC3_GEN_DIR/recomp_types.h"
-python3 -m tools.recomp "$MC3_XBE" --game-name "Midnight Club 3: DUB Edition" \
+"$MC3_PYTHON" -m tools.recomp "$MC3_XBE" --game-name "Midnight Club 3: DUB Edition" \
     --all --split 250 --gen-dir "$MC3_GEN_DIR" \
     --disasm-dir "$A/disasm" --func-id-dir "$A/func_id" --abi-dir "$A/abi" \
     --exclude-manual "$MANUAL" --mmio-sections "$MMIO" \

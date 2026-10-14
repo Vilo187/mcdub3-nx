@@ -64,13 +64,27 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   `banks.dat`, `audio/` (XACT `.xwb`/`.xsb`), `flash/`, `resources/`.
   Other XBEs on the disc (`dashupdate.xbe`, `downloader.xbe`, `update.xbe`)
   are Xbox system/online tools: not lifted.
-- Entry point / title ID: config/xbe_facts.h
-- Sections / XDK libraries / MMIO sections: TBD (tools/first_lift.sh)
-- Movies: **Bink** (`video/*.bik`, 64 files). FFmpeg decodes Bink, so the
-  nfsu2-sw route (native decoder in place of the lifted one) applies.
+- XBE: entry 0x000129DF, title ID 0x54540079 (config/xbe_facts.h), retail,
+  built 2005-03-25 (`C:\soft\mc3\src\mcproduct\xbox_final\mc.exe`), XDK
+  5849 (same as NFSU2's era), image 5.23 MB, base 0x10000, 154 kernel imports.
+- Code: `.text` 3.35 MB (game). Statically linked XDK/middleware, each its own
+  section: D3D, XGRPH, D3DX (graphics); DSOUND, XACTENG (XACT audio), WMADEC
+  (WMA decoder), DOLBY (APU DSP code); XPP (pads); BINK + 14 BINK* blitter
+  sections + BINKDATA (Bink video player); XNET, XONLINE, XON_RD (Xbox Live:
+  stub, never needed offline).
+- MMIO sections (`MC3_MMIO_SECTIONS`, default `DSOUND,XPP`): the libraries
+  that drive hardware registers directly, as in NFSU2.
+- Kernel imports worth watching: `XeLoadSection`/`XeUnloadSection` (sections
+  loaded on demand), `Phy*` + XNET (network: stub), `Io*` device creation
+  (XAPI internals), `Xc*` crypto (saves/signatures), `MmClaimGpuInstanceMemory`.
+- Movies: **Bink** (`video/*.bik`, 64 files), played by the statically linked
+  Bink library (BINK* sections). FFmpeg decodes Bink, so the nfsu2-sw route
+  (native decoder in place of the lifted one) applies.
 - Threads: TBD
 
 ## Status
 
 - 2026-10-11: skeleton; toolkit vendored and verified; lift pipeline
-  smoke-tested on the toolkit's test XBE. Waiting for the disc.
+  smoke-tested on the toolkit's test XBE.
+- 2026-10-14: disc in `game/`; XBE parsed in the VM (facts above). First full
+  lift pending.

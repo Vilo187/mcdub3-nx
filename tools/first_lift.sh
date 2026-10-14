@@ -8,19 +8,22 @@
 #   $MC3_ANALYSIS_DIR/xbe_summary.txt   parser report (sections, kernel
 #                                        imports, entry point, XDK version)
 #   config/xbe_facts.h                   entry point + title ID for main.c;
-#                                        committed (addresses, not game data)
+#                                        committed (addresses, not game data);
+#                                        MC3_FACTS_H=<file> writes elsewhere
+#                                        (tests on other XBEs)
 # then runs tools/regen.sh.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+mc3_python
 
 mc3_need_game
 mkdir -p "$MC3_ANALYSIS_DIR"
 XBE_JSON="${MC3_XBE%.xbe}_analysis.json"
 
 cd "$XBOXRECOMP_DIR"
-python3 -m tools.xbe_parser "$MC3_XBE" --json "$XBE_JSON" | tee "$MC3_ANALYSIS_DIR/xbe_summary.txt"
+"$MC3_PYTHON" -m tools.xbe_parser "$MC3_XBE" --json "$XBE_JSON" | tee "$MC3_ANALYSIS_DIR/xbe_summary.txt"
 
-python3 - "$XBE_JSON" "$MC3_REPO/config/xbe_facts.h" <<'EOF'
+"$MC3_PYTHON" - "$XBE_JSON" "${MC3_FACTS_H:-$MC3_REPO/config/xbe_facts.h}" <<'EOF'
 import json, sys
 src, dst = sys.argv[1], sys.argv[2]
 d = json.load(open(src))
