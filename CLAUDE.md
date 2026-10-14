@@ -105,4 +105,7 @@ TODO.md.
 - 2026-10-11: skeleton; toolkit vendored and verified; lift pipeline
   smoke-tested on the toolkit's test XBE.
 - 2026-10-14: disc in `game/`; XBE parsed and fully lifted in the VM (above).
-  Next: first Linux build.
+- 2026-10-14: first Linux build OK on Ubuntu 22.04 ARM64 / GCC 11: all 87
+  lifted chunks + runtime link into `work/build-linux/mc3_recomp` (39 MB
+  aarch64 ELF). Only warnings, all in the toolkit (printf `%lu` vs `DWORD`,
+  `-Wnonnull` on `XBOX_TO_NATIVE`, comments, unused code). Next: first run.
