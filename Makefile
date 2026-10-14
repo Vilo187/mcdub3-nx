@@ -23,7 +23,7 @@ export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS
 
 .PHONY: help setup check-vm extract lift regen relift \
-        build build-vk build-debug run run-gdb run-headless snapshot trap \
+        build build-vk build-debug run run-gdb run-headless snapshot report trap \
         switch switch-vk switch-lto send \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
 
@@ -92,6 +92,9 @@ run-headless:  ## Run without a window (pair with RECOMP_GL_DUMP / RECOMP_PAD_SC
 
 snapshot:  ## Diagnose a hang: headless run, guest stack dumped after 30 s (WD=n to change)
 	HEADLESS=1 SECS=$${SECS:-90} RECOMP_WATCHDOG_SECS=$(or $(WD),30) bash tools/run_linux.sh
+
+report:  ## Explain the snapshot in the newest run log (LOG=<file> for another)
+	@python3 tools/snapshot_report.py $(LOG)
 
 trap:  ## Run, stopping at the first untranslated instruction reached
 	RECOMP_UNIMPL_TRAP=1 bash tools/run_linux.sh
