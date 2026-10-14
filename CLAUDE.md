@@ -51,6 +51,11 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
 - **Guest threads race** (streaming systems handing half-filled blocks to
   workers): the guest lock (GIL, `RECOMP_GIL`) runs one guest thread at a time.
   MC3 streams a whole city: expect this class of bug.
+- **AArch64 Linux address space** (found 2026-10-14, MC3): mmap is top-down,
+  so the guest base landed 3.8 GB under the 48-bit limit and every mapping at
+  base + guest VA above that (contiguous window, NV2A/MCPX/flash apertures)
+  failed with error 8. Fixed in xbox_memory_layout.c by probing for a free
+  4 GB hole first. Watch for `failed (error 8)` lines at boot.
 - **Threads:** keep busy threads off core 3 (no time-slicing at priority 59).
 - **Leaked directory handles** crash Atmosphère's ams.mitm.
 - **SD logging** was the boot bottleneck (33 s); a RAM log + writer thread fixed it.
