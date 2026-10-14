@@ -34,13 +34,15 @@ cd "$MC3_WORK"
 echo "profiling ${SECS}s headless -> $OUT"
 xvfb-run -a perf record -q -F 999 -o "$DATA" -- \
     timeout --signal=KILL "$SECS" "$BIN" > "$MC3_WORK/logs/profile_$STAMP.run.log" 2>&1 || true
+# Reports never fail the script: an empty section is information too.
+set +e +o pipefail
 {
     echo "== hottest functions, all threads"
-    perf report -i "$DATA" --stdio --no-children --sort symbol 2>/dev/null \
+    perf report -i "$DATA" --stdio --no-children --sort symbol 2>&1 \
         | grep -v '^#' | grep -v '^$' | head -40
     echo
-    echo "== per thread"
-    perf report -i "$DATA" --stdio --no-children --sort tid,symbol 2>/dev/null \
+    echo "== per thread (pid/tid, function)"
+    perf report -i "$DATA" --stdio --no-children --sort pid,tid,symbol 2>&1 \
         | grep -v '^#' | grep -v '^$' | head -40
 } > "$OUT"
 rm -f "$DATA"
