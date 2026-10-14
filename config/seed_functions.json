@@ -18,5 +18,9 @@
  {
   "start": "0x000271C0",
   "note": "Indirect-call target observed on the 2026-10-14 run 7. push ebp; mov ebp,esp after int3 padding; listed in a vtable in .rdata at 0x0041304C (a virtual method, only ever called indirectly)."
+ },
+ {
+  "start": "0x003A3C73",
+  "note": "XNET. Indirect-call target observed on the 2026-10-14 run 8, while the game polled XNetGetTitleXnAddr (0x00395DAA) forever for a network address. Starts right after sub_003A3BEE's ret (mov dl,[ecx+0x8C8]; dec; cmp 0x19: a switch over XNet's state byte); its address is stored by XNET code at 0x003A46A6, i.e. a registered timer/DPC callback that never ran."
  }
 ]
