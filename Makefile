@@ -25,7 +25,7 @@ export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME \
 .PHONY: help setup check-vm extract lift regen relift \
         build build-vk build-debug run run-gdb run-headless trap \
         switch switch-vk switch-lto send \
-        lift-report log du clean-build clean-gen clean toolkit-test
+        seeds lift-report log du clean-build clean-gen clean toolkit-test
 
 help:  ## Show this help
 	@awk 'BEGIN {FS = ":.*## "} /^## / {printf "\n%s\n", substr($$0, 4)} \
@@ -57,6 +57,14 @@ regen:  ## Full regen: after changing config/seed_functions.json
 relift:  ## Lift only: after editing src/recomp_manual.c or the translator
 	@mkdir -p $(LOGS)
 	LIFT_ONLY=1 bash tools/regen.sh 2>&1 | tee $(LOGS)/relift_$(NOW).log
+
+seeds:  ## Propose seeds from a run log: make seeds LOG=work/logs/run_x.log (review, then make regen)
+	@test -n "$(LOG)" || { echo "usage: make seeds LOG=<run log>"; exit 1; }
+	cd xboxrecomp && "$(WORK)/venv/bin/python3" -m tools.seed_from_log "$(abspath $(LOG))" \
+	    "$(or $(MC3_GAME_DIR),$(CURDIR)/game)/default.xbe" \
+	    --functions "$(WORK)/analysis/disasm/functions.json" \
+	    --seeds "$(CURDIR)/config/seed_functions.json"
+	@echo "review the additions: git diff config/seed_functions.json"
 
 lift-report:  ## Summarise the last lift (functions, stubs, unimplemented)
 	@grep -E '^(Poll loops|MMIO|[0-9]+/[0-9]+ functions|[0-9]+ unresolved|[0-9]+ instruction)' $(WORK)/analysis/recomp.log \
