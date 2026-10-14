@@ -26,10 +26,9 @@ UTM both work. Why: [ADR 0003](decisions/0003-linux-vm-debug-loop.md).
 2. Install **Parallels Tools** when prompted: shared folders and the
    graphics driver need it.
 3. Symlink the share somewhere short: `ln -s /media/psf/mcdub3-sw ~/mcdub3-sw`.
-   **Game data, lifted C and builds stay on the VM's own disk** in
-   `~/mc3-work` (`$MC3_WORK`): building ~100 MB of generated C through a
-   shared folder is very slow. (Alternative: clone the repo inside the VM.)
-4. `bash ~/mcdub3-sw/vm/setup-ubuntu.sh`, then open a new shell.
+   Every path is relative to the repo root: the disc in `game/`, everything
+   generated in `work/` (both gitignored). Run the scripts from the root.
+4. `cd ~/mcdub3-sw && bash vm/setup-ubuntu.sh`, then open a new shell.
 
 ### Ubuntu 22.04
 
@@ -38,7 +37,7 @@ tools/build_linux.sh`): the toolkit's Vulkan renderer needs glslang 12+ (the
 `glslang-default-resource-limits` CMake target), and 22.04 ships 11.8. The
 default OpenGL build, the lift pipeline (Python 3.10 is the minimum) and the
 Switch builds (devkitPro brings its own toolchain) are unaffected. If you
-need Linux Vulkan later, build glslang from source into `~/mc3-work/deps` and
+need Linux Vulkan later, build glslang from source into `work/deps` and
 pass `-Dglslang_DIR`, or move to 24.04.
 
 ### Check the VM (5 minutes, before anything else)
@@ -62,23 +61,29 @@ vulkaninfo --summary 2>/dev/null | grep -E 'deviceName|apiVersion'
 If GL is below 3.3: Parallels → Configure → Hardware → Graphics, try the
 other options; otherwise run with `LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe, GL 4.5).
 
-### Disk budget (fits in ~60 GB)
+### Disk budget
+
+`game/` and `work/` live in the repo, i.e. on the **Mac's** disk (through the
+shared folder); the VM disk only holds Ubuntu and the tools.
 
 | What | Size |
 |---|---|
-| Ubuntu desktop + build deps + devkitPro | ~20 GB |
-| Extracted disc | 0: read from the repo's `game/` on the Mac through the share |
-| Lifted C (`gen/`) + analysis | ~0.5 GB |
-| One Linux build tree | ~2–4 GB (lifted C without debug info) |
-| One Switch build tree | ~2–4 GB |
-| SD staging (`switch_sd/`) | the disc's size (3.4 GB), only once you build for the Switch |
-| Total, comfortable | **~30–40 GB** |
+| VM: Ubuntu desktop + build deps + devkitPro | ~20 GB |
+| Mac: extracted disc (`game/`) | 3.4 GB |
+| Mac: lifted C + analysis (`work/gen`, `work/analysis`) | ~0.5 GB |
+| Mac: one Linux build tree (`work/build-linux`) | ~2–4 GB (lifted C without debug info) |
+| Mac: one Switch build tree | ~2–4 GB |
+| Mac: SD staging (`work/switch_sd`) | ~3.4 GB once you build for the Switch |
 
 Disk savers, already the default: the lifted C is built without debug info
 (backtraces and breakpoints still name every `sub_XXXXXXXX`;
 `GEN_DEBUGINFO=1 tools/build_linux.sh` turns it on when you need line-level
 stepping, at a few GB). Delete build trees you're not using
-(`rm -rf ~/mc3-work/build-*-lto`); `du -sh ~/mc3-work/*` shows where space went.
+(`rm -rf work/build-*-lto`); `du -sh work/*` shows where space went.
+
+**If builds through the shared folder are slow:** `export MC3_WORK=<a folder
+on the VM disk>` moves only the generated files (lifted C, builds) off the
+share. The disc stays in `game/`.
 
 ## Create the VM (UTM, alternative)
 
@@ -120,25 +125,23 @@ cd ~/mcdub3-sw
 bash tools/first_lift.sh
 ```
 
-Only for an ISO: `tools/extract_disc.sh <file.iso>` unpacks it into
-`~/mc3-work/game`, which the scripts use when the repo's `game/` has no
-`default.xbe`.
-`MC3_GAME_DIR=<folder>` overrides both.
+Only for an ISO: `tools/extract_disc.sh <file.iso>` unpacks it into `game/`.
+`MC3_GAME_DIR=<folder>` points the scripts at a disc elsewhere.
 
 ## devkitPro on ARM64
 
 ARM64 Linux is a supported devkitPro host: their official `devkitpro/devkita64`
 Docker image is built for both linux/amd64 and linux/arm64. `vm/setup-ubuntu.sh`
 runs devkitPro's own installer; if that ever fails, build the Switch NRO inside
-`docker run -v ~/mc3-work:/work -v ~/mcdub3-sw:/src devkitpro/devkita64`, which
+`docker run -v ~/mcdub3-sw:/src devkitpro/devkita64`, which
 runs natively on the VM. The Linux debug loop is unaffected either way.
 
 ## Sending builds to the Switch
 
 - **nxlink** (fastest): open hbmenu, press **Y** (netloader), then
-  `nxlink -s $MC3_WORK/switch_sd/switch/mcdub3/mc3_recomp.nro`. `-s` keeps the
+  `nxlink -s work/switch_sd/switch/mcdub3/mc3_recomp.nro`. `-s` keeps the
   connection open and streams the log to your terminal. The game data must
   already be on the card at `sdmc:/switch/mcdub3/game/`.
-- **SD card**: copy `$MC3_WORK/switch_sd/switch/mcdub3/` to the card.
+- **SD card**: copy `work/switch_sd/switch/mcdub3/` to the card.
 - Start with **title takeover** (hold R while launching a game). Applet mode
   leaves too little memory.

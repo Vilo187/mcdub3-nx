@@ -27,7 +27,7 @@ bash vm/setup-ubuntu.sh                 # once
 # put the extracted disc (default.xbe + data) in game/; for an ISO: tools/extract_disc.sh
 bash tools/first_lift.sh                # parse the XBE, write config/xbe_facts.h, lift
 tools/build_linux.sh && tools/run_linux.sh
-switch/build.sh                         # NRO + SD staging in ~/mc3-work/switch_sd
+switch/build.sh                         # NRO + SD staging in work/switch_sd
 ```
 
 ## Layout
@@ -45,9 +45,9 @@ switch/build.sh                         # NRO + SD staging in ~/mc3-work/switch_
 | `vm/setup-ubuntu.sh` | one-time VM setup |
 | `docs/decisions/` | why things are the way they are |
 
-The disc goes in `game/` (gitignored). Generated files live outside the
-repo, in `$MC3_WORK` (default `~/mc3-work`): `analysis/`, `gen/`, `build-*/`,
-`switch_sd/`, `logs/`, `elf/`. Never committed.
+Everything is relative to the repo root, and both folders are gitignored:
+`game/` holds the extracted disc; `work/` holds everything generated
+(`analysis/`, `gen/`, `build-*/`, `switch_sd/`, `logs/`, `elf/`, `venv/`).
 
 ## On the Switch
 

@@ -19,11 +19,11 @@ set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/xboxrecomp" CACHE PATH
     "xboxrecomp toolkit (vendored; see docs/decisions/0002)")
 
 # The lifted C (~100 MB) is generated from the retail XBE by tools/regen.sh
-# and never committed. Default matches tools/env.sh.
+# and never committed. Default matches tools/env.sh: <repo>/work.
 if(DEFINED ENV{MC3_WORK})
     set(_mc3_work "$ENV{MC3_WORK}")
 else()
-    set(_mc3_work "$ENV{HOME}/mc3-work")
+    set(_mc3_work "${CMAKE_CURRENT_SOURCE_DIR}/work")
 endif()
 set(MC3_GEN_DIR "${_mc3_work}/gen" CACHE PATH
     "tools.recomp output (recomp_*.c, recomp_funcs.h, recomp_types.h)")
