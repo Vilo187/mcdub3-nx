@@ -54,7 +54,7 @@ regen:  ## Full regen: after changing config/seed_functions.json
 	@mkdir -p $(LOGS)
 	bash tools/regen.sh 2>&1 | tee $(LOGS)/regen_$(NOW).log
 
-relift:  ## Lift only: after editing src/recomp_manual.c or the translator
+relift:  ## Lift only: after adding/removing an override, or a translator change
 	@mkdir -p $(LOGS)
 	LIFT_ONLY=1 bash tools/regen.sh 2>&1 | tee $(LOGS)/relift_$(NOW).log
 

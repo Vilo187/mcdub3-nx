@@ -57,6 +57,9 @@ rm -f "$MC3_GEN_DIR/recomp_types.h"
     --exclude-manual "$MANUAL" --mmio-sections "$MMIO" \
     ${MC3_RECOMP_ARGS:-} 2>&1 | tee "$A/recomp.log"
 
+# What the build checks the overrides against (mc3_check_lift_fresh).
+mc3_manual_overrides > "$MC3_GEN_DIR/.manual_overrides" || true
+
 echo
 echo "lifted C in $MC3_GEN_DIR: $(find "$MC3_GEN_DIR" -name '*.c' | wc -l) files, $(du -sh "$MC3_GEN_DIR" | cut -f1)"
 # The translator ends with its tally of instructions it could not lift (the
