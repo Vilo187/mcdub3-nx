@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# Unpack an Xbox disc image into $MC3_GAME_DIR (default.xbe + the data).
+# Unpack an Xbox disc image (default.xbe + the data). Only needed for an ISO;
+# an already-extracted disc just goes in the repo's game/ folder.
+# Unpacks into $MC3_GAME_DIR (default: the repo's game/ when it already has a
+# default.xbe, else $MC3_WORK/game; set MC3_GAME_DIR=<repo>/game to unpack there).
 #
 #   tools/extract_disc.sh path/to/mc3.iso
 #

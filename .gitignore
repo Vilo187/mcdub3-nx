@@ -21,3 +21,6 @@ __pycache__/
 *.pyc
 .vscode/
 .idea/
+
+# Personal folders
+drafts

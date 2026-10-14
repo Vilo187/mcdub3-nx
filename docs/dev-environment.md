@@ -67,13 +67,12 @@ other options; otherwise run with `LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe, GL 4.5).
 | What | Size |
 |---|---|
 | Ubuntu desktop + build deps + devkitPro | ~20 GB |
-| Extracted disc (`game/`) | ~4–7 GB |
-| ISO | keep it **on the Mac**; extract straight from the share |
+| Extracted disc | 0: read from the repo's `game/` on the Mac through the share |
 | Lifted C (`gen/`) + analysis | ~0.5 GB |
 | One Linux build tree | ~2–4 GB (lifted C without debug info) |
 | One Switch build tree | ~2–4 GB |
-| SD staging (`switch_sd/`) | ~0: hard links to `game/` |
-| Total, comfortable | **~35–45 GB** |
+| SD staging (`switch_sd/`) | the disc's size (3.4 GB), only once you build for the Switch |
+| Total, comfortable | **~30–40 GB** |
 
 Disk savers, already the default: the lifted C is built without debug info
 (backtraces and breakpoints still name every `sub_XXXXXXXX`;
@@ -90,7 +89,7 @@ same CPU/RAM/disk/sharing as above. Then the same checks.
 ## The loop
 
 ```
-tools/extract_disc.sh ~/mc3.iso      # once: disc -> $MC3_WORK/game
+                                     # once: extracted disc in game/ (ISO: tools/extract_disc.sh)
 tools/first_lift.sh                  # once: parse XBE, config/xbe_facts.h, full lift
 tools/build_linux.sh                 # after every change to src/ or the toolkit
 tools/run_linux.sh                   # window; GDB=1 / HEADLESS=1 / SECS=n
@@ -111,10 +110,20 @@ virtual: fine for correctness, meaningless for performance.
 
 ## Getting the game into the VM
 
-Leave the ISO on the Mac and extract it straight through the shared folder,
-e.g. put it in the repo's `source/` folder (gitignored) and run
-`tools/extract_disc.sh ~/mcdub3-sw/source/<name>.iso`. Only the extracted files
-land on the VM disk.
+Put the **extracted** disc (`default.xbe` + data) in the repo's `game/`
+folder on the Mac (gitignored). The scripts use it from there through the
+shared folder; nothing is copied to the VM disk. Run everything from the repo
+root:
+
+```sh
+cd ~/mcdub3-sw
+bash tools/first_lift.sh
+```
+
+Only for an ISO: `tools/extract_disc.sh <file.iso>` unpacks it into
+`~/mc3-work/game`, which the scripts use when the repo's `game/` has no
+`default.xbe`.
+`MC3_GAME_DIR=<folder>` overrides both.
 
 ## devkitPro on ARM64
 

@@ -7,7 +7,8 @@ Keep this file current: findings, rules, status. It is the project's memory.
 ## Rules
 
 - Never commit game data (ISO, `default.xbe`, disc files) or generated C.
-  Everything heavy lives in `$MC3_WORK` (tools/env.sh), outside the repo.
+  The disc goes in the repo's `game/` (gitignored); everything generated lives
+  in `$MC3_WORK` (tools/env.sh), outside the repo, on the VM's own disk.
 - Toolkit changes go in `xboxrecomp/` as their own commits, subject prefixed
   `xboxrecomp:`. Prefer new files over edits to files the Switch layer or
   upstream also change (ADR 0002). Note upstreamable fixes.
