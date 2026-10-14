@@ -34,7 +34,7 @@ make              # every target, grouped
 
 ## Layout
 
-Full tree with what sits where: [docs/project-layout.md](docs/project-layout.md).
+Full tree with what sits where: [CONTRIBUTING.md](CONTRIBUTING.md#project-layout).
 
 | Path | What |
 |---|---|
