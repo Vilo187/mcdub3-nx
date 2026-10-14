@@ -22,5 +22,9 @@
  {
   "start": "0x003A3C73",
   "note": "XNET. Indirect-call target observed on the 2026-10-14 run 8, while the game polled XNetGetTitleXnAddr (0x00395DAA) forever for a network address. Starts right after sub_003A3BEE's ret (mov dl,[ecx+0x8C8]; dec; cmp 0x19: a switch over XNet's state byte); its address is stored by XNET code at 0x003A46A6, i.e. a registered timer/DPC callback that never ran."
+ },
+ {
+  "start": "0x00378E70",
+  "note": "BINK. Indirect-call target hit 115x on the 2026-10-14 run 9 while rockstar.bik played. Real function after nop padding (push ecx; push ebx; push ebp; push esi; push edi; mov edi,[esp+0x18]); its address is stored by Bink code at 0x0037972C (a decoder callback)."
  }
 ]
