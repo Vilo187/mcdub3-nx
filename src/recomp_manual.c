@@ -61,6 +61,30 @@ void sub_002AB610(void)
     g_esp += 4;
 }
 
+/* ── Traces (wrap the lifted body, change nothing) ─────────── */
+
+/* Bink 32-bit blit, 0x00382C00 (BINK32): a 12-argument stdcall wrapper
+ * (ret 0x30) around the blit driver sub_0037DF90. On the 2026-10-14 runs the
+ * driver's row loop spun with no pixel routine ever called -- consistent with
+ * a garbage height/width making ((height - start - 1) >> 1) + 1 wrap. Log the
+ * arguments of the first calls to see what the movie player hands it.
+ * Remove once the movie plays. */
+extern void sub_00382C00_gen(void);
+void sub_00382C00(void)
+{
+    static int logged;
+
+    if (logged < 4) {
+        int i;
+        logged++;
+        fprintf(stderr, "[BINK32] blit #%d args:", logged);
+        for (i = 1; i <= 12; i++)
+            fprintf(stderr, " %08X", MEM32(g_esp + 4u * (uint32_t)i));
+        fprintf(stderr, "\n");
+    }
+    sub_00382C00_gen();
+}
+
 /* ── Manual function overrides ─────────────────────────────── */
 
 /*
