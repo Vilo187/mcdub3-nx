@@ -20,7 +20,9 @@ Keep this file current: findings, rules, status. It is the project's memory.
   it rewrites `gen/recomp_types.h`. Then rebuild all generated code.
 - Every seed added to `config/seed_functions.json` gets a note, and is
   reviewed: a seed inside a function splits it.
-- Record decisions in `docs/decisions/` (short ADRs).
+- Record decisions in `docs/decisions/` (short ADRs). Open work, bugs and
+  decisions still to evaluate live in `TODO.md` (gitignored, personal);
+  this file keeps facts and rules.
 
 ## Workflow
 
@@ -90,16 +92,10 @@ targets stubbed (`recomp_stubs_unresolved.c`: addresses called but not found
 as functions; fix with seeds when they are hit). All 89 files pass a clang C11
 syntax check. For scale: Burnout 3 lifts to 22,097 functions.
 
-353 unimplemented instructions (40 mnemonics, no-ops that print `[UNIMPL]` when
-reached; `RECOMP_UNIMPL_TRAP=1` stops at the first). Mostly data decoded as
-code (`aas`, `daa`, `arpl`, `outsb`/`insb`, `bound`... clustered in D3DX,
-WMADEC, XON_RD tables). Likely **real** ones to watch:
-- `cmpsd` ×20 in `.text`: string compare (`repe cmpsd`, memcmp-style);
-- `pushfd`/`popfd` + `cpuid`: CRT CPU-feature detection;
-- `stmxcsr`/`ldmxcsr` ×2: SSE control word (float rounding setup);
-- `xacquire xchg` ×1: lock-elision spinlock;
-- `in`/`out` in D3D, `wbinvd`, `cli`/`sti` in XPP: hardware access, mostly
-  harmless as no-ops, but D3D's `in al,dx` mattered for NFSU2's display mode.
+353 unimplemented instructions (40 mnemonics): no-ops that print `[UNIMPL]`
+when reached (`RECOMP_UNIMPL_TRAP=1` stops at the first). Mostly data decoded
+as code (D3DX, WMADEC, XON_RD tables); the few likely-real ones are tracked in
+TODO.md.
 
 ## Status
 
