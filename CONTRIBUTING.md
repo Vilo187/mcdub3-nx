@@ -173,7 +173,8 @@ mcdub3-sw/
 │   ├── first_lift.sh           make lift: parse + write xbe_facts.h + full regen
 │   ├── regen.sh                make regen / relift: the stage-1 pipeline
 │   ├── build_linux.sh          make build: CMake + Ninja into work/build-linux*
-│   ├── run_linux.sh            make run / run-gdb / run-headless / trap
+│   ├── run_linux.sh            make run / run-gdb / run-headless / snapshot / trap
+│   ├── snapshot_report.py      make report: a crash/watchdog snapshot, explained
 │   └── extract_disc.sh         make extract: ISO → game/
 ├── switch/
 │   └── build.sh              [git] make switch: NRO build + SD-card staging
@@ -342,14 +343,18 @@ same CPU/RAM/disk/sharing as above. Then the same checks.
 
 ## The loop
 
+Every step is a `make` target in the repo root (`make` lists them all; logs go
+to `work/logs/`). The scripts in `tools/` behind them also work on their own.
+
 ```
-                                     # once: extracted disc in game/ (ISO: tools/extract_disc.sh)
-tools/first_lift.sh                  # once: parse XBE, config/xbe_facts.h, full lift
-tools/build_linux.sh                 # after every change to src/ or the toolkit
-tools/run_linux.sh                   # window; GDB=1 / HEADLESS=1 / SECS=n
-LIFT_ONLY=1 tools/regen.sh           # after editing recomp_manual.c or the translator
-tools/regen.sh                       # after changing config/seed_functions.json
-switch/build.sh                      # when it's time for Eden / the console
+make lift          # once: parse the XBE, config/xbe_facts.h, full lift (disc in game/)
+make build run     # after a change to src/ or the runtime (window; SECS=n to stop)
+make snapshot      # a hang: headless run, guest call stack dumped after 30 s
+make report        # explain the newest snapshot: call chain by section, kernel calls
+make run-gdb       # under gdb; also run-headless, trap
+make relift build  # after adding/removing an override, or a translator change
+make regen build   # after changing config/seed_functions.json
+make switch send   # when it's time for Eden / the console
 ```
 
 | Rung                   | When                        | What it catches                                                     |
