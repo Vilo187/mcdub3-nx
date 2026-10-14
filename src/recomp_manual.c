@@ -85,6 +85,29 @@ void sub_00382C00(void)
     sub_00382C00_gen();
 }
 
+/* Bink blit timing, 0x0037DF00: called once per pass of the row loop in
+ * sub_0037DF90 (call at 0x0037E311). The loop counter is the caller's
+ * [esp+0x40]; from in here the caller's esp is g_esp + 4 (our return
+ * address), so the counter is MEM32(g_esp + 0x44). The blit arguments were
+ * sane (640x480, pitch 0xA00), yet the loop never ends. Log whether the
+ * counter moves, whether esp drifts between passes, and what the per-CPU
+ * pixel-routine pointers hold. Remove once the movie plays. */
+extern void sub_0037DF00_gen(void);
+void sub_0037DF00(void)
+{
+    static uint64_t calls;
+
+    calls++;
+    if (calls <= 3 || calls % 1000000u == 0) {
+        fprintf(stderr, "[BINKLOOP] pass %llu: counter=%08X esp=%08X "
+                        "ptrs c8=%08X d8=%08X f0=%08X f4=%08X f8=%08X\n",
+                (unsigned long long)calls, MEM32(g_esp + 0x44), g_esp,
+                MEM32(0x5209C8), MEM32(0x5209D8), MEM32(0x5209F0),
+                MEM32(0x5209F4), MEM32(0x5209F8));
+    }
+    sub_0037DF00_gen();
+}
+
 /* ── Manual function overrides ─────────────────────────────── */
 
 /*
