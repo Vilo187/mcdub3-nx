@@ -91,7 +91,9 @@ run-headless:  ## Run without a window (pair with RECOMP_GL_DUMP / RECOMP_PAD_SC
 	HEADLESS=1 bash tools/run_linux.sh
 
 snapshot:  ## Diagnose a hang: headless run, guest stack dumped after 30 s (WD=n to change)
-	HEADLESS=1 SECS=$${SECS:-90} RECOMP_WATCHDOG_SECS=$(or $(WD),30) bash tools/run_linux.sh
+	@HEADLESS=1 SECS=$${SECS:-90} RECOMP_WATCHDOG_SECS=$(or $(WD),30) bash tools/run_linux.sh; \
+	 rc=$$?; if [ $$rc -eq 3 ]; then echo "snapshot taken (watchdog exit 3 is expected): make report"; \
+	 elif [ $$rc -ne 0 ]; then echo "run ended with exit code $$rc (not the watchdog): make report"; exit $$rc; fi
 
 report:  ## Explain the snapshot in the newest run log (LOG=<file> for another)
 	@python3 tools/snapshot_report.py $(LOG)
