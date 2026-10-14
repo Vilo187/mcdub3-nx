@@ -90,6 +90,34 @@ void sub_002B9C90(void)
     g_esp += 4;
 }
 
+/* D3D fence wait, 0x003DF4D0 (D3D section): waits until the GPU-written
+ * semaphore at *(device + 0x30) reaches a fence. The NV2A executor writes
+ * BACK_END_WRITE_SEMAPHORE_RELEASE values there only once the project names
+ * the address (nv2a_pb_set_semaphore_target, xboxrecomp nv2a_backend.h);
+ * until then every release is dropped and the wait never ends (2026-10-14
+ * run 15: main thread here with PUT == GET). MC3's D3D keeps its device
+ * pointer at 0x003ECAE8 (mov esi, [0x3ECAE8] at the top of this function).
+ * Name the semaphore on the first wait, then run the original: its kick-off
+ * queues new releases, which now land. */
+extern void sub_003DF4D0_gen(void);
+extern void nv2a_pb_set_semaphore_target(uint32_t guest_va);
+void sub_003DF4D0(void)
+{
+    static uint32_t sem_va;
+
+    if (!sem_va) {
+        uint32_t device = MEM32(0x003ECAE8u);
+        uint32_t sem = device ? MEM32(device + 0x30u) : 0;
+        if (sem) {
+            sem_va = sem;
+            nv2a_pb_set_semaphore_target(sem_va);
+            fprintf(stderr, "[D3D] GPU semaphore at 0x%08X (device 0x%08X)\n",
+                    sem_va, device);
+        }
+    }
+    sub_003DF4D0_gen();
+}
+
 /* ── Traces (wrap the lifted body, change nothing) ─────────── */
 
 /* Bink 32-bit blit, 0x00382C00 (BINK32): a 12-argument stdcall wrapper

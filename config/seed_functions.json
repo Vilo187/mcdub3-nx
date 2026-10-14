@@ -462,5 +462,9 @@
  {
   "start": "0x00388EC0",
   "note": "BINKYUY2 pixel routine (push ebx), reached only through Bink's per-format routine table in BINKDATA (pointer at 0x0053E020). Found 2026-10-14 by scanning BINKDATA for pointers into BINK code sections that the static pass never lifted, after 0x00382AE0/0x00382CA0 failed to resolve in run 14."
+ },
+ {
+  "start": "0x0040EF74",
+  "note": "XPP. Indirect-call target hit 925x on the 2026-10-14 run 15. Starts right after sub_0040EEEA's `ret 8` (mov eax,ecx; mov ecx,[eax+0x66]: a thiscall method); its address is stored by XPP code at 0x00408750 (a registered callback)."
  }
 ]
