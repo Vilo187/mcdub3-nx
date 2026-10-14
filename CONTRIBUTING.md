@@ -351,6 +351,7 @@ make lift          # once: parse the XBE, config/xbe_facts.h, full lift (disc in
 make build run     # after a change to src/ or the runtime (window; SECS=n to stop)
 make snapshot      # a hang: headless run, guest call stack dumped after 30 s
 make report        # explain the newest snapshot: call chain by section, kernel calls
+make hoststacks    # every thread's host backtrace after 45 s: who waits on what
 make run-gdb       # under gdb; also run-headless, trap
 make relift build  # after adding/removing an override, or a translator change
 make regen build   # after changing config/seed_functions.json
