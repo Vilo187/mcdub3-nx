@@ -33,7 +33,8 @@ mc3_need_game
 mkdir -p "$MC3_WORK/logs"
 LOG="$MC3_WORK/logs/run_$(date +%Y%m%d_%H%M%S).log"
 export MC3_GAME_DIR
-# The title's hard disk (TDATA/UDATA saves and settings) under work/, not ~/.local.
+# The title's drive letters and partition images under work/, not ~/.local
+# (Partition1\TDATA and \UDATA map into the game folder; see src/main.c).
 export MC3_SAVE_DIR="${MC3_SAVE_DIR:-$MC3_WORK/save}"
 mkdir -p "$MC3_SAVE_DIR"
 # Relative outputs (frame dumps, progcache.bin) land in the workspace.

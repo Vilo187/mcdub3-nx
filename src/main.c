@@ -299,8 +299,13 @@ static int game_main(void)
 
     xbox_kernel_init();
     {
-        /* MC3_SAVE_DIR (tools/run_linux.sh: work/save) keeps the title's
-         * hard-disk partitions inside the repo instead of ~/.local/share. */
+        /* Where the Xbox paths land (xboxrecomp kernel_path.c):
+         *   \Device\CdRom0\, D:\ and Harddisk0\Partition1\ -> game_dir
+         *     (so MC3's TDATA/UDATA settings and saves end up in game/)
+         *   T:\ U:\ Z:\ and the raw partition images        -> save_dir
+         * MC3_SAVE_DIR (tools/run_linux.sh: work/save) keeps the latter in
+         * the repo instead of ~/.local/share; mcdub3_env.txt can set either
+         * on the Switch, where the defaults are sdmc:/switch/mcdub3/{game,save}. */
         const char *save_dir = getenv("MC3_SAVE_DIR");
         xbox_path_init(game_dir, save_dir && save_dir[0] ? save_dir : MC3_DEFAULT_SAVE_DIR);
     }
