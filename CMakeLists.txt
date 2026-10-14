@@ -50,6 +50,7 @@ file(GLOB MC3_GEN_SOURCES CONFIGURE_DEPENDS "${MC3_GEN_DIR}/*.c")
 set(MC3_SOURCES
     src/main.c
     src/recomp_manual.c
+    src/ac97_nabm.c
 )
 if(NINTENDO_SWITCH)
     list(APPEND MC3_SOURCES src/switch_nx.c)

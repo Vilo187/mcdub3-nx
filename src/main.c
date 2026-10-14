@@ -280,6 +280,14 @@ static int game_main(void)
             xbox_MmioRegister(APU_BASE, APU_END, apu_mmio_rd, apu_mmio_wr, g_apu_state);
     }
 
+    /* AC'97 channel resets complete at once (src/ac97_nabm.c): DSOUND reads
+     * the reset bit a single time after setting it. Needed wherever the
+     * AC'97 is plain memory, i.e. every host without write trapping. */
+    if (env_is("RECOMP_AC97_READY", "plain")) {
+        extern void mc3_ac97_nabm_install(void);
+        mc3_ac97_nabm_install();
+    }
+
     /* The USB host controllers the title's XPP library drives to find pads. */
     xbox_OhciInit();
 

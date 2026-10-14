@@ -57,6 +57,12 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   base + guest VA above that (contiguous window, NV2A/MCPX/flash apertures)
   failed with error 8. Fixed in xbox_memory_layout.c by probing for a free
   4 GB hole first. Watch for `failed (error 8)` lines at boot.
+- **AC'97 reset in "plain" mode** (found 2026-10-14, MC3): DSOUND writes the
+  channel reset bit (NABM +0x0B, RR) and reads it back once (MSVC hoisted the
+  load), so the toolkit's after-the-fact clearing thread loses and DirectSound
+  spins forever. src/ac97_nabm.c models those registers through the MMIO hooks
+  (DSOUND is lifted with them): RR never lands. Needs DSOUND in
+  MC3_MMIO_SECTIONS.
 - **Threads:** keep busy threads off core 3 (no time-slicing at priority 59).
 - **Leaked directory handles** crash Atmosphère's ams.mitm.
 - **SD logging** was the boot bottleneck (33 s); a RAM log + writer thread fixed it.
