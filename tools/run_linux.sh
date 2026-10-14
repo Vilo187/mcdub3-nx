@@ -33,6 +33,9 @@ mc3_need_game
 mkdir -p "$MC3_WORK/logs"
 LOG="$MC3_WORK/logs/run_$(date +%Y%m%d_%H%M%S).log"
 export MC3_GAME_DIR
+# The title's hard disk (TDATA/UDATA saves and settings) under work/, not ~/.local.
+export MC3_SAVE_DIR="${MC3_SAVE_DIR:-$MC3_WORK/save}"
+mkdir -p "$MC3_SAVE_DIR"
 # Relative outputs (frame dumps, progcache.bin) land in the workspace.
 cd "$MC3_WORK"
 

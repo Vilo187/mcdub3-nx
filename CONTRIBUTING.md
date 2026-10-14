@@ -202,6 +202,7 @@ mcdub3-sw/
     ├── build-switch/, build-switch-vk/        Switch build trees (make switch); mc3_recomp.nro/.elf
     ├── switch_sd/            [generated] SD-card staging: switch/mcdub3/{mc3_recomp.nro, game/}
     ├── elf/                  [generated] one ELF per staged NRO, to resolve console crash addresses
+    ├── save/                 [generated] the title's hard disk on Linux (TDATA/UDATA: saves, settings)
     ├── logs/                 [generated] every make lift/build/run/switch log, timestamped
     ├── venv/                 [generated] Python + capstone for stage 1 (make setup)
     └── deps/                 [optional] Switch extras built by hand: mesa NVK SDK, glslang, FFmpeg

@@ -298,7 +298,12 @@ static int game_main(void)
 #endif
 
     xbox_kernel_init();
-    xbox_path_init(game_dir, MC3_DEFAULT_SAVE_DIR);
+    {
+        /* MC3_SAVE_DIR (tools/run_linux.sh: work/save) keeps the title's
+         * hard-disk partitions inside the repo instead of ~/.local/share. */
+        const char *save_dir = getenv("MC3_SAVE_DIR");
+        xbox_path_init(game_dir, save_dir && save_dir[0] ? save_dir : MC3_DEFAULT_SAVE_DIR);
+    }
     xbox_kernel_bridge_init();
 
     g_esp = XBOX_STACK_TOP;
