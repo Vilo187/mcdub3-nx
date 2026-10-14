@@ -4,7 +4,7 @@
 #
 #   bash vm/setup-ubuntu.sh
 #
-# Safe to re-run. Needs sudo. See docs/dev-environment.md for creating the VM.
+# Safe to re-run. Needs sudo. See CONTRIBUTING.md for creating the VM.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
 
@@ -26,7 +26,7 @@ mkdir -p "$MC3_WORK"
 echo "== 4/4 devkitPro (devkitA64 + libnx + switch-sdl2 + switch-mesa)"
 if [ ! -x /opt/devkitpro/pacman/bin/pacman ] && ! command -v dkp-pacman >/dev/null; then
     # devkitPro's own installer; it picks the package for this CPU.
-    # ARM64 is supported; if this fails, see docs/dev-environment.md.
+    # ARM64 is supported; if this fails, see CONTRIBUTING.md.
     wget -q https://apt.devkitpro.org/install-devkitpro-pacman -O /tmp/install-devkitpro-pacman
     chmod +x /tmp/install-devkitpro-pacman
     sudo /tmp/install-devkitpro-pacman

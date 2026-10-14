@@ -20,14 +20,16 @@ default.xbe ──xboxrecomp (Python)──▶ lifted C ──┬── GCC, Lin
                                                 └── devkitA64 ───▶ mc3_recomp.nro (Switch)
 ```
 
-## Quick start (in the Ubuntu ARM64 VM: docs/dev-environment.md)
+## Quick start (in the Ubuntu ARM64 VM: CONTRIBUTING.md)
+
+Put the extracted disc (`default.xbe` + data) in `game/`, then from the repo root:
 
 ```sh
-bash vm/setup-ubuntu.sh                 # once
-# put the extracted disc (default.xbe + data) in game/; for an ISO: tools/extract_disc.sh
-bash tools/first_lift.sh                # parse the XBE, write config/xbe_facts.h, lift
-tools/build_linux.sh && tools/run_linux.sh
-switch/build.sh                         # NRO + SD staging in work/switch_sd
+make setup        # once: build deps, devkitPro, Python venv
+make lift         # parse the XBE, write config/xbe_facts.h, lift to C
+make build run    # Linux build + run in a window
+make switch       # Switch NRO + SD staging in work/switch_sd
+make              # every target, grouped
 ```
 
 ## Layout
