@@ -1,8 +1,52 @@
-# Development environment
+# Contributing: development guide
+
+How the project turns the Xbox game into a Switch program, how to set up the
+development VM, and the day-to-day loop. What sits where:
+[docs/project-layout.md](docs/project-layout.md).
+
+## How it works: two stages
+
+```
+STAGE 1: LIFT (Python)                            STAGE 2: BUILD (C)
+game/default.xbe ─► xboxrecomp/tools ─► work/gen/*.c ─► CMake + GCC ─► work/build-linux/mc3_recomp
+ (x86 machine code)  parse, disassemble,  (the game as C)  + src/*.c          or devkitA64 ─► .nro (Switch)
+                     identify, translate                   + toolkit runtime
+```
+
+**Stage 1, the lift (`make lift`, `make regen`, `make relift`).** The
+toolkit's recompiler is a set of Python programs (`xboxrecomp/tools/`). They
+read the Xbox executable, disassemble it (with the *capstone* library), find
+every function, recognise library code, recover how each function takes its
+arguments, and translate every x86 function into a C function. Purpose: turn
+machine code that only runs on an Xbox CPU into portable C that any compiler
+can build. Output: `work/gen/` (~90 files, ~3 M lines) plus intermediate
+results in `work/analysis/`. It runs once, then again only when the C must be
+regenerated: after changing seeds (`config/seed_functions.json`, full
+`make regen`), or hand-written overrides in `src/recomp_manual.c` / the
+translator (`make relift`, skips the analysis steps).
+
+**Stage 2, the build (`make build`, `make switch`).** Plain C: CMake + GCC
+(Linux) or devkitA64 (Switch) compile three things into one program:
+
+- `work/gen/`: the game itself, as generated C;
+- `xboxrecomp/src/`: the toolkit's runtime, which stands in for the Xbox: its
+  kernel, memory map, GPU, sound chip and controllers;
+- `src/`: our own code: boot (`main.c`), hand-written function replacements
+  (`recomp_manual.c`), Switch glue (`switch_nx.c`).
+
+Purpose: produce a native program for the host: a Linux binary to debug in a
+window, or a Switch `.nro`. No Python runs here; after editing C, `make build`
+is all it takes.
+
+**Why two stages:** lifting is slow and only depends on the XBE, seeds and
+overrides; building is the part you repeat all day. Keeping them apart means
+an ordinary code change never re-runs the lift.
+
+## Development environment
 
 One Ubuntu ARM64 VM on the Mac (Apple Silicon) does everything: lifting, the
 windowed Linux build with gdb, and Switch cross-builds. Parallels Desktop or
-UTM both work. Why: [ADR 0003](decisions/0003-linux-vm-debug-loop.md).
+UTM both work. Why: [ADR 0003](docs/decisions/0003-linux-vm-debug-loop.md).
 
 ## Create the VM (Parallels Desktop)
 
@@ -66,14 +110,14 @@ other options; otherwise run with `LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe, GL 4.5).
 `game/` and `work/` live in the repo, i.e. on the **Mac's** disk (through the
 shared folder); the VM disk only holds Ubuntu and the tools.
 
-| What | Size |
-|---|---|
-| VM: Ubuntu desktop + build deps + devkitPro | ~20 GB |
-| Mac: extracted disc (`game/`) | 3.4 GB |
-| Mac: lifted C + analysis (`work/gen`, `work/analysis`) | ~0.5 GB |
-| Mac: one Linux build tree (`work/build-linux`) | ~2–4 GB (lifted C without debug info) |
-| Mac: one Switch build tree | ~2–4 GB |
-| Mac: SD staging (`work/switch_sd`) | ~3.4 GB once you build for the Switch |
+| What                                                   | Size                                  |
+| ------------------------------------------------------ | ------------------------------------- |
+| VM: Ubuntu desktop + build deps + devkitPro            | ~20 GB                                |
+| Mac: extracted disc (`game/`)                          | 3.4 GB                                |
+| Mac: lifted C + analysis (`work/gen`, `work/analysis`) | ~0.5 GB                               |
+| Mac: one Linux build tree (`work/build-linux`)         | ~2–4 GB (lifted C without debug info) |
+| Mac: one Switch build tree                             | ~2–4 GB                               |
+| Mac: SD staging (`work/switch_sd`)                     | ~3.4 GB once you build for the Switch |
 
 Disk savers, already the default: the lifted C is built without debug info
 (backtraces and breakpoints still name every `sub_XXXXXXXX`;
@@ -94,20 +138,20 @@ same CPU/RAM/disk/sharing as above. Then the same checks.
 ## The loop
 
 ```
-make lift          # once: parse the XBE, config/xbe_facts.h, full lift (disc in game/)
-make build run     # after every change to src/ or the toolkit
-make run-gdb       # under gdb; also run-headless, trap, run SECS=n
-make relift build  # after editing recomp_manual.c or the translator
-make regen build   # after changing config/seed_functions.json
-make switch send   # when it's time for Eden / the console
-make               # everything else (logs, disk use, clean, ...)
+                                     # once: extracted disc in game/ (ISO: tools/extract_disc.sh)
+tools/first_lift.sh                  # once: parse XBE, config/xbe_facts.h, full lift
+tools/build_linux.sh                 # after every change to src/ or the toolkit
+tools/run_linux.sh                   # window; GDB=1 / HEADLESS=1 / SECS=n
+LIFT_ONLY=1 tools/regen.sh           # after editing recomp_manual.c or the translator
+tools/regen.sh                       # after changing config/seed_functions.json
+switch/build.sh                      # when it's time for Eden / the console
 ```
 
-| Rung | When | What it catches |
-|---|---|---|
-| Linux build (VM) | every change | boot, kernel calls, rendering, audio, game logic |
-| Eden (Switch emulator) | before the console | packaging, paths, libnx glue |
-| Switch hardware | regularly, not every change | unaligned atomics, memory/aliasing, threads on Horizon, performance |
+| Rung                   | When                        | What it catches                                                     |
+| ---------------------- | --------------------------- | ------------------------------------------------------------------- |
+| Linux build (VM)       | every change                | boot, kernel calls, rendering, audio, game logic                    |
+| Eden (Switch emulator) | before the console          | packaging, paths, libnx glue                                        |
+| Switch hardware        | regularly, not every change | unaligned atomics, memory/aliasing, threads on Horizon, performance |
 
 The VM's CPU is ARM64 like the Switch's, so most "x86 assumptions" (unaligned
 atomics, memory ordering) show up here before the console. The VM's GPU is
