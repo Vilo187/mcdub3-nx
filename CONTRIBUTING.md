@@ -114,6 +114,32 @@ and the lifter always agree). Any of `relift`
 and `regen` rewrites `work/gen/`, so the next build recompiles every chunk
 (the long build); a plain `make build` only recompiles what changed.
 
+### Files and paths on Linux and the Switch
+
+The game only ever uses Xbox paths. One toolkit layer translates them to two
+host folders, and only those two folders differ per platform:
+
+```
+game (lifted code)        \Device\CdRom0\..., D:\..., \Device\Harddisk0\Partition1\UDATA\...
+        │
+        ▼  xboxrecomp/src/kernel/kernel_path.c  (same code on Linux and Switch)
+        │
+        ├── game_dir   disc files; Partition1 (TDATA/UDATA: settings, saves)
+        └── save_dir   T:\ U:\ Z:\ drive letters, partition images
+```
+
+| | Linux (debug) | Switch |
+|---|---|---|
+| `game_dir` | `<repo>/game` (tools/env.sh → `MC3_GAME_DIR`) | `sdmc:/switch/mcdub3/game` |
+| `save_dir` | `<repo>/work/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3/save` |
+| chosen by | the scripts, through environment variables | `src/main.c` defaults (`#ifdef __SWITCH__`) |
+| override | `MC3_GAME_DIR=…`, `MC3_SAVE_DIR=…` | the same keys in `sdmc:/switch/mcdub3/mcdub3_env.txt` |
+
+So nothing about files is decided twice: the scripts in `tools/` only exist on
+the development machine and set the Linux folders; `switch/build.sh` stages the
+same layout on the SD card (`work/switch_sd/switch/mcdub3/`); the game code and
+the path layer are identical on both.
+
 ## Project layout
 
 What sits where, who writes it, and whether git tracks it. Every path is
@@ -178,6 +204,7 @@ mcdub3-sw/
 ├── game/                     [ignored] the extracted disc (game data; never committed)
 │   ├── default.xbe             the game executable: input to stage 1, loaded again at runtime
 │   ├── default_analysis.json   [generated] XBE parse, read by the disassembler
+│   ├── TDATA/, UDATA/          [generated] the title's settings and saves (Xbox hard disk partition 1)
 │   ├── assets_x.dat(_1.._5), banks.dat, audio/, flash/, media/, resources/, video/ (Bink .bik)
 │   └── dashupdate.xbe, downloader.xbe, update.xbe   Xbox system tools on the disc; not used
 │
@@ -202,7 +229,7 @@ mcdub3-sw/
     ├── build-switch/, build-switch-vk/        Switch build trees (make switch); mc3_recomp.nro/.elf
     ├── switch_sd/            [generated] SD-card staging: switch/mcdub3/{mc3_recomp.nro, game/}
     ├── elf/                  [generated] one ELF per staged NRO, to resolve console crash addresses
-    ├── save/                 [generated] the title's hard disk on Linux (TDATA/UDATA: saves, settings)
+    ├── save/                 [generated] the title's drive letters (T:, U:, Z:) and partition images
     ├── logs/                 [generated] every make lift/build/run/switch log, timestamped
     ├── venv/                 [generated] Python + capstone for stage 1 (make setup)
     └── deps/                 [optional] Switch extras built by hand: mesa NVK SDK, glslang, FFmpeg
