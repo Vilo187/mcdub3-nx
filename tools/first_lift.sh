@@ -13,7 +13,7 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
-[ -f "$MC3_XBE" ] || mc3_fail "no XBE at $MC3_XBE (tools/extract_disc.sh first)"
+mc3_need_game
 mkdir -p "$MC3_ANALYSIS_DIR"
 XBE_JSON="${MC3_XBE%.xbe}_analysis.json"
 

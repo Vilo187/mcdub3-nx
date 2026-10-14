@@ -45,3 +45,15 @@ mc3_default_jobs() {
 }
 
 mc3_fail() { echo "error: $*" >&2; exit 1; }
+
+# Fail with the ways to get the extracted disc where the scripts look for it.
+mc3_need_game() {
+    [ -f "$MC3_GAME_DIR/default.xbe" ] && return 0
+    echo "error: no default.xbe in $MC3_GAME_DIR" >&2
+    echo "  The extracted disc (default.xbe + data) must sit directly in that folder." >&2
+    echo "  - from an extracted folder: rsync -a --exclude .DS_Store <folder>/ \"$MC3_GAME_DIR/\"" >&2
+    echo "    (keep the trailing slashes, or the files land one level too deep)" >&2
+    echo "  - from an ISO:              tools/extract_disc.sh <file.iso>" >&2
+    echo "  - or use it in place:       export MC3_GAME_DIR=<folder with default.xbe>" >&2
+    exit 1
+}

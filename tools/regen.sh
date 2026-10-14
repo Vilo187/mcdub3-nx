@@ -26,7 +26,7 @@ MANUAL="$MC3_REPO/src/recomp_manual.c"
 MMIO="${MC3_MMIO_SECTIONS:-DSOUND,XPP}"
 A="$MC3_ANALYSIS_DIR"
 
-[ -f "$MC3_XBE" ] || mc3_fail "no XBE at $MC3_XBE (tools/extract_disc.sh)"
+mc3_need_game
 mkdir -p "$A/disasm" "$A/func_id" "$A/abi" "$MC3_GEN_DIR"
 cd "$XBOXRECOMP_DIR"
 
