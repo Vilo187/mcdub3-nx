@@ -57,9 +57,15 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
 
 (Fill in from tools/first_lift.sh and bring-up.)
 
+- Disc: NTSC-U retail, `default.xbe` "Midnight Club 3: DUB edition" (TT-121),
+  4.9 MB XBE, 3.4 GB extracted. Data: `assets_x.dat` (+ `_1`..`_5`),
+  `banks.dat`, `audio/` (XACT `.xwb`/`.xsb`), `flash/`, `resources/`.
+  Other XBEs on the disc (`dashupdate.xbe`, `downloader.xbe`, `update.xbe`)
+  are Xbox system/online tools: not lifted.
 - Entry point / title ID: config/xbe_facts.h
-- Sections / XDK libraries / MMIO sections: TBD
-- Movie format: TBD
+- Sections / XDK libraries / MMIO sections: TBD (tools/first_lift.sh)
+- Movies: **Bink** (`video/*.bik`, 64 files). FFmpeg decodes Bink, so the
+  nfsu2-sw route (native decoder in place of the lifted one) applies.
 - Threads: TBD
 
 ## Status
