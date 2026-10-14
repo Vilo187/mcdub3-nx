@@ -61,7 +61,7 @@ mkdir -p "$MC3_WORK/elf"
 ELF_KEEP="$MC3_WORK/elf/$NRO_NAME-$(md5sum "$DEST/$NRO_NAME.nro" | cut -c1-8).elf"
 cp "$BUILD/mc3_recomp.elf" "$ELF_KEEP"
 if [ "${NO_GAME:-0}" != "1" ]; then
-    [ -f "$MC3_GAME_DIR/default.xbe" ] || mc3_fail "no extracted disc in $MC3_GAME_DIR"
+    mc3_need_game
     # The disc is gigabytes: hard-link it from $MC3_GAME_DIR instead of
     # copying (same disk, no extra space); only changed files are copied.
     rsync -a --size-only --link-dest="$MC3_GAME_DIR/" \

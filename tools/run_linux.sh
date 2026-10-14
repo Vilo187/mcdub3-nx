@@ -19,7 +19,7 @@ SUFFIX=""
 [ "${DEBUG:-0}" = "1" ] && SUFFIX="$SUFFIX-dbg"
 BIN="${BIN:-$MC3_WORK/build-linux$SUFFIX/mc3_recomp}"
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (tools/build_linux.sh)"
-[ -f "$MC3_GAME_DIR/default.xbe" ] || mc3_fail "no extracted disc in $MC3_GAME_DIR"
+mc3_need_game
 
 mkdir -p "$MC3_WORK/logs"
 LOG="$MC3_WORK/logs/run_$(date +%Y%m%d_%H%M%S).log"
