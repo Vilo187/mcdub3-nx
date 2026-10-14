@@ -221,6 +221,11 @@ static void set_runtime_defaults(void)
     setenv("RECOMP_AC97_READY", "plain", 0);   /* DirectSound sees the codec */
     setenv("RECOMP_USB", "1", 0);              /* pads on the MCPX's OHCI */
     setenv("RECOMP_PB_EXEC", "1", 0);          /* execute the NV2A pushbuffer */
+    /* DirectSound's DSP command word (XACT's effects-image download waits on
+     * it, DSOUND sub_0038DAA3). No DSP is emulated, so the runtime answers
+     * every command written here. Found with a watchdog snapshot; the same
+     * contiguous allocation on every run so far. */
+    setenv("RECOMP_APU_DSP_ACK", "0x83AD0810", 0);
 #ifdef __SWITCH__
     setenv("RECOMP_QUIET", "1", 0);            /* every log line costs an SD write */
 #endif
