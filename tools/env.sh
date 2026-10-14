@@ -60,6 +60,22 @@ mc3_default_jobs() {
 
 mc3_fail() { echo "error: $*" >&2; exit 1; }
 
+# Stop a build of lifted C that predates its inputs: new seeds only take
+# effect after a full regen, and overrides in src/recomp_manual.c need a
+# relift to drop the lifted body they replace (otherwise: "multiple
+# definition of sub_XXXXXXXX" at link time). MC3_SKIP_LIFT_CHECK=1 skips this.
+mc3_check_lift_fresh() {
+    local gen="$MC3_GEN_DIR/recomp_funcs.h"
+    [ "${MC3_SKIP_LIFT_CHECK:-0}" = "1" ] && return 0
+    [ -f "$gen" ] || mc3_fail "no lifted C in $MC3_GEN_DIR: run make lift"
+    if [ "$MC3_REPO/config/seed_functions.json" -nt "$gen" ]; then
+        mc3_fail "config/seed_functions.json is newer than the lifted C: run make regen first (make regen build)"
+    fi
+    if [ "$MC3_REPO/src/recomp_manual.c" -nt "$gen" ]; then
+        mc3_fail "src/recomp_manual.c is newer than the lifted C: run make relift first (make relift build)"
+    fi
+}
+
 # Fail with the ways to get the extracted disc where the scripts look for it.
 mc3_need_game() {
     [ -f "$MC3_GAME_DIR/default.xbe" ] && return 0

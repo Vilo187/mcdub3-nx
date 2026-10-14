@@ -10,6 +10,7 @@
 #                                     in sub_XXXXXXXX; costs gigabytes of disk)
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+mc3_check_lift_fresh
 
 SUFFIX=""; ARGS=(-DMC3_VULKAN=OFF)
 [ "${VULKAN:-0}" = "1" ] && { SUFFIX="-vk"; ARGS=(-DMC3_VULKAN=ON); }
