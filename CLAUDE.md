@@ -82,9 +82,28 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   (native decoder in place of the lifted one) applies.
 - Threads: TBD
 
+### First lift (2026-10-14)
+
+21,585 functions, 0 failed, 2.98 M lines of C in 87 chunks (`--split 250`).
+49 poll loops hinted, 733 MMIO functions (DSOUND, XPP), 328 unresolved call
+targets stubbed (`recomp_stubs_unresolved.c`: addresses called but not found
+as functions; fix with seeds when they are hit). All 89 files pass a clang C11
+syntax check. For scale: Burnout 3 lifts to 22,097 functions.
+
+353 unimplemented instructions (40 mnemonics, no-ops that print `[UNIMPL]` when
+reached; `RECOMP_UNIMPL_TRAP=1` stops at the first). Mostly data decoded as
+code (`aas`, `daa`, `arpl`, `outsb`/`insb`, `bound`... clustered in D3DX,
+WMADEC, XON_RD tables). Likely **real** ones to watch:
+- `cmpsd` ×20 in `.text`: string compare (`repe cmpsd`, memcmp-style);
+- `pushfd`/`popfd` + `cpuid`: CRT CPU-feature detection;
+- `stmxcsr`/`ldmxcsr` ×2: SSE control word (float rounding setup);
+- `xacquire xchg` ×1: lock-elision spinlock;
+- `in`/`out` in D3D, `wbinvd`, `cli`/`sti` in XPP: hardware access, mostly
+  harmless as no-ops, but D3D's `in al,dx` mattered for NFSU2's display mode.
+
 ## Status
 
 - 2026-10-11: skeleton; toolkit vendored and verified; lift pipeline
   smoke-tested on the toolkit's test XBE.
-- 2026-10-14: disc in `game/`; XBE parsed in the VM (facts above). First full
-  lift pending.
+- 2026-10-14: disc in `game/`; XBE parsed and fully lifted in the VM (above).
+  Next: first Linux build.
