@@ -18,12 +18,10 @@ sudo apt-get install -y ninja-build gdb rsync python3-venv python3-pip \
 
 echo "== 3/4 Python venv with capstone for the lift pipeline ($MC3_WORK/venv)"
 mkdir -p "$MC3_WORK"
-[ -x "$MC3_WORK/venv/bin/python3" ] || python3 -m venv "$MC3_WORK/venv"
+# --copies: work/ is on the shared folder, which may not take symlinks.
+[ -x "$MC3_WORK/venv/bin/python3" ] || python3 -m venv --copies "$MC3_WORK/venv"
 "$MC3_WORK/venv/bin/pip" install -q --upgrade pip capstone pytest
-grep -q 'mc3-work/venv' "$HOME/.bashrc" 2>/dev/null || {
-    echo "export MC3_WORK=\"$MC3_WORK\"" >> "$HOME/.bashrc"
-    echo "source \"$MC3_WORK/venv/bin/activate\"   # mc3-work/venv" >> "$HOME/.bashrc"
-}
+# No shell profile changes: tools/env.sh puts work/venv on PATH for the scripts.
 
 echo "== 4/4 devkitPro (devkitA64 + libnx + switch-sdl2 + switch-mesa)"
 if [ ! -x /opt/devkitpro/pacman/bin/pacman ] && ! command -v dkp-pacman >/dev/null; then

@@ -11,8 +11,14 @@ development machine is an M1 Pro Mac (16 GB).
 ## Decision
 
 One Ubuntu ARM64 VM (Parallels Desktop or UTM) for lifting, the windowed Linux build with gdb, and
-Switch cross-builds (docs/dev-environment.md). Heavy data lives on the VM disk
-in `$MC3_WORK`, never in the repo or a shared folder.
+Switch cross-builds (docs/dev-environment.md). The repo is shared from the
+Mac into the VM, and every path is relative to the repo root: the disc in
+`game/`, generated files in `work/` (both gitignored). Nothing defaults to a
+path outside the repo (2026-10-14).
+
+Trade-off: `work/` then sits on the shared folder, so compiling the lifted C
+goes through Parallels' file sharing and builds use the Mac's disk. If builds
+get slow, `MC3_WORK=<folder on the VM disk>` moves only the generated files.
 
 Debug ladder: Linux (every change) → Eden (before the console) → hardware
 (hardware-only bugs, performance).
