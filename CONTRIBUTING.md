@@ -161,6 +161,7 @@ mcdub3-sw/
 ├── src/                      [git] OUR C code, compiled with the lifted code
 │   ├── main.c                  boot: load XBE, map Xbox memory, start devices, jump to the game
 │   ├── recomp_manual.c         hand-written replacements for specific lifted functions
+│   ├── ac97_nabm.c             AC'97 audio controller registers (reset bits complete at once)
 │   └── switch_nx.c             Switch only: log file, settings file, crash handler
 │
 ├── config/                   [git] per-game inputs to stage 1 and 2
