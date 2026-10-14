@@ -27,6 +27,7 @@ Keep this file current: findings, rules, status. It is the project's memory.
 ## Workflow
 
 Run `make` in the repo root for every target. Logs land in `work/logs/`.
+What sits where (and which stage writes it): docs/project-layout.md.
 
 | Change | Then |
 |---|---|

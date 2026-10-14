@@ -28,7 +28,7 @@ MMIO="${MC3_MMIO_SECTIONS:-DSOUND,XPP}"
 A="$MC3_ANALYSIS_DIR"
 
 mc3_need_game
-mkdir -p "$A/disasm" "$A/func_id" "$A/abi" "$MC3_GEN_DIR"
+mkdir -p "$A/disasm" "$A/func_id" "$A/abi" "$A/recomp" "$MC3_GEN_DIR"
 cd "$XBOXRECOMP_DIR"
 
 # disasm reads <xbe stem>_analysis.json beside the XBE.
@@ -52,7 +52,7 @@ fi
 # register-model changes in the toolkit. Nothing edits it by hand.
 rm -f "$MC3_GEN_DIR/recomp_types.h"
 "$MC3_PYTHON" -m tools.recomp "$MC3_XBE" --game-name "Midnight Club 3: DUB Edition" \
-    --all --split 250 --gen-dir "$MC3_GEN_DIR" \
+    --all --split 250 --gen-dir "$MC3_GEN_DIR" -o "$A/recomp" \
     --disasm-dir "$A/disasm" --func-id-dir "$A/func_id" --abi-dir "$A/abi" \
     --exclude-manual "$MANUAL" --mmio-sections "$MMIO" \
     ${MC3_RECOMP_ARGS:-} 2>&1 | tee "$A/recomp.log"
