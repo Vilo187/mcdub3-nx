@@ -25,6 +25,9 @@
 #if !defined(_WIN32)
 #include <unistd.h>   /* _exit */
 #endif
+#if !defined(_WIN32) && !defined(__SWITCH__)
+#include <sys/mman.h> /* mmap: probing for a 4 GB guest window */
+#endif
 
 /* XBE header field offsets (per xboxdevwiki.net/Xbe) */
 #define XBE_MAGIC_OFFSET        0x0000
@@ -2179,7 +2182,33 @@ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
          * VirtualFree releases just the slice about to be used, so each view
          * replaces our own reservation rather than racing for free space. */
         g_span_size = g_memory_size * (size_t)(1 + XBOX_NUM_MIRRORS);
-        g_span_base = VirtualAlloc(NULL, g_span_size, MEM_RESERVE, PAGE_NOACCESS);
+
+        /* Leave room for the whole 4 GB guest space above the base.
+         *
+         * Everything past the mirrors -- the contiguous window at 0x80000000,
+         * the NV2A, MCPX and flash apertures up to 0xFFFFFFFF -- is mapped
+         * later at base + guest VA. Linux hands out mmap addresses top-down,
+         * and on AArch64 that left the base 3.8 GB below the end of the 48-bit
+         * user space: every aperture past it failed (error 8) and the title's
+         * first NV2A register access (0xFD001804, inside D3D) faulted. Probe
+         * for a free 4 GB hole, release it, and reserve the span at its start;
+         * nothing else maps in between, because this runs before any other
+         * thread or device exists. */
+        LPVOID span_hint = NULL;
+#if !defined(_WIN32) && !defined(__SWITCH__)
+        {
+            const size_t guest_space = (size_t)0x100000000ULL;
+            void *probe = mmap(NULL, guest_space, PROT_NONE,
+                               MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+            if (probe != MAP_FAILED) {
+                munmap(probe, guest_space);
+                span_hint = (LPVOID)((uintptr_t)probe + XBOX_MAP_START);
+            }
+        }
+#endif
+        g_span_base = VirtualAlloc(span_hint, g_span_size, MEM_RESERVE, PAGE_NOACCESS);
+        if (!g_span_base && span_hint)
+            g_span_base = VirtualAlloc(NULL, g_span_size, MEM_RESERVE, PAGE_NOACCESS);
         if (g_span_base) {
             VirtualFree(g_span_base, g_memory_size, MEM_RELEASE);
             g_memory_base = MapViewOfFileEx(g_mapping_handle,
