@@ -6,9 +6,14 @@ UTM both work. Why: [ADR 0003](decisions/0003-linux-vm-debug-loop.md).
 
 ## Create the VM (Parallels Desktop)
 
-1. Parallels' installation assistant → **Download Ubuntu Linux** (it picks the
-   ARM64 build). Before the first boot, tick **Customize settings before
-   installation**:
+1. Parallels' installation assistant → **Download Ubuntu Linux**. It installs
+   Parallels' own ARM64 image (22.04 at the time of writing) with Parallels
+   Tools already in it. That is the supported route: on 2026-10-14, Ubuntu's
+   24.04 ARM64 desktop ISO failed to boot in Parallels (UEFI file system
+   error), and a server install + desktop could not take Parallels Tools.
+   22.04 is fine for this project; see "Ubuntu 22.04" below. Before the first
+   boot, tick **Customize settings before installation** (or set these
+   afterwards with the VM shut down):
    - **Hardware → CPU & Memory:** manual, **6 cores, 10 GB**. Compiling the
      lifted C takes ~1.5 GB per parallel job; the scripts size `JOBS` from
      free memory.
