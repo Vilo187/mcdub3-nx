@@ -19,6 +19,15 @@ SUFFIX=""
 [ "${DEBUG:-0}" = "1" ] && SUFFIX="$SUFFIX-dbg"
 BIN="${BIN:-$MC3_WORK/build-linux$SUFFIX/mc3_recomp}"
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (tools/build_linux.sh)"
+# A run of a stale binary looks exactly like the fix did not work.
+STALE=$(find "$MC3_REPO/src" "$MC3_REPO/config" "$XBOXRECOMP_DIR/src" "$MC3_GEN_DIR" \
+            -newer "$BIN" -type f \( -name '*.c' -o -name '*.h' \) 2>/dev/null | head -3)
+if [ -n "$STALE" ]; then
+    echo "warning: $BIN is older than its sources, e.g.:" >&2
+    echo "$STALE" | sed 's/^/  /' >&2
+    echo "  rebuild first: make build run   (continuing in 5 s; Ctrl-C to stop)" >&2
+    sleep 5
+fi
 mc3_need_game
 
 mkdir -p "$MC3_WORK/logs"
