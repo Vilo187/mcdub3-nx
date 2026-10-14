@@ -1,1 +1,14 @@
-[]
+[
+ {
+  "start": "0x00370D3B",
+  "note": "D3DX. Indirect-call target hit 304x on the 2026-10-14 run ([ICALL] Failed to resolve). Small thiscall initialiser (mov eax,ecx; zero [eax],[eax+4],[eax+8]; ret) directly after sub_00370B4E's switch table, which made the disassembler fold it into sub_00370B4E (recorded end 0x00370D48 = this function's end)."
+ },
+ {
+  "start": "0x00408F3D",
+  "note": "XPP. Indirect-call target observed on the 2026-10-14 run. Starts right after sub_00408EC0's `ret 8` (xor eax,eax; cmp byte [0x4085B0],al ...): a function body the static pass did not reach."
+ },
+ {
+  "start": "0x0040F9D9",
+  "note": "XPP. Indirect-call target observed on the 2026-10-14 run. Starts exactly at sub_0040F789's recorded end (mov ax,[0x524262]; push ebx ...): a function body the static pass did not reach."
+ }
+]

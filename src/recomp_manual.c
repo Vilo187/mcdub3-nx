@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 /* The generated register model (gen/recomp_types.h): the guest registers,
  * MEM32 and friends, and the ICALL trace ring the runtime owns. Include it
@@ -33,6 +34,32 @@
  * (RECOMP_TLS), and a plain `extern uint32_t g_eax` is a TLS mismatch that
  * GCC refuses to link on Linux and the Switch. */
 #include "recomp_types.h"
+
+/* ── Native replacements ───────────────────────────────────── */
+
+/* memmove (CRT), 0x002AB610 -- func_id: memmove, confidence 0.9.
+ *
+ * The lifted body dispatches its head and tail copies through two jump tables
+ * (0x002AB670, 0x002AB76C) whose targets are labels inside the function. The
+ * vendored lifter emits those as indirect calls to other functions, which
+ * resolve to nothing ([ICALL] Failed to resolve VA 0x002AB8B4, first run): the
+ * copy silently stops short. Upstream fixed this class of jump table after our
+ * base; until it is merged, the host's memmove does the job (faster, too).
+ *
+ * cdecl: dest, src, count on the guest stack above the return address;
+ * returns dest in eax; the caller pops the arguments, we pop the return
+ * address as `ret` would. */
+void sub_002AB610(void)
+{
+    uint32_t dst = MEM32(g_esp + 4);
+    uint32_t src = MEM32(g_esp + 8);
+    uint32_t len = MEM32(g_esp + 12);
+
+    if (len)
+        memmove((void *)XBOX_PTR(dst), (const void *)XBOX_PTR(src), len);
+    g_eax = dst;
+    g_esp += 4;
+}
 
 /* ── Manual function overrides ─────────────────────────────── */
 
