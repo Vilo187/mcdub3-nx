@@ -21,6 +21,7 @@
 # it from hbmenu with title takeover (hold R on a game) for full RAM.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
+mc3_check_lift_fresh
 
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 SD="${SD_ROOT:-$MC3_WORK/switch_sd}"
