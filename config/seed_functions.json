@@ -10,5 +10,13 @@
  {
   "start": "0x0040F9D9",
   "note": "XPP. Indirect-call target observed on the 2026-10-14 run. Starts exactly at sub_0040F789's recorded end (mov ax,[0x524262]; push ebx ...): a function body the static pass did not reach."
+ },
+ {
+  "start": "0x0037A230",
+  "note": "BINK. Indirect-call target hit 61x on the 2026-10-14 run 7, then the Bink decoder crashed on a wild pointer. Real function after nop padding (sub esp,0x2C; push ebx ...); sub_0037AF10 stores its address as a function pointer (mov [ebp-0x8C], 0x37A230 at 0x0037AF85), which the static pass does not follow."
+ },
+ {
+  "start": "0x000271C0",
+  "note": "Indirect-call target observed on the 2026-10-14 run 7. push ebp; mov ebp,esp after int3 padding; listed in a vtable in .rdata at 0x0041304C (a virtual method, only ever called indirectly)."
  }
 ]
