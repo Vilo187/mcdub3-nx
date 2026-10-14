@@ -16,6 +16,12 @@ sudo apt-get install -y ninja-build gdb rsync python3-venv python3-pip \
     libvulkan-dev vulkan-tools mesa-vulkan-drivers glslang-dev glslang-tools \
     spirv-tools xvfb mesa-utils
 
+echo "   perf for profiling (make profile), and permission to profile own processes"
+sudo apt-get install -y "linux-tools-$(uname -r)" linux-tools-generic || \
+    echo "   (no linux-tools for kernel $(uname -r); make profile will say so)"
+echo 'kernel.perf_event_paranoid=1' | sudo tee /etc/sysctl.d/60-mc3-perf.conf >/dev/null
+sudo sysctl -q -p /etc/sysctl.d/60-mc3-perf.conf || true
+
 echo "== 3/4 Python venv with capstone for the lift pipeline ($MC3_WORK/venv)"
 mkdir -p "$MC3_WORK"
 # --copies: work/ is on the shared folder, which may not take symlinks.

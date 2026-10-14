@@ -23,7 +23,7 @@ export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS
 
 .PHONY: help setup check-vm extract lift regen relift \
-        build build-vk build-debug run run-gdb run-headless snapshot report hoststacks trap \
+        build build-vk build-debug run run-gdb run-headless snapshot report hoststacks profile trap \
         switch switch-vk switch-lto send \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
 
@@ -94,6 +94,9 @@ snapshot:  ## Diagnose a hang: headless run, guest stack dumped after 30 s (WD=n
 	@HEADLESS=1 SECS=$${SECS:-90} RECOMP_WATCHDOG_SECS=$(or $(WD),30) bash tools/run_linux.sh; \
 	 rc=$$?; if [ $$rc -eq 3 ]; then echo "snapshot taken (watchdog exit 3 is expected): make report"; \
 	 elif [ $$rc -ne 0 ]; then echo "run ended with exit code $$rc (not the watchdog): make report"; exit $$rc; fi
+
+profile:  ## Where the time goes: perf sampling of a headless run (SECS, default 40)
+	bash tools/profile.sh $(or $(SECS),40)
 
 hoststacks:  ## Every thread's host backtrace after SECS (default 45): who waits on what
 	bash tools/host_stacks.sh $(or $(SECS),45)
