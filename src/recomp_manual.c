@@ -61,6 +61,35 @@ void sub_002AB610(void)
     g_esp += 4;
 }
 
+/* Bink's MMX detection, 0x002B9C90 (called by the blit set-up sub_0037DB10).
+ *
+ * The classic test: flip EFLAGS.ID with pushfd/popfd to see whether CPUID
+ * exists, then CPUID leaf 1, EDX bit 23 = MMX. The vendored lifter emits
+ * pushfd, popfd and cpuid as silent no-ops, so the ID bit never "sticks",
+ * Bink decides the CPU has no MMX, never installs its pixel routines
+ * (0x5209C8.. stay 0), and the blit loop -- whose stdcall calls through those
+ * null pointers are skipped without popping their argument -- drifts its
+ * stack and never ends (2026-10-14 runs, [BINKLOOP] trace).
+ *
+ * The Xbox CPU is a Pentium III: CPUID and MMX are always there. Same
+ * results and side effects as the original:
+ *   [0x482AA4] = cached "has MMX" (-1 until detected)
+ *   [0x52A43C] = "use MMX", unless the caller's flags carry 0x40000
+ * cdecl: flags at [esp+4]; returns the detection result in eax. */
+void sub_002B9C90(void)
+{
+    uint32_t flags = MEM32(g_esp + 4);
+    uint32_t has_mmx = MEM32(0x482AA4);
+
+    if ((int32_t)has_mmx < 0) {
+        has_mmx = 1;
+        MEM32(0x482AA4) = has_mmx;
+    }
+    MEM32(0x52A43C) = (has_mmx && !(flags & 0x40000u)) ? 1u : 0u;
+    g_eax = has_mmx;
+    g_esp += 4;
+}
+
 /* ── Traces (wrap the lifted body, change nothing) ─────────── */
 
 /* Bink 32-bit blit, 0x00382C00 (BINK32): a 12-argument stdcall wrapper
