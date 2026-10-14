@@ -94,13 +94,13 @@ same CPU/RAM/disk/sharing as above. Then the same checks.
 ## The loop
 
 ```
-                                     # once: extracted disc in game/ (ISO: tools/extract_disc.sh)
-tools/first_lift.sh                  # once: parse XBE, config/xbe_facts.h, full lift
-tools/build_linux.sh                 # after every change to src/ or the toolkit
-tools/run_linux.sh                   # window; GDB=1 / HEADLESS=1 / SECS=n
-LIFT_ONLY=1 tools/regen.sh           # after editing recomp_manual.c or the translator
-tools/regen.sh                       # after changing config/seed_functions.json
-switch/build.sh                      # when it's time for Eden / the console
+make lift          # once: parse the XBE, config/xbe_facts.h, full lift (disc in game/)
+make build run     # after every change to src/ or the toolkit
+make run-gdb       # under gdb; also run-headless, trap, run SECS=n
+make relift build  # after editing recomp_manual.c or the translator
+make regen build   # after changing config/seed_functions.json
+make switch send   # when it's time for Eden / the console
+make               # everything else (logs, disk use, clean, ...)
 ```
 
 | Rung | When | What it catches |

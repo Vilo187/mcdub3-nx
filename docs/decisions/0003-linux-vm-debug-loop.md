@@ -11,7 +11,7 @@ development machine is an M1 Pro Mac (16 GB).
 ## Decision
 
 One Ubuntu ARM64 VM (Parallels Desktop or UTM) for lifting, the windowed Linux build with gdb, and
-Switch cross-builds (docs/dev-environment.md). The repo is shared from the
+Switch cross-builds (CONTRIBUTING.md). The repo is shared from the
 Mac into the VM, and every path is relative to the repo root: the disc in
 `game/`, generated files in `work/` (both gitignored). Nothing defaults to a
 path outside the repo (2026-10-14).

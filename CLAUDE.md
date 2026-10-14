@@ -26,13 +26,15 @@ Keep this file current: findings, rules, status. It is the project's memory.
 
 ## Workflow
 
+Run `make` in the repo root for every target. Logs land in `work/logs/`.
+
 | Change | Then |
 |---|---|
-| `src/*.c` (not overrides) | `tools/build_linux.sh` |
-| `src/recomp_manual.c` overrides, translator | `LIFT_ONLY=1 tools/regen.sh`, build |
-| `config/seed_functions.json`, disasm/func_id | `tools/regen.sh`, build |
-| runtime (`xboxrecomp/src`) | build |
-| ready for console | `switch/build.sh`, Eden, then hardware |
+| `src/*.c` (not overrides) | `make build run` |
+| `src/recomp_manual.c` overrides, translator | `make relift build run` |
+| `config/seed_functions.json`, disasm/func_id | `make regen build run` |
+| runtime (`xboxrecomp/src`) | `make build run` |
+| ready for console | `make switch send`, Eden, then hardware |
 
 Runtime switches: any `RECOMP_*` / `MC3_*` variable; on the Switch in
 `sdmc:/switch/mcdub3/mcdub3_env.txt`. The full `RECOMP_*` list with meanings is
