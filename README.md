@@ -34,6 +34,8 @@ make              # every target, grouped
 
 ## Layout
 
+Full tree with what sits where: [docs/project-layout.md](docs/project-layout.md).
+
 | Path | What |
 |---|---|
 | `src/main.c` | boot, runtime defaults, crash reporter |
