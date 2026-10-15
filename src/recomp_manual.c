@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* The generated register model (gen/recomp_types.h): the guest registers,
  * MEM32 and friends, and the ICALL trace ring the runtime owns. Include it
@@ -130,12 +131,182 @@ void sub_003DF4D0(void)
  *   0x00378B30  Bink audio: decodes the frame's audio (sub_00378640 and the
  *               .text maths at 0x002B9B00 / 0x002B99C0); at 0x0037730D */
 extern void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls);
+extern long mc3_difftest_wanted(void);
 
+/* ── Movies: where a frame's time goes (MC3_BINK_TRACE=1) ──
+ *
+ * The movie loop (sub_0032E7F0) per frame: BinkDoFrame, lock the texture,
+ * BinkCopyToBuffer, BinkNextFrame, then spin on BinkWait until the next frame
+ * is due; its caller draws and presents. Once a second this prints the
+ * average milliseconds per frame in each phase -- "rest" is everything from
+ * the end of the wait to the next BinkDoFrame (draw, Present, game). */
+
+enum { BT_DO, BT_VIDEO, BT_AUDIO, BT_LOCK, BT_COPY, BT_NEXT, BT_WAIT, BT_REST, BT_N };
+static const char *const s_bt_name[BT_N] =
+    { "doframe", "video", "audio", "lock", "copy", "next", "wait", "rest" };
+static double s_bt_sum[BT_N], s_bt_mark[BT_N], s_bt_report;
+static long s_bt_frames, s_bt_polls;
+static double s_bt_wait_start;       /* 0 when not in the wait loop */
+
+static double bt_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+
+static int bt_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_BINK_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+
+static void bt_report(double now)
+{
+    char line[256];
+    int n = 0, i;
+    if (!s_bt_report) { s_bt_report = now; return; }
+    if (now - s_bt_report < 1000.0 || !s_bt_frames) return;
+    n += snprintf(line + n, sizeof line - n, "[BINKT] %.1f fps, ms/frame:",
+                  s_bt_frames * 1000.0 / (now - s_bt_report));
+    for (i = 0; i < BT_N; i++)
+        n += snprintf(line + n, sizeof line - n, " %s %.1f", s_bt_name[i], s_bt_sum[i] / s_bt_frames);
+    snprintf(line + n, sizeof line - n, " (%ld polls/frame)", s_bt_polls / s_bt_frames);
+    fprintf(stderr, "%s\n", line);
+    memset(s_bt_sum, 0, sizeof s_bt_sum);
+    s_bt_frames = s_bt_polls = 0;
+    s_bt_report = now;
+}
+
+/* Time one lifted call into phase `p`. */
+static void bt_time(int p, void (*fn)(void))
+{
+    double t0;
+    if (!bt_on()) { fn(); return; }
+    t0 = bt_now();
+    fn();
+    s_bt_sum[p] += bt_now() - t0;
+}
+
+/* BinkDoFrame, 0x00377020: stdcall (hbink). Opens a frame. */
+extern void sub_00377020_gen(void);
+void sub_00377020(void)
+{
+    double t0;
+    if (!bt_on()) { sub_00377020_gen(); return; }
+    t0 = bt_now();
+    if (s_bt_mark[BT_REST]) s_bt_sum[BT_REST] += t0 - s_bt_mark[BT_REST];
+    bt_report(t0);
+    s_bt_frames++;
+    sub_00377020_gen();
+    s_bt_mark[BT_LOCK] = bt_now();
+    s_bt_sum[BT_DO] += s_bt_mark[BT_LOCK] - t0;
+}
+
+/* BinkCopyToBuffer, 0x00376FE0: the YUV -> RGB copy into the locked texture. */
+extern void sub_00376FE0_gen(void);
+void sub_00376FE0(void)
+{
+    if (bt_on() && s_bt_mark[BT_LOCK]) {
+        s_bt_sum[BT_LOCK] += bt_now() - s_bt_mark[BT_LOCK];
+        s_bt_mark[BT_LOCK] = 0;
+    }
+    bt_time(BT_COPY, sub_00376FE0_gen);
+}
+
+/* BinkNextFrame, 0x00377630. */
+extern void sub_00377630_gen(void);
+void sub_00377630(void)
+{
+    bt_time(BT_NEXT, sub_00377630_gen);
+}
+
+/* BinkWait, 0x00376B50: stdcall (hbink), nonzero = too early, call again. */
+extern void sub_00376B50_gen(void);
+void sub_00376B50(void)
+{
+    double now;
+    if (!bt_on()) { sub_00376B50_gen(); return; }
+    now = bt_now();
+    if (!s_bt_wait_start) s_bt_wait_start = now;
+    s_bt_polls++;
+    sub_00376B50_gen();
+    if (!g_eax) {
+        now = bt_now();
+        s_bt_sum[BT_WAIT] += now - s_bt_wait_start;
+        s_bt_wait_start = 0;
+        s_bt_mark[BT_REST] = now;
+    }
+}
+
+/* ── Movies: Bink video decoded by FFmpeg (src/bink_native.c) ── */
+
+/* Bink's HBINK, as far as the native path needs it. */
+#define BINK_WIDTH      0x00u
+#define BINK_HEIGHT     0x04u
+#define BINK_FRAMENUM   0x0Cu       /* 1-based frame being decoded */
+#define BINK_DECODER    0x3A0u      /* the decoder's state, its 5th argument */
+#define BINK_DIRTY_MAP  0x490u      /* 1 byte per 16x16 block: copy it out */
+
+extern int  mc3_bink_native_enabled(void);
+extern void mc3_bink_native_open(uint32_t hbink, const char *xbox_name);
+extern int  mc3_bink_native_frame(uint32_t hbink, int frame, uint8_t *dest, int w, int h);
+extern void mc3_bink_native_close(uint32_t hbink);
+
+/* BinkOpen, 0x003752F0: stdcall (name, flags), returns the HBINK. */
+extern void sub_003752F0_gen(void);
+void sub_003752F0(void)
+{
+    char name[260] = "";
+    uint32_t name_va = MEM32(g_esp + 4);
+
+    if (name_va && mc3_bink_native_enabled()) {
+        strncpy(name, (const char *)XBOX_PTR(name_va), sizeof name - 1);
+    }
+    sub_003752F0_gen();
+    if (name[0] && g_eax)
+        mc3_bink_native_open(g_eax, name);
+}
+
+/* BinkClose, 0x003777D0: stdcall (hbink). */
+extern void sub_003777D0_gen(void);
+void sub_003777D0(void)
+{
+    mc3_bink_native_close(MEM32(g_esp + 4));
+    sub_003777D0_gen();
+}
+
+/* Bink video decode, 0x0037CCD0: stdcall, 14 arguments -- (dest frame,
+ * previous frame, 0, 0, decoder state = HBINK+0x3A0, w, h, w, h, packet, ...),
+ * returns 1. Called from BinkDoFrame at 0x0037758A. The lifted decoder runs
+ * when FFmpeg has no frame for this movie, and for difftest captures. */
 extern void sub_0037CCD0_gen(void);
-void sub_0037CCD0(void)
+static void bink_video_decode(void)
 {
     static long calls;
+    uint32_t hbink = MEM32(g_esp + 20) - BINK_DECODER;
+
+    if (!mc3_difftest_wanted() && mc3_bink_native_enabled()) {
+        int w = (int)MEM32(hbink + BINK_WIDTH), h = (int)MEM32(hbink + BINK_HEIGHT);
+        int frame = (int)MEM32(hbink + BINK_FRAMENUM) - 1;
+        if (mc3_bink_native_frame(hbink, frame, (uint8_t *)XBOX_PTR(MEM32(g_esp + 4)), w, h)) {
+            /* Every block changed: Bink copies the whole frame out. */
+            memset((void *)XBOX_PTR(hbink + BINK_DIRTY_MAP), 1, (size_t)((w + 15) / 16) * ((h + 15) / 16));
+            g_eax = 1;
+            g_esp += 4 + 0x38;
+            return;
+        }
+    }
     mc3_difftest_call(0x0037CCD0u, sub_0037CCD0_gen, &calls);
+}
+
+void sub_0037CCD0(void)
+{
+    bt_time(BT_VIDEO, bink_video_decode);
 }
 
 /* Bink inverse DCT for one 8x8 block, 0x0037F610: (dest, pitch, coeffs) on
@@ -149,10 +320,15 @@ void sub_0037F610(void)
 }
 
 extern void sub_00378B30_gen(void);
-void sub_00378B30(void)
+static void bink_audio_decode(void)
 {
     static long calls;
     mc3_difftest_call(0x00378B30u, sub_00378B30_gen, &calls);
+}
+
+void sub_00378B30(void)
+{
+    bt_time(BT_AUDIO, bink_audio_decode);
 }
 
 /* ── Manual function overrides ─────────────────────────────── */

@@ -103,6 +103,17 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
 - Movies: **Bink** (`video/*.bik`, 64 files), played by the statically linked
   Bink library (BINK* sections). FFmpeg decodes Bink, so the nfsu2-sw route
   (native decoder in place of the lifted one) applies.
+  src/bink_native.c replaces only the video decode (0x0037CCD0); Bink keeps
+  I/O, timing, audio and the YUV→RGB copy. Bink's frame buffer is Y, **V**, U,
+  packed (pitch = width); FFmpeg's binkvideo is bit-exact with it.
+  `MC3_NATIVE_BINK=0` brings back the lifted decoder. Linux only so far.
+  Result (2026-10-15, windowed, virgl): movies at a steady 30 fps; per frame
+  decode <1.5 ms, Bink's lifted YUV→RGB copy 4–7 ms, draw+Present ~11 ms,
+  ~15 ms spare. `MC3_BINK_TRACE=1` prints this split every second.
+- Measuring speed in the VM: headless runs (`make record`, `make profile`)
+  render with llvmpipe (software) and run slower; windowed runs use virgl
+  (the Mac's GPU). Judge frame rate windowed; use headless for relative
+  profiles only.
 - Threads: TBD
 
 ### First lift (2026-10-14)
