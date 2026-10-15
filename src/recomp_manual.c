@@ -120,31 +120,29 @@ void sub_003DF4D0(void)
 
 /* ── Differential tests (src/difftest.c, tools/difftest.py) ── */
 
-/* BinkDoFrame, 0x00377020 (BINK, stdcall, 1 argument: the HBINK). Decodes one
- * movie frame; the game's movie loop (sub_0032E7F0) calls it once per frame,
- * then BinkCopyToBuffer (0x00376FE0), BinkNextFrame (0x00377630) and
- * BinkWait (0x00376B50). Movie frames showed wrong-colour blocks that a
- * reference decode does not (2026-10-15). With MC3_DIFFTEST_CALL=<n>, the n-th
- * call is captured before and after, for tools/difftest.py to replay the
- * original x86 in an emulator; then the run ends. */
-extern void sub_00377020_gen(void);
-extern long mc3_difftest_wanted(void);
-extern void mc3_difftest_capture(const char *phase, uint32_t func, long call_index);
-void sub_00377020(void)
+/* Wrapped so one call can be captured and replayed on real x86 (make difftest
+ * FUNC=<addr> CALL=<n>). Unarmed, a wrapper costs one counter and a compare.
+ * Movie frames and movie audio decode wrongly (2026-10-15); BinkDoFrame
+ * (0x00377020) itself waits on Bink's I/O thread, so capture below it:
+ *   0x0037CCD0  Bink video: decodes the frame's planes (4 x sub_0037AF10,
+ *               block decoders 0x003798C0.., transforms 0x00380DF0..);
+ *               called from BinkDoFrame at 0x0037758A
+ *   0x00378B30  Bink audio: decodes the frame's audio (sub_00378640 and the
+ *               .text maths at 0x002B9B00 / 0x002B99C0); at 0x0037730D */
+extern void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls);
+
+extern void sub_0037CCD0_gen(void);
+void sub_0037CCD0(void)
 {
     static long calls;
-    long want = mc3_difftest_wanted();
+    mc3_difftest_call(0x0037CCD0u, sub_0037CCD0_gen, &calls);
+}
 
-    calls++;
-    if (want && calls == want) {
-        mc3_difftest_capture("before", 0x00377020u, calls);
-        sub_00377020_gen();
-        mc3_difftest_capture("after", 0x00377020u, calls);
-        fprintf(stderr, "[DIFFTEST] captured; ending the run\n");
-        fflush(stderr);
-        exit(0);
-    }
-    sub_00377020_gen();
+extern void sub_00378B30_gen(void);
+void sub_00378B30(void)
+{
+    static long calls;
+    mc3_difftest_call(0x00378B30u, sub_00378B30_gen, &calls);
 }
 
 /* ── Manual function overrides ─────────────────────────────── */
