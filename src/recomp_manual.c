@@ -249,8 +249,9 @@ void sub_00376B50(void)
 #define BINK_WIDTH      0x00u
 #define BINK_HEIGHT     0x04u
 #define BINK_FRAMENUM   0x0Cu       /* 1-based frame being decoded */
-#define BINK_DECODER    0x3A0u      /* the decoder's state, its 5th argument */
-#define BINK_DIRTY_MAP  0x490u      /* 1 byte per 16x16 block: copy it out */
+#define BINK_DIRTY_MAP  0x3A0u      /* changed-block map, 1 byte per 16x16 block;
+                                     * HBINK+0xDC points here, the decoder's 5th
+                                     * argument */
 
 extern int  mc3_bink_native_enabled(void);
 extern void mc3_bink_native_open(uint32_t hbink, const char *xbox_name);
@@ -283,22 +284,28 @@ void sub_003777D0(void)
 }
 
 /* Bink video decode, 0x0037CCD0: stdcall, 14 arguments -- (dest frame,
- * previous frame, 0, 0, decoder state = HBINK+0x3A0, w, h, w, h, packet, ...),
+ * previous frame, 0, 0, changed-block map = HBINK+0x3A0, w, h, padded w, padded h,
+ * packet, ...),
  * returns 1. Called from BinkDoFrame at 0x0037758A. The lifted decoder runs
  * when FFmpeg has no frame for this movie, and for difftest captures. */
 extern void sub_0037CCD0_gen(void);
 static void bink_video_decode(void)
 {
     static long calls;
-    uint32_t hbink = MEM32(g_esp + 20) - BINK_DECODER;
+    uint32_t map = MEM32(g_esp + 20);
+    uint32_t hbink = map - BINK_DIRTY_MAP;
 
     if (!mc3_difftest_wanted() && mc3_bink_native_enabled()) {
         int w = (int)MEM32(hbink + BINK_WIDTH), h = (int)MEM32(hbink + BINK_HEIGHT);
         int frame = (int)MEM32(hbink + BINK_FRAMENUM) - 1;
         mc3_bink_native_audio(hbink, frame);
         if (mc3_bink_native_frame(hbink, frame, (uint8_t *)XBOX_PTR(MEM32(g_esp + 4)), w, h)) {
-            /* Every block changed: Bink copies the whole frame out. */
-            memset((void *)XBOX_PTR(hbink + BINK_DIRTY_MAP), 1, (size_t)((w + 15) / 16) * ((h + 15) / 16));
+            /* Every block changed, so BinkCopyToBuffer copies the whole frame:
+             * it counts the map's leading non-zero bytes against the block
+             * total. Same size as BinkDoFrame's own clear (0x0037748F): the
+             * 8th and 9th arguments (padded width, height) over 16. */
+            uint32_t blocks = (MEM32(g_esp + 32) >> 4) * (MEM32(g_esp + 36) >> 4);
+            memset((void *)XBOX_PTR(map), 1, blocks);
             g_eax = 1;
             g_esp += 4 + 0x38;
             return;
