@@ -63,6 +63,12 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   spins forever. src/ac97_nabm.c models those registers through the MMIO hooks
   (DSOUND is lifted with them): RR never lands. Needs DSOUND in
   MC3_MMIO_SECTIONS.
+- **Lifter: movsx from bp/sp** (found 2026-10-15, MC3, also upstream): was
+  lifted as a zero extension. Bink IDCT corruption + 5 game-code sites.
+  Fixed in tools/recomp/lifter.py with a regression test. Found by
+  `make difftest` (src/difftest.c + tools/difftest.py: replay one captured
+  call on real x86 in Unicorn and name the first wrongly written bytes):
+  the tool to reach for whenever output is subtly wrong.
 - **Threads:** keep busy threads off core 3 (no time-slicing at priority 59).
 - **Leaked directory handles** crash Atmosphère's ams.mitm.
 - **SD logging** was the boot bottleneck (33 s); a RAM log + writer thread fixed it.
