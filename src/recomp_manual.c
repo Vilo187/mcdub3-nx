@@ -118,51 +118,33 @@ void sub_003DF4D0(void)
     sub_003DF4D0_gen();
 }
 
-/* ── Traces (wrap the lifted body, change nothing) ─────────── */
+/* ── Differential tests (src/difftest.c, tools/difftest.py) ── */
 
-/* Bink 32-bit blit, 0x00382C00 (BINK32): a 12-argument stdcall wrapper
- * (ret 0x30) around the blit driver sub_0037DF90. On the 2026-10-14 runs the
- * driver's row loop spun with no pixel routine ever called -- consistent with
- * a garbage height/width making ((height - start - 1) >> 1) + 1 wrap. Log the
- * arguments of the first calls to see what the movie player hands it.
- * Remove once the movie plays. */
-extern void sub_00382C00_gen(void);
-void sub_00382C00(void)
+/* BinkDoFrame, 0x00377020 (BINK, stdcall, 1 argument: the HBINK). Decodes one
+ * movie frame; the game's movie loop (sub_0032E7F0) calls it once per frame,
+ * then BinkCopyToBuffer (0x00376FE0), BinkNextFrame (0x00377630) and
+ * BinkWait (0x00376B50). Movie frames showed wrong-colour blocks that a
+ * reference decode does not (2026-10-15). With MC3_DIFFTEST_CALL=<n>, the n-th
+ * call is captured before and after, for tools/difftest.py to replay the
+ * original x86 in an emulator; then the run ends. */
+extern void sub_00377020_gen(void);
+extern long mc3_difftest_wanted(void);
+extern void mc3_difftest_capture(const char *phase, uint32_t func, long call_index);
+void sub_00377020(void)
 {
-    static int logged;
-
-    if (logged < 4) {
-        int i;
-        logged++;
-        fprintf(stderr, "[BINK32] blit #%d args:", logged);
-        for (i = 1; i <= 12; i++)
-            fprintf(stderr, " %08X", MEM32(g_esp + 4u * (uint32_t)i));
-        fprintf(stderr, "\n");
-    }
-    sub_00382C00_gen();
-}
-
-/* Bink blit timing, 0x0037DF00: called once per pass of the row loop in
- * sub_0037DF90 (call at 0x0037E311). The loop counter is the caller's
- * [esp+0x40]; from in here the caller's esp is g_esp + 4 (our return
- * address), so the counter is MEM32(g_esp + 0x44). The blit arguments were
- * sane (640x480, pitch 0xA00), yet the loop never ends. Log whether the
- * counter moves, whether esp drifts between passes, and what the per-CPU
- * pixel-routine pointers hold. Remove once the movie plays. */
-extern void sub_0037DF00_gen(void);
-void sub_0037DF00(void)
-{
-    static uint64_t calls;
+    static long calls;
+    long want = mc3_difftest_wanted();
 
     calls++;
-    if (calls <= 3 || calls % 1000000u == 0) {
-        fprintf(stderr, "[BINKLOOP] pass %llu: counter=%08X esp=%08X "
-                        "ptrs c8=%08X d8=%08X f0=%08X f4=%08X f8=%08X\n",
-                (unsigned long long)calls, MEM32(g_esp + 0x44), g_esp,
-                MEM32(0x5209C8), MEM32(0x5209D8), MEM32(0x5209F0),
-                MEM32(0x5209F4), MEM32(0x5209F8));
+    if (want && calls == want) {
+        mc3_difftest_capture("before", 0x00377020u, calls);
+        sub_00377020_gen();
+        mc3_difftest_capture("after", 0x00377020u, calls);
+        fprintf(stderr, "[DIFFTEST] captured; ending the run\n");
+        fflush(stderr);
+        exit(0);
     }
-    sub_0037DF00_gen();
+    sub_00377020_gen();
 }
 
 /* ── Manual function overrides ─────────────────────────────── */

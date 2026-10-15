@@ -162,6 +162,7 @@ mcdub3-sw/
 │   ├── main.c                  boot: load XBE, map Xbox memory, start devices, jump to the game
 │   ├── recomp_manual.c         hand-written replacements for specific lifted functions
 │   ├── ac97_nabm.c             AC'97 audio controller registers (reset bits complete at once)
+│   ├── difftest.c              guest snapshot around one call, for tools/difftest.py
 │   └── switch_nx.c             Switch only: log file, settings file, crash handler
 │
 ├── config/                   [git] per-game inputs to stage 1 and 2
@@ -175,6 +176,7 @@ mcdub3-sw/
 │   ├── build_linux.sh          make build: CMake + Ninja into work/build-linux*
 │   ├── run_linux.sh            make run / run-gdb / run-headless / snapshot / trap
 │   ├── snapshot_report.py      make report: a crash/watchdog snapshot, explained
+│   ├── difftest.py             make difftest: replay a captured call on x86, diff vs lifted
 │   └── extract_disc.sh         make extract: ISO → game/
 ├── switch/
 │   └── build.sh              [git] make switch: NRO build + SD-card staging
@@ -355,6 +357,7 @@ make report        # explain the newest snapshot: call chain by section, kernel 
 make hoststacks    # every thread's host backtrace after 45 s: who waits on what
 make profile       # where the time goes: hottest functions per thread (Linux perf)
 make record        # frames + audio of a headless run -> work/capture/<time>/capture.mp4
+make difftest CALL=n  # replay call n of a wrapped function on real x86 (Unicorn), diff vs lifted
 make run-gdb       # under gdb; also run-headless, trap
 make relift build  # after adding/removing an override, or a translator change
 make regen build   # after changing config/seed_functions.json

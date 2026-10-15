@@ -23,7 +23,7 @@ export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS
 
 .PHONY: help setup check-vm extract lift regen relift \
-        build build-vk build-debug run run-gdb run-headless snapshot report hoststacks profile record trap \
+        build build-vk build-debug run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
         switch switch-vk switch-lto send \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
 
@@ -94,6 +94,13 @@ snapshot:  ## Diagnose a hang: headless run, guest stack dumped after 30 s (WD=n
 	@HEADLESS=1 SECS=$${SECS:-90} RECOMP_WATCHDOG_SECS=$(or $(WD),30) bash tools/run_linux.sh; \
 	 rc=$$?; if [ $$rc -eq 3 ]; then echo "snapshot taken (watchdog exit 3 is expected): make report"; \
 	 elif [ $$rc -ne 0 ]; then echo "run ended with exit code $$rc (not the watchdog): make report"; exit $$rc; fi
+
+difftest:  ## Replay call CALL of a wrapped function on x86 (Unicorn) vs the lifted C (FUNC, default BinkDoFrame)
+	@test -n "$(CALL)" || { echo "usage: make difftest CALL=<n> [FUNC=00377020]"; exit 1; }
+	@mkdir -p $(LOGS)
+	MC3_DIFFTEST_CALL=$(CALL) HEADLESS=1 SECS=$${SECS:-300} bash tools/run_linux.sh || true
+	$$( [ -x $(WORK)/venv/bin/python3 ] && echo $(WORK)/venv/bin/python3 || echo python3 ) tools/difftest.py \
+	    $(WORK)/difftest/$(or $(FUNC),00377020)_$(CALL)_before.bin 2>&1 | tee $(LOGS)/difftest_$(NOW).log
 
 record:  ## Record frames + audio of a headless run into work/capture/<time>/ (SECS, EVERY, KEEP=1)
 	bash tools/record.sh $(or $(SECS),60)
