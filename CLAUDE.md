@@ -110,6 +110,14 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   Result (2026-10-15, windowed, virgl): movies at a steady 30 fps; per frame
   decode <1.5 ms, Bink's lifted YUV→RGB copy 4–7 ms, draw+Present ~11 ms,
   ~15 ms spare. `MC3_BINK_TRACE=1` prints this split every second.
+- Movie sound: Bink decodes it correctly (matches FFmpeg, r = 0.99999), but
+  the way out (Bink's DirectSound ring → emulated APU voice → output)
+  repeats 256–768-sample pieces, skips, and runs at ~84% speed. So FFmpeg
+  plays the soundtrack on a runtime software-mixer voice (`apu_mixer_*`),
+  synced to Bink's frame number, and Bink's decoded PCM is zeroed
+  (`MC3_NATIVE_BINK_AUDIO=0` to compare). The APU path itself is still
+  suspect for in-game sound. `tools/audio_diff.py capture.wav movie.bik`
+  measures holes, skips, repeats and drift against the original track.
 - Measuring speed in the VM: headless runs (`make record`, `make profile`)
   render with llvmpipe (software) and run slower; windowed runs use virgl
   (the Mac's GPU). Judge frame rate windowed; use headless for relative

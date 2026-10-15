@@ -256,6 +256,8 @@ extern int  mc3_bink_native_enabled(void);
 extern void mc3_bink_native_open(uint32_t hbink, const char *xbox_name);
 extern int  mc3_bink_native_frame(uint32_t hbink, int frame, uint8_t *dest, int w, int h);
 extern void mc3_bink_native_close(uint32_t hbink);
+extern void mc3_bink_native_audio(uint32_t hbink, int frame);
+extern int  mc3_bink_native_audio_active(void);
 
 /* BinkOpen, 0x003752F0: stdcall (name, flags), returns the HBINK. */
 extern void sub_003752F0_gen(void);
@@ -293,6 +295,7 @@ static void bink_video_decode(void)
     if (!mc3_difftest_wanted() && mc3_bink_native_enabled()) {
         int w = (int)MEM32(hbink + BINK_WIDTH), h = (int)MEM32(hbink + BINK_HEIGHT);
         int frame = (int)MEM32(hbink + BINK_FRAMENUM) - 1;
+        mc3_bink_native_audio(hbink, frame);
         if (mc3_bink_native_frame(hbink, frame, (uint8_t *)XBOX_PTR(MEM32(g_esp + 4)), w, h)) {
             /* Every block changed: Bink copies the whole frame out. */
             memset((void *)XBOX_PTR(hbink + BINK_DIRTY_MAP), 1, (size_t)((w + 15) / 16) * ((h + 15) / 16));
@@ -320,10 +323,22 @@ void sub_0037F610(void)
 }
 
 extern void sub_00378B30_gen(void);
+/* Bink audio decode, 0x00378B30: stdcall (state, &out_ptr, &out_bytes,
+ * packet, &packet_pos), called from BinkDoFrame at 0x0037730D, which then
+ * copies *out_bytes of PCM from *out_ptr into its DirectSound ring. While
+ * FFmpeg plays the movie's sound (src/bink_native.c), that PCM is zeroed:
+ * Bink's streaming and clock carry on, on silence. */
 static void bink_audio_decode(void)
 {
     static long calls;
+    uint32_t out_ptr_va = MEM32(g_esp + 8), out_bytes_va = MEM32(g_esp + 12);
+
     mc3_difftest_call(0x00378B30u, sub_00378B30_gen, &calls);
+    if (mc3_bink_native_audio_active() && !mc3_difftest_wanted()) {
+        uint32_t out = MEM32(out_ptr_va), bytes = MEM32(out_bytes_va);
+        if (out && bytes && bytes <= 0x100000u)
+            memset((void *)XBOX_PTR(out), 0, bytes);
+    }
 }
 
 void sub_00378B30(void)

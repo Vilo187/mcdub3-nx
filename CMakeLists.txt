@@ -115,6 +115,9 @@ if(MC3_NATIVE_BINK AND NOT NINTENDO_SWITCH)
     if(MC3_FFMPEG_FOUND)
         target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_NATIVE_BINK=1)
         target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::MC3_FFMPEG)
+        # Movie sound plays on the runtime's software mixer (apu/apu.h).
+        set_property(SOURCE src/bink_native.c APPEND PROPERTY
+            INCLUDE_DIRECTORIES ${XBOXRECOMP_DIR}/src)
         message(STATUS "Bink video: FFmpeg ${MC3_FFMPEG_libavcodec_VERSION}")
     else()
         message(STATUS "Bink video: FFmpeg not found, lifted decoder")
