@@ -52,6 +52,7 @@ set(MC3_SOURCES
     src/recomp_manual.c
     src/ac97_nabm.c
     src/difftest.c
+    src/bink_native.c
 )
 if(NINTENDO_SWITCH)
     list(APPEND MC3_SOURCES src/switch_nx.c)
@@ -101,6 +102,24 @@ if(MC3_LTO)
 endif()
 set_source_files_properties(${MC3_GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "${MC3_GEN_FLAGS}")
 target_link_libraries(${PROJECT_NAME} PRIVATE m)
+
+# Movies: FFmpeg decodes Bink video in place of the lifted decoder
+# (src/bink_native.c). Linux only for now; the Switch needs its own LGPL,
+# Bink-only FFmpeg build. Without FFmpeg the lifted decoder plays the movies.
+option(MC3_NATIVE_BINK "Decode Bink movie video with FFmpeg" ON)
+if(MC3_NATIVE_BINK AND NOT NINTENDO_SWITCH)
+    find_package(PkgConfig)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(MC3_FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil)
+    endif()
+    if(MC3_FFMPEG_FOUND)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_NATIVE_BINK=1)
+        target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::MC3_FFMPEG)
+        message(STATUS "Bink video: FFmpeg ${MC3_FFMPEG_libavcodec_VERSION}")
+    else()
+        message(STATUS "Bink video: FFmpeg not found, lifted decoder")
+    endif()
+endif()
 
 # ── Nintendo Switch homebrew (devkitA64 + libnx) ────────────────
 if(NINTENDO_SWITCH)
