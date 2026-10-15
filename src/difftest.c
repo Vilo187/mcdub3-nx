@@ -61,10 +61,47 @@ static uint32_t difftest_func(void)
 long mc3_difftest_wanted(void);
 void mc3_difftest_capture(const char *phase, uint32_t func, long call_index);
 
+/* MC3_DIFFTEST_WITHIN=<hex func>:<n>: count the armed function's calls only
+ * while call n of that outer function runs ("call 59 of the IDCT within
+ * frame 600"). The outer function must be wrapped too. */
+static uint32_t s_within_func;
+static long s_within_call;
+static int s_within_active;
+
+static void within_init(void)
+{
+    static int done;
+    const char *e;
+    if (done) return;
+    done = 1;
+    e = getenv("MC3_DIFFTEST_WITHIN");
+    if (e && *e) {
+        char *colon;
+        s_within_func = (uint32_t)strtoul(e, &colon, 16);
+        s_within_call = (*colon == ':') ? atol(colon + 1) : 0;
+    }
+}
+
 void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls)
 {
     long want = mc3_difftest_wanted();
 
+    within_init();
+    if (s_within_func && func == s_within_func) {
+        (*calls)++;
+        if (*calls == s_within_call) {
+            s_within_active = 1;
+            lifted();
+            s_within_active = 0;
+            return;
+        }
+        lifted();
+        return;
+    }
+    if (s_within_func && !s_within_active) {
+        lifted();
+        return;
+    }
     (*calls)++;
     if (want && *calls == want && difftest_func() == func) {
         mc3_difftest_capture("before", func, *calls);

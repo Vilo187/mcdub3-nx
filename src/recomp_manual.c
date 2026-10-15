@@ -138,6 +138,16 @@ void sub_0037CCD0(void)
     mc3_difftest_call(0x0037CCD0u, sub_0037CCD0_gen, &calls);
 }
 
+/* Bink inverse DCT for one 8x8 block, 0x0037F610: (dest, pitch, coeffs) on
+ * the stack. In frame 600 its call #59 writes the one wrong block the
+ * video difftest found (dest 0x80F3D400, coefficients at 0x00F7FADC). */
+extern void sub_0037F610_gen(void);
+void sub_0037F610(void)
+{
+    static long calls;
+    mc3_difftest_call(0x0037F610u, sub_0037F610_gen, &calls);
+}
+
 extern void sub_00378B30_gen(void);
 void sub_00378B30(void)
 {

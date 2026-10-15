@@ -96,9 +96,10 @@ snapshot:  ## Diagnose a hang: headless run, guest stack dumped after 30 s (WD=n
 	 elif [ $$rc -ne 0 ]; then echo "run ended with exit code $$rc (not the watchdog): make report"; exit $$rc; fi
 
 difftest:  ## Replay call CALL of wrapped function FUNC on x86 (Unicorn) vs the lifted C (FUNC default 0037CCD0)
-	@test -n "$(CALL)" || { echo "usage: make difftest CALL=<n> [FUNC=0037CCD0]"; exit 1; }
+	@test -n "$(CALL)" || { echo "usage: make difftest CALL=<n> [FUNC=0037CCD0] [WITHIN=<outer func>:<n>]"; exit 1; }
 	@mkdir -p $(LOGS)
-	MC3_DIFFTEST_CALL=$(CALL) MC3_DIFFTEST_FUNC=$(or $(FUNC),0037CCD0) HEADLESS=1 SECS=$${SECS:-300} bash tools/run_linux.sh || true
+	MC3_DIFFTEST_CALL=$(CALL) MC3_DIFFTEST_FUNC=$(or $(FUNC),0037CCD0) MC3_DIFFTEST_WITHIN=$(WITHIN) \
+	    HEADLESS=1 SECS=$${SECS:-300} bash tools/run_linux.sh || true
 	@py=; for p in $(WORK)/venv/bin/python3 python3; do $$p -c 'import numpy, unicorn, capstone' 2>/dev/null && { py=$$p; break; }; done; \
 	 if [ -z "$$py" ]; then echo "captured in $(WORK)/difftest; no Python with numpy+unicorn here:"; \
 	   echo "  $(WORK)/venv/bin/pip install numpy unicorn   (or replay on another machine)"; exit 0; fi; \
