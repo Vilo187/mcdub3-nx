@@ -233,6 +233,7 @@ mcdub3-sw/
     ├── elf/                  [generated] one ELF per staged NRO, to resolve console crash addresses
     ├── save/                 [generated] the title's drive letters (T:, U:, Z:) and partition images
     ├── logs/                 [generated] every make lift/build/run/switch log, timestamped
+    ├── capture/              [generated] make record: frames (BMP), audio.wav, capture.mp4
     ├── venv/                 [generated] Python + capstone for stage 1 (make setup)
     └── deps/                 [optional] Switch extras built by hand: mesa NVK SDK, glslang, FFmpeg
 ```
@@ -353,6 +354,7 @@ make snapshot      # a hang: headless run, guest call stack dumped after 30 s
 make report        # explain the newest snapshot: call chain by section, kernel calls
 make hoststacks    # every thread's host backtrace after 45 s: who waits on what
 make profile       # where the time goes: hottest functions per thread (Linux perf)
+make record        # frames + audio of a headless run -> work/capture/<time>/capture.mp4
 make run-gdb       # under gdb; also run-headless, trap
 make relift build  # after adding/removing an override, or a translator change
 make regen build   # after changing config/seed_functions.json
