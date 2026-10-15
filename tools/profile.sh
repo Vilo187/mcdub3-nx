@@ -5,7 +5,8 @@
 #
 # Samples every thread ~1000x a second and writes the hottest functions --
 # lifted sub_XXXXXXXX, runtime, renderer, libc -- to
-# work/logs/profile_<time>.txt (per function, and per thread).
+# work/logs/profile_<time>.txt (per thread, per library, per function).
+# KEEP=1 keeps the perf data (work/logs/profile_<time>.data) for perf report.
 #
 # One-time setup (vm/setup-ubuntu.sh does it): perf for the running kernel,
 #   sudo apt install linux-tools-$(uname -r) linux-tools-generic
@@ -36,15 +37,25 @@ xvfb-run -a perf record -q -F 999 -o "$DATA" -- \
     timeout --signal=KILL "$SECS" "$BIN" > "$MC3_WORK/logs/profile_$STAMP.run.log" 2>&1 || true
 # Reports never fail the script: an empty section is information too.
 set +e +o pipefail
+report() { perf report -i "$DATA" --stdio --no-children "$@" 2>/dev/null | grep -v '^#' | grep -v '^$'; }
 {
-    echo "== hottest functions, all threads"
-    perf report -i "$DATA" --stdio --no-children --sort symbol 2>&1 \
-        | grep -v '^#' | grep -v '^$' | head -40
+    echo "== threads: share of all samples, and how busy each was"
+    echo "   (perf's 'pid' is the thread; busy = samples / (999 Hz x ${SECS} s))"
+    perf report -i "$DATA" --stdio --no-children --sort pid -F overhead,sample,pid 2>/dev/null \
+        | grep -v '^#' | grep -v '^$' | head -25 \
+        | awk -v s="$SECS" '{ printf "%s  busy %5.1f%%\n", $0, 100 * $2 / (999 * s) }'
     echo
-    echo "== per thread (pid/tid, function)"
-    perf report -i "$DATA" --stdio --no-children --sort pid,tid,symbol 2>&1 \
-        | grep -v '^#' | grep -v '^$' | head -40
+    echo "== where the samples land (binary or library; [unknown] = JIT code, e.g. llvmpipe)"
+    report --sort dso | head -15
+    echo
+    echo "== hottest functions, all threads"
+    report --sort symbol | head -40
+    echo
+    echo "== hottest functions per thread"
+    report --sort pid,symbol | head -60
 } > "$OUT"
-rm -f "$DATA"
+grep -a -m1 '\[GL\] .*/' "$MC3_WORK/logs/profile_$STAMP.run.log" >> "$OUT"
+grep -a '\[fps\]' "$MC3_WORK/logs/profile_$STAMP.run.log" >> "$OUT"
+[ "${KEEP:-0}" = "1" ] || rm -f "$DATA"
 echo "done: $OUT"
-head -15 "$OUT"
+head -30 "$OUT"
