@@ -14,7 +14,7 @@ bash "$XBOXRECOMP_DIR/tools/linux/install_deps.sh"
 echo "== 2/4 tools: ninja, gdb, Vulkan (lavapipe for headless runs), rsync, python venv"
 sudo apt-get install -y ninja-build gdb rsync python3-venv python3-pip \
     libvulkan-dev vulkan-tools mesa-vulkan-drivers glslang-dev glslang-tools \
-    spirv-tools xvfb mesa-utils
+    spirv-tools xvfb mesa-utils ffmpeg
 
 echo "   perf for profiling (make profile), and permission to profile own processes"
 sudo apt-get install -y "linux-tools-$(uname -r)" linux-tools-generic || \
