@@ -95,12 +95,14 @@ snapshot:  ## Diagnose a hang: headless run, guest stack dumped after 30 s (WD=n
 	 rc=$$?; if [ $$rc -eq 3 ]; then echo "snapshot taken (watchdog exit 3 is expected): make report"; \
 	 elif [ $$rc -ne 0 ]; then echo "run ended with exit code $$rc (not the watchdog): make report"; exit $$rc; fi
 
-difftest:  ## Replay call CALL of a wrapped function on x86 (Unicorn) vs the lifted C (FUNC, default BinkDoFrame)
-	@test -n "$(CALL)" || { echo "usage: make difftest CALL=<n> [FUNC=00377020]"; exit 1; }
+difftest:  ## Replay call CALL of wrapped function FUNC on x86 (Unicorn) vs the lifted C (FUNC default 0037CCD0)
+	@test -n "$(CALL)" || { echo "usage: make difftest CALL=<n> [FUNC=0037CCD0]"; exit 1; }
 	@mkdir -p $(LOGS)
-	MC3_DIFFTEST_CALL=$(CALL) HEADLESS=1 SECS=$${SECS:-300} bash tools/run_linux.sh || true
-	$$( [ -x $(WORK)/venv/bin/python3 ] && echo $(WORK)/venv/bin/python3 || echo python3 ) tools/difftest.py \
-	    $(WORK)/difftest/$(or $(FUNC),00377020)_$(CALL)_before.bin 2>&1 | tee $(LOGS)/difftest_$(NOW).log
+	MC3_DIFFTEST_CALL=$(CALL) MC3_DIFFTEST_FUNC=$(or $(FUNC),0037CCD0) HEADLESS=1 SECS=$${SECS:-300} bash tools/run_linux.sh || true
+	@py=; for p in $(WORK)/venv/bin/python3 python3; do $$p -c 'import numpy, unicorn, capstone' 2>/dev/null && { py=$$p; break; }; done; \
+	 if [ -z "$$py" ]; then echo "captured in $(WORK)/difftest; no Python with numpy+unicorn here:"; \
+	   echo "  $(WORK)/venv/bin/pip install numpy unicorn   (or replay on another machine)"; exit 0; fi; \
+	 $$py tools/difftest.py $(WORK)/difftest/$(or $(FUNC),0037CCD0)_$(CALL)_before.bin 2>&1 | tee $(LOGS)/difftest_$(NOW).log
 
 record:  ## Record frames + audio of a headless run into work/capture/<time>/ (SECS, EVERY, KEEP=1)
 	bash tools/record.sh $(or $(SECS),60)

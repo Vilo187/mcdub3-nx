@@ -45,6 +45,38 @@ static int write_region(FILE *f, uint32_t va, uint32_t size)
     return fwrite((const void *)XBOX_PTR(va), 1, size, f) == size ? 0 : -1;
 }
 
+/* Run one wrapped call; on the armed one, capture before/after and end.
+ * Armed by MC3_DIFFTEST_CALL=<n> and MC3_DIFFTEST_FUNC=<hex address> (the
+ * function to capture; several can be wrapped at once). */
+static uint32_t difftest_func(void)
+{
+    static long func = -1;
+    if (func < 0) {
+        const char *e = getenv("MC3_DIFFTEST_FUNC");
+        func = e ? strtol(e, NULL, 16) : 0;
+    }
+    return (uint32_t)func;
+}
+
+long mc3_difftest_wanted(void);
+void mc3_difftest_capture(const char *phase, uint32_t func, long call_index);
+
+void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls)
+{
+    long want = mc3_difftest_wanted();
+
+    (*calls)++;
+    if (want && *calls == want && difftest_func() == func) {
+        mc3_difftest_capture("before", func, *calls);
+        lifted();
+        mc3_difftest_capture("after", func, *calls);
+        fprintf(stderr, "[DIFFTEST] captured; ending the run\n");
+        fflush(stderr);
+        exit(0);
+    }
+    lifted();
+}
+
 /* Which call to capture: MC3_DIFFTEST_CALL (1-based), 0 = never. */
 long mc3_difftest_wanted(void)
 {
