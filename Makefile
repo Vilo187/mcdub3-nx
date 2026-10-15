@@ -19,7 +19,7 @@ LOGS := $(WORK)/logs
 NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
-export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME \
+export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS
 
 .PHONY: help setup check-vm extract lift regen relift \
@@ -105,7 +105,7 @@ difftest:  ## Replay call CALL of wrapped function FUNC on x86 (Unicorn) vs the 
 	   echo "  $(WORK)/venv/bin/pip install numpy unicorn   (or replay on another machine)"; exit 0; fi; \
 	 $$py tools/difftest.py $(WORK)/difftest/$(or $(FUNC),0037CCD0)_$(CALL)_before.bin 2>&1 | tee $(LOGS)/difftest_$(NOW).log
 
-record:  ## Record frames + audio of a headless run into work/capture/<time>/ (SECS, EVERY, KEEP=1)
+record:  ## Record frames + audio into work/capture/<time>/ (SECS, EVERY, KEEP=1, WINDOW=1, VIDEO=0)
 	bash tools/record.sh $(or $(SECS),60)
 
 profile:  ## Where the time goes: perf sampling of a headless run (SECS, default 40)

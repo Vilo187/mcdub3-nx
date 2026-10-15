@@ -4,6 +4,10 @@
 #
 #   tools/record.sh [seconds]        (default 60; make record SECS=n EVERY=k)
 #
+#   WINDOW=1   run in a window (the GPU via virgl) instead of headless
+#              (llvmpipe, software rendering: slower, so timing differs)
+#   VIDEO=0    audio only: no frame dumps, which cost disk time per frame
+#
 # Writes work/capture/<time>/:
 #   run.log                  the run's log
 #   f00000.bmp ...           every EVERY-th presented frame (default 1), as the
@@ -29,13 +33,18 @@ export MC3_GAME_DIR MC3_SAVE_DIR="${MC3_SAVE_DIR:-$MC3_WORK/save}"
 # The audio dump is written once its buffer is full: stop it before the run
 # is killed.
 AUDIO_SECS=$(( SECS > 15 ? SECS - 10 : SECS ))
-export RECOMP_GL_DUMP="$OUT/f,$EVERY"
+[ "${VIDEO:-1}" = "0" ] || export RECOMP_GL_DUMP="$OUT/f,$EVERY"
 export RECOMP_AUDIO_DUMP="$OUT/audio.raw,0,$AUDIO_SECS"
 export RECOMP_FPS_LOG=1
 cd "$MC3_WORK"
 
-echo "recording ${SECS}s headless (every ${EVERY} frame(s)) -> $OUT"
-xvfb-run -a timeout --signal=KILL "$SECS" "$BIN" > "$OUT/run.log" 2>&1 || true
+if [ "${WINDOW:-0}" = "1" ]; then
+    echo "recording ${SECS}s in a window -> $OUT"
+    timeout --signal=KILL "$SECS" "$BIN" > "$OUT/run.log" 2>&1 || true
+else
+    echo "recording ${SECS}s headless (every ${EVERY} frame(s)) -> $OUT"
+    xvfb-run -a timeout --signal=KILL "$SECS" "$BIN" > "$OUT/run.log" 2>&1 || true
+fi
 
 FRAMES=$(find "$OUT" -name 'f*.bmp' | wc -l)
 echo "captured $FRAMES frame(s)"
