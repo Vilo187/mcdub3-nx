@@ -163,6 +163,7 @@ mcdub3-sw/
 │   ├── recomp_manual.c         hand-written replacements for specific lifted functions
 │   ├── ac97_nabm.c             AC'97 audio controller registers (reset bits complete at once)
 │   ├── difftest.c              guest snapshot around one call, for tools/difftest.py
+│   ├── bink_native.c           movies: FFmpeg decodes Bink video and plays the soundtrack
 │   └── switch_nx.c             Switch only: log file, settings file, crash handler
 │
 ├── config/                   [git] per-game inputs to stage 1 and 2
@@ -177,6 +178,9 @@ mcdub3-sw/
 │   ├── run_linux.sh            make run / run-gdb / run-headless / snapshot / trap
 │   ├── snapshot_report.py      make report: a crash/watchdog snapshot, explained
 │   ├── difftest.py             make difftest: replay a captured call on x86, diff vs lifted
+│   ├── profile.sh              make profile: perf per thread, per library, per function
+│   ├── record.sh               make record: frames + audio of a run (WINDOW=1, VIDEO=0)
+│   ├── audio_diff.py           a movie's soundtrack vs the captured output: holes, skips, drift
 │   └── extract_disc.sh         make extract: ISO → game/
 ├── switch/
 │   └── build.sh              [git] make switch: NRO build + SD-card staging
@@ -188,6 +192,7 @@ mcdub3-sw/
 │   │   ├── 0001-native-aarch64-not-carafe.md
 │   │   ├── 0002-vendored-toolkit-own-snapshot.md
 │   │   └── 0003-linux-vm-debug-loop.md
+│   ├── upstream.md           [git] fixes and issues to send upstream (xboxrecomp / nfsu2-sw)
 │   └── drafts/               [ignored] unpublished texts (e.g. the nfsu2-sw licensing issue)
 │
 ├── xboxrecomp/               [git] THE TOOLKIT, vendored (ADR 0002): our own copy, edited in place

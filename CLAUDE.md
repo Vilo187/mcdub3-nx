@@ -12,7 +12,8 @@ Keep this file current: findings, rules, status. It is the project's memory.
   outside the repo.
 - Toolkit changes go in `xboxrecomp/` as their own commits, subject prefixed
   `xboxrecomp:`. Prefer new files over edits to files the Switch layer or
-  upstream also change (ADR 0002). Note upstreamable fixes.
+  upstream also change (ADR 0002). Note upstreamable fixes in
+  docs/upstream.md (patch or issue, and which upstream: xboxrecomp or nfsu2-sw).
 - nfsu2-sw's `src/` is unlicensed: read it for ideas, don't copy it.
 - Upstream merges are deliberate (`git merge -X subtree=xboxrecomp
   xboxrecomp-upstream/main`), never routine.
