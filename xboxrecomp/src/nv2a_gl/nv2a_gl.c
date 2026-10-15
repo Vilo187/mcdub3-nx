@@ -424,6 +424,30 @@ static uint32_t bytes_hash(uint32_t va, uint32_t bytes)
     return (h ^ i) * 16777619u;
 }
 
+/* Every byte, for images the CPU rewrites in place. The sampled hash above
+ * looks at 256 words: in a 640x480 A8R8G8B8 movie frame that is one pixel
+ * every 4800 bytes, so a change between samples -- the last letter of a
+ * title being typed out on a dark frame -- left the texture stale until a
+ * sampled pixel changed too (MC3's intro, 2026-10-15). ~0.2 ms per 1.2 MB. */
+static uint32_t bytes_hash_full(uint32_t va, uint32_t bytes)
+{
+    const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset() + va;
+    uint64_t h0 = 1469598103934665603ull ^ bytes, h1 = 0x9E3779B97F4A7C15ull;
+    uint32_t i;
+
+    for (i = 0; i + 16 <= bytes; i += 16) {     /* two chains: twice the speed */
+        uint64_t a, b;
+        memcpy(&a, mem + i, 8);
+        memcpy(&b, mem + i + 8, 8);
+        h0 = (h0 ^ a) * 1099511628211ull;
+        h1 = (h1 ^ b) * 0xBF58476D1CE4E5B9ull;
+    }
+    for (; i < bytes; i++)
+        h0 = (h0 ^ mem[i]) * 1099511628211ull;
+    h0 ^= h1 * 31u;
+    return (uint32_t)(h0 ^ (h0 >> 32));
+}
+
 static uint32_t tex_bytes(uint32_t color, uint32_t w, uint32_t h, uint32_t pitch)
 {
     if (color == 0x0C) return ((w + 3) / 4) * ((h + 3) / 4) * 8;
@@ -540,7 +564,10 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
         t->used = s_frame;
         return t->tex;
     }
-    hash = bytes_hash(va, tex_bytes(color, w, h, pitch));
+    /* Linear images (movies, UI, CPU-drawn) in full; swizzled ones, mostly
+     * static game textures, sampled. */
+    hash = tex_size_from_format(color) ? bytes_hash(va, tex_bytes(color, w, h, pitch))
+                                       : bytes_hash_full(va, tex_bytes(color, w, h, pitch));
     if (color == 0x0B)                       /* the palette is content too */
         hash ^= bytes_hash(s_palette_va, 1024) * 31u;
     if (t && t->hash == hash) {
