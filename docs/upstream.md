@@ -22,7 +22,7 @@ Nothing here has been sent yet.
 | 3 | Memory: AArch64 Linux puts the guest base too high for the 4 GB window | `794632b` | nfsu2-sw (POSIX memory layout) | yes |
 | 4 | Build: Switch data folder hard-coded to `nfsu2x` | `e7dca06` | nfsu2-sw | yes |
 | 5 | Repo: `tools/*/output.py` missing, so the lift pipeline can't run | `af03785` | nfsu2-sw | yes |
-| 5b | Renderer: fixed-function fog factor hard-coded to 0, so fogged draws become the fog colour | `dab6e43` | nfsu2-sw (gl_vsh.c, nv2a_gl, nv2a_vk) | yes |
+| 5b | Renderer: fog factor 0 for fixed-function draws and for vertex programs that write no fog, so they become the fog colour | `dab6e43`, `2503293` | nfsu2-sw (gl_vsh.c, nv2a_gl, nv2a_vk) | yes |
 | 5c | Executor: every inline draw taken as pre-transformed (only XYZRHW is) | `b889914` | nfsu2-sw (nv2a_pb_exec.c) | yes |
 | 5d | Input: keyboard does nothing on Linux (events dropped, key state stubbed) | `10f8602` | nfsu2-sw (input/, renderers) | yes |
 
