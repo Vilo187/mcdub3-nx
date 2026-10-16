@@ -23,4 +23,7 @@ __pycache__/
 .idea/
 
 # Personal folders
+keys
+bugs
 drafts
+TODO.md
