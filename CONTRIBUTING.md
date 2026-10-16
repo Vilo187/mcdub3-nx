@@ -183,9 +183,11 @@ mcdub3-sw/
 │   ├── audio_diff.py           a movie's soundtrack vs the captured output: holes, skips, drift
 │   └── extract_disc.sh         make extract: ISO → game/
 ├── switch/
-│   └── build.sh              [git] make switch: NRO build + SD-card staging
+│   ├── build.sh              [git] the NRO build + SD-card staging (runs in the container)
+│   ├── docker_build.sh       [git] make switch: build.sh inside devkitPro's pinned image
+│   └── devkitpro-image       [git] the pinned image (tag@digest), shared with CI
 ├── vm/
-│   └── setup-ubuntu.sh       [git] make setup: packages, devkitPro, Python venv
+│   └── setup-ubuntu.sh       [git] make setup: packages, Docker + devkitPro image, Python venv
 │
 ├── docs/
 │   ├── decisions/            [git] ADRs: why things are the way they are
@@ -394,13 +396,21 @@ bash tools/first_lift.sh
 Only for an ISO: `tools/extract_disc.sh <file.iso>` unpacks it into `game/`.
 `MC3_GAME_DIR=<folder>` points the scripts at a disc elsewhere.
 
-## devkitPro on ARM64
+## The Switch toolchain: devkitPro's container
 
-ARM64 Linux is a supported devkitPro host: their official `devkitpro/devkita64`
-Docker image is built for both linux/amd64 and linux/arm64. `vm/setup-ubuntu.sh`
-runs devkitPro's own installer; if that ever fails, build the Switch NRO inside
-`docker run -v ~/mcdub3-sw:/src devkitpro/devkita64`, which
-runs natively on the VM. The Linux debug loop is unaffected either way.
+`make switch` builds inside devkitPro's official image `devkitpro/devkita64`,
+pinned by digest in `switch/devkitpro-image` (ADR 0004). The image exists for
+linux/arm64 and linux/amd64, so the same pin serves this VM and GitHub
+Actions; it carries devkitA64, libnx, the Switch portlibs (SDL2, Mesa, glm,
+FFmpeg) and the build tools (cmake, ninja, python3, rsync). Nothing of the
+toolchain is installed on the host: `make setup` installs Docker (Ubuntu's
+`docker.io`) and pulls the image. `switch/docker_build.sh` mounts the repo at
+the same path and runs `switch/build.sh` as your user.
+
+To move to a newer devkitPro: put the new tag and its index digest in
+`switch/devkitpro-image`, build, test, commit. `NATIVE=1` uses a devkitPro
+installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
+`VULKAN=1` still needs the NVK SDK in `work/deps` (not in the image).
 
 ## Sending builds to the Switch
 

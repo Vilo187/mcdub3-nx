@@ -29,21 +29,12 @@ mkdir -p "$MC3_WORK"
 "$MC3_WORK/venv/bin/pip" install -q --upgrade pip capstone pytest numpy unicorn
 # No shell profile changes: tools/env.sh puts work/venv on PATH for the scripts.
 
-echo "== 4/4 devkitPro (devkitA64 + libnx + switch-sdl2 + switch-mesa)"
-if [ ! -x /opt/devkitpro/pacman/bin/pacman ] && ! command -v dkp-pacman >/dev/null; then
-    # devkitPro's own installer; it picks the package for this CPU.
-    # ARM64 is supported; if this fails, see CONTRIBUTING.md.
-    wget -q https://apt.devkitpro.org/install-devkitpro-pacman -O /tmp/install-devkitpro-pacman
-    chmod +x /tmp/install-devkitpro-pacman
-    sudo /tmp/install-devkitpro-pacman
-fi
-DKP_PACMAN=$(command -v dkp-pacman || echo /opt/devkitpro/pacman/bin/pacman)
-sudo "$DKP_PACMAN" -Syu --noconfirm
-sudo "$DKP_PACMAN" -S --needed --noconfirm switch-dev switch-sdl2 switch-mesa switch-glm
-grep -q 'DEVKITPRO=' "$HOME/.bashrc" || {
-    echo 'export DEVKITPRO=/opt/devkitpro' >> "$HOME/.bashrc"
-    echo 'export PATH="$DEVKITPRO/tools/bin:$PATH"   # nxlink, elf2nro' >> "$HOME/.bashrc"
-}
+echo "== 4/4 Docker, for the Switch build in devkitPro's container (switch/devkitpro-image)"
+# The Switch toolchain is not installed on this machine: make switch runs in
+# devkitPro's pinned image, the same one CI uses (switch/docker_build.sh).
+sudo apt-get install -y docker.io
+sudo usermod -aG docker "$USER"      # takes effect at the next login
+sudo docker pull "$(grep -v '^#' "$(dirname "$0")/../switch/devkitpro-image" | head -1)"
 
 echo
 echo "done. Open a new shell (or: source ~/.bashrc), then:"
