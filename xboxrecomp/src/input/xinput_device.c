@@ -320,6 +320,7 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
 
     SDL_GameController *c = g_pads[dwPort];
     if (!c || !SDL_GameControllerGetAttached(c)) {
+#if !defined(__SWITCH__)
         /* No pad on port 0: the keyboard can be player 1 (sdl_keyboard.c). */
         if (dwPort == 0 && xbox_sdl_keyboard_enabled()) {
             g_controller_connected[0] = TRUE;
@@ -328,6 +329,7 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
             xbox_sdl_keyboard_state(pState);
             return ERROR_SUCCESS;
         }
+#endif
         g_controller_connected[dwPort] = FALSE;
         return ERROR_DEVICE_NOT_CONNECTED;
     }
@@ -377,8 +379,10 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
     pState->Gamepad.sThumbRY =
         (SHORT)(-1 - SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY));
 
+#if !defined(__SWITCH__)
     if (dwPort == 0 && xbox_sdl_keyboard_enabled())
         xbox_sdl_keyboard_state(pState);            /* on top of the pad */
+#endif
     return ERROR_SUCCESS;
 }
 
