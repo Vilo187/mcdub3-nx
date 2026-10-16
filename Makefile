@@ -19,7 +19,7 @@ LOGS := $(WORK)/logs
 NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
-export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY \
+export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS
 
 .PHONY: help setup check-vm extract lift regen relift \
@@ -121,9 +121,9 @@ trap:  ## Run, stopping at the first untranslated instruction reached
 	RECOMP_UNIMPL_TRAP=1 bash tools/run_linux.sh
 
 ## Switch
-switch:  ## Build the NRO and stage work/switch_sd
+switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work/switch_sd; NATIVE=1: local devkitPro
 	@mkdir -p $(LOGS)
-	bash switch/build.sh 2>&1 | tee $(LOGS)/switch_$(NOW).log
+	bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 
 switch-vk:  ## Switch build with Vulkan (NVK)
 	$(MAKE) switch VULKAN=1
