@@ -252,6 +252,14 @@ int nv2a_gl_vsh_program(const uint32_t (*prog)[4], uint32_t slots,
  * helpers (same constants as the interpreter), and the three position
  * paths. u_xform selects the path at run time so one program object serves
  * a vertex program under any surface. */
+/* Fixed-function fog inputs (see nv2a_ffp_fog below); in Vulkan they are
+ * members of the VsU block instead. */
+#define NV2A_FFP_FOG_DECL \
+    "uniform vec4 u_mv[4];     /* model-view rows (fog distance) */\n" \
+    "uniform vec4 u_fogplane;\n" \
+    "uniform vec4 u_fog0;      /* enabled, gen, equation, abs */\n" \
+    "uniform vec4 u_fog1;      /* param0, param1 */\n"
+
 /* Vulkan GLSL (nv2a_vk): the same shader with explicit locations, the
  * uniforms in a std140 block (binding 0) and Vulkan's 0..1 clip depth. */
 static const char s_vk_prelude[] =
@@ -294,6 +302,13 @@ static const char s_vk_prelude[] =
     "vec4 R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11;\n"
     "vec4 oPos, o1, o2, oD0, oD1, oFog, oPts, oB0, oB1, oT0, oT1, oT2, oT3;\n"
     "float nv2a_rcp(float x) { return x != 0.0 ? 1.0 / x : 1.884467e+19; }\n"
+    "float nv2a_fog_eq(float d) {             /* FOG_MODE on a fog distance */\n"
+    "    if (u_fog0.w != 0.0) d = abs(d);\n"
+    "    int eq = int(u_fog0.z);\n"
+    "    if (eq == 0) return u_fog1.x + d * u_fog1.y - 1.0;\n"
+    "    if (eq == 1) return u_fog1.x + exp2(d * u_fog1.y * 16.0) - 1.5;\n"
+    "    return u_fog1.x + exp2(-d * d * u_fog1.y * u_fog1.y * 32.0) - 1.5;\n"
+    "}\n"
     "float nv2a_rcc(float x) {\n"
     "    float y = nv2a_rcp(x); float a = clamp(abs(y), 5.42101e-20, 1.884467e+19);\n"
     "    return y < 0.0 ? -a : a;\n"
@@ -350,11 +365,19 @@ const char *nv2a_gl_vsh_prelude(void)
         "uniform vec2 u_aa;        /* logical -> real pixels */\n"
         "uniform vec4 u_m[4];      /* fixed-function composite rows */\n"
         "uniform vec4 u_vpoff;     /* fixed-function viewport offset */\n"
+        NV2A_FFP_FOG_DECL
         "out vec4 vD0; out vec4 vD1; out vec4 vT0; out vec4 vT1;\n"
         "out vec4 vT2; out vec4 vT3; out float vFog;\n"
         "vec4 R0, R1, R2, R3, R4, R5, R6, R7, R8, R9, R10, R11;\n"
         "vec4 oPos, o1, o2, oD0, oD1, oFog, oPts, oB0, oB1, oT0, oT1, oT2, oT3;\n"
         "float nv2a_rcp(float x) { return x != 0.0 ? 1.0 / x : 1.884467e+19; }\n"
+    "float nv2a_fog_eq(float d) {             /* FOG_MODE on a fog distance */\n"
+    "    if (u_fog0.w != 0.0) d = abs(d);\n"
+    "    int eq = int(u_fog0.z);\n"
+    "    if (eq == 0) return u_fog1.x + d * u_fog1.y - 1.0;\n"
+    "    if (eq == 1) return u_fog1.x + exp2(d * u_fog1.y * 16.0) - 1.5;\n"
+    "    return u_fog1.x + exp2(-d * d * u_fog1.y * u_fog1.y * 32.0) - 1.5;\n"
+    "}\n"
         "float nv2a_rcc(float x) {\n"
         "    float y = nv2a_rcp(x); float a = clamp(abs(y), 5.42101e-20, 1.884467e+19);\n"
         "    return y < 0.0 ? -a : a;\n"
@@ -396,7 +419,8 @@ const char *nv2a_gl_vsh_prelude(void)
     "    vec3 s = vec3(oPos.xy * u_aa, oPos.z);\n" \
     "    gl_Position = nv2a_clip(s * w, w);\n" \
     "    vD0 = clamp(oD0, 0.0, 1.0); vD1 = clamp(oD1, 0.0, 1.0);\n" \
-    "    vT0 = oT0; vT1 = oT1; vT2 = oT2; vT3 = oT3; vFog = oFog.x;\n" \
+    "    vT0 = oT0; vT1 = oT1; vT2 = oT2; vT3 = oT3;\n" \
+    "    vFog = u_fog0.x == 0.0 ? 1.0 : nv2a_fog_eq(oFog.x);\n" \
     "}\n"
 
 const char *nv2a_gl_vsh_main_program(void)
@@ -419,14 +443,14 @@ const char *nv2a_gl_vsh_main_program(void)
  *
  * ponytail: the equations' biases (-1 linear, -1.5 exp/exp2) and the
  * constants 16 and 32 are xemu's reading of the hardware; specular-alpha fog
- * is taken as the factor itself, which is what D3D means by it. Vertex
- * programs still pass oFog.x through unchanged. */
-#define NV2A_FFP_FOG_DECL \
-    "uniform vec4 u_mv[4];     /* model-view rows (fog distance) */\n" \
-    "uniform vec4 u_fogplane;\n" \
-    "uniform vec4 u_fog0;      /* enabled, gen, equation, abs */\n" \
-    "uniform vec4 u_fog1;      /* param0, param1 */\n"
-
+ * is taken as the factor itself, which is what D3D means by it.
+ *
+ * Vertex programs: the fog unit runs on their oFog.x the same way (xemu
+ * does likewise), and fog off is factor 1. Passing oFog.x through as the
+ * factor turned every program that writes no fog into 100% fog colour:
+ * Midnight Club 3's blur pass came out as the fog grey and was blended over
+ * the whole screen, the in-game street went dark and the light glow
+ * vanished (2026-10-16). */
 #define NV2A_FFP_FOG_GLSL \
     "float nv2a_ffp_fog() {\n" \
     "    if (u_fog0.x == 0.0) return 1.0;\n" \
@@ -437,11 +461,8 @@ const char *nv2a_gl_vsh_main_program(void)
     "    if (gen == 1) d = length(eye);                   /* RADIAL */\n" \
     "    else if (gen == 6) d = v5.x;                     /* FOG_X */\n" \
     "    else d = dot(u_fogplane.xyz, eye) + u_fogplane.w; /* PLANAR */\n" \
-    "    if (gen == 3 || u_fog0.w != 0.0) d = abs(d);\n" \
-    "    int eq = int(u_fog0.z);\n" \
-    "    if (eq == 0) return u_fog1.x + d * u_fog1.y - 1.0;\n" \
-    "    if (eq == 1) return u_fog1.x + exp2(d * u_fog1.y * 16.0) - 1.5;\n" \
-    "    return u_fog1.x + exp2(-d * d * u_fog1.y * u_fog1.y * 32.0) - 1.5;\n" \
+    "    if (gen == 3) d = abs(d);\n" \
+    "    return nv2a_fog_eq(d);\n" \
     "}\n"
 
 static float reg_float(const uint32_t *r, uint32_t method)
@@ -504,11 +525,9 @@ const char *nv2a_gl_vsh_fixed(void)
 {
     /* Vulkan: these uniforms are members of the prelude's uniform block. */
     static const char decl[] =
-        "uniform int u_xform;      /* 0 pre-transformed, 1 fixed-function */\n"
-        NV2A_FFP_FOG_DECL;
+        "uniform int u_xform;      /* 0 pre-transformed, 1 fixed-function */\n";
     static const char body[] =
         "uniform int u_xform;      /* 0 pre-transformed, 1 fixed-function */\n"
-        NV2A_FFP_FOG_DECL
         NV2A_FFP_FOG_GLSL
         "void main() {\n"
         "    if (u_xform == 1) {\n"
