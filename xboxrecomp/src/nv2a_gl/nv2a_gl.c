@@ -1738,7 +1738,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
         argb_vec4(r[0x1E24 / 4], u.fc[1]);
         u.aref = (float)(r[0x340 / 4] & 0xFF);
         u.xform = b->xform == 1 ? 1 : 0;
-        if (p->u_fog0 >= 0)                     /* fixed-function programs only */
+        if (p->u_fog0 >= 0)                     /* every program applies the fog unit */
             nv2a_ffp_fog_uniforms(r, u.mv, u.fogplane, u.fog0, u.fog1);
         u.afunc = r[0x300 / 4] ? (GLint)r[0x33C / 4] : 0x207;
         if (!p->uni_valid || memcmp(&u, &p->uni, sizeof u) != 0) {
@@ -1818,6 +1818,20 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
                     b->attr_direct, pk.shader_program, pk.other_input, pk.control,
                     pk.color_icw[0], pk.color_ocw[0], pk.alpha_icw[0], pk.alpha_ocw[0],
                     pk.final0, pk.final1);
+            {
+                /* Every combiner stage in use, with its constant colours. */
+                uint32_t st, nst = pk.control & 0xF;
+                for (st = 1; st < nst && st < 8; st++)
+                    fprintf(stderr, "          c%u icw %08X ocw %08X a icw %08X ocw %08X"
+                            " factor0 %08X factor1 %08X\n", st,
+                            pk.color_icw[st], pk.color_ocw[st], pk.alpha_icw[st],
+                            pk.alpha_ocw[st], r[0xA60 / 4 + st], r[0xA80 / 4 + st]);
+                fprintf(stderr, "          stages %u factor0 %08X factor1 %08X | lighting %u"
+                        " lights %04X colormat %08X ambient %g %g %g\n", nst,
+                        r[0xA60 / 4], r[0xA80 / 4], r[0x314 / 4], r[0x3BC / 4] & 0xFFFF,
+                        r[0x298 / 4], *(const float *)&r[0xA10 / 4],
+                        *(const float *)&r[0xA14 / 4], *(const float *)&r[0xA18 / 4]);
+            }
             for (i = 0; i < 4; i++) {
                 uint32_t base = (0x1B00u + i * 0x40u) / 4;
                 if (!(r[base + 3] & 0x40000000u))
