@@ -41,6 +41,13 @@ int usb_gamepad_control(int dev, const UsbSetup *setup, uint8_t *out, int max);
 /* Fill in the 20-byte input report. Returns the byte count written. */
 int usb_gamepad_report(int dev, uint8_t *out, int max);
 
+/* Buttons the title's own port code holds down on pad `dev`, on top of the
+ * host pad, the keyboard and the scripts: Xbox digital mask (0x10 Start...)
+ * and analog mask (0x01 A, 0x02 B, ... pressed fully). For skipping what a
+ * player would skip -- a movie, a "press Start" screen -- through the
+ * title's own input handling. 0, 0 releases. */
+void usb_gamepad_set_held(int dev, uint8_t digital, uint8_t analog);
+
 /* An output report from the host: the 6-byte rumble report
  * (id 0, length 6, left and right motor speeds as little-endian words),
  * from interrupt endpoint 2 or a class SET_REPORT. Forwarded to the host

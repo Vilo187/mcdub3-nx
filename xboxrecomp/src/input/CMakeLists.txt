@@ -2,6 +2,7 @@
 
 add_library(xbox_input STATIC
     xinput_device.c
+    sdl_keyboard.c      # Linux: the keyboard as player 1 (RECOMP_KEYBOARD)
 )
 if(NINTENDO_SWITCH)
     # The Switch's controllers, read through libnx and mapped by position.

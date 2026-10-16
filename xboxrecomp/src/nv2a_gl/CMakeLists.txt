@@ -24,3 +24,8 @@ endif()
 if(NOT MSVC)
     target_compile_options(xbox_nv2a_gl PRIVATE -Wall -Wextra -Wno-unused-parameter -O2)
 endif()
+
+# Key events go to the input module (input/sdl_keyboard.c, RECOMP_KEYBOARD).
+if(NOT WIN32 AND NOT NINTENDO_SWITCH)
+    target_link_libraries(xbox_nv2a_gl PUBLIC xbox_input)
+endif()

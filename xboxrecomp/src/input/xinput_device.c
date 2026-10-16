@@ -281,6 +281,10 @@ void xbox_InputInit(void)
 
 #if defined(__SWITCH__)
 #include "xinput_nx.h"
+#else
+/* The keyboard as player 1 (sdl_keyboard.c). */
+int  xbox_sdl_keyboard_enabled(void);
+void xbox_sdl_keyboard_state(XBOX_INPUT_STATE *s);
 #endif
 
 DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
@@ -316,6 +320,14 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
 
     SDL_GameController *c = g_pads[dwPort];
     if (!c || !SDL_GameControllerGetAttached(c)) {
+        /* No pad on port 0: the keyboard can be player 1 (sdl_keyboard.c). */
+        if (dwPort == 0 && xbox_sdl_keyboard_enabled()) {
+            g_controller_connected[0] = TRUE;
+            memset(pState, 0, sizeof(XBOX_INPUT_STATE));
+            pState->dwPacketNumber = ++g_packet[0];
+            xbox_sdl_keyboard_state(pState);
+            return ERROR_SUCCESS;
+        }
         g_controller_connected[dwPort] = FALSE;
         return ERROR_DEVICE_NOT_CONNECTED;
     }
@@ -365,6 +377,8 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
     pState->Gamepad.sThumbRY =
         (SHORT)(-1 - SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_RIGHTY));
 
+    if (dwPort == 0 && xbox_sdl_keyboard_enabled())
+        xbox_sdl_keyboard_state(pState);            /* on top of the pad */
     return ERROR_SUCCESS;
 }
 
