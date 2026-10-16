@@ -829,11 +829,19 @@ static const VpOut *vp_vertex(uint32_t index)
 }
 
 /* Is this batch transformed by the fixed-function unit? */
+/* Inline vertices (INLINE_ARRAY: D3D's DrawPrimitiveUP) go through the
+ * transform like any others. Only a 4-component position is pre-transformed
+ * there -- D3D's XYZRHW, a menu quad in screen pixels -- and that is what
+ * this used to assume of every inline draw. Midnight Club 3 sends its menu
+ * sign (the frame-menu texture on the building) inline as a 3-component
+ * world-space XYZ quad: drawn as screen pixels, it was a 27x24 sliver in the
+ * top-left corner and the menu never appeared (2026-10-16). SET_VERTEX4F
+ * immediate draws always carry 4 components (draw_immediate): unchanged. */
 static int batch_is_ffp(void)
 {
     return s_gpu.composite_set
         && (s_gpu.xform_mode & 3) != NV_XFORM_MODE_PROGRAM
-        && !s_gpu.inline_active;
+        && !(s_gpu.inline_active && s_gpu.attr[0].size >= 4);
 }
 
 /* Attribute 0 as a screen position.
