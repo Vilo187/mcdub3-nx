@@ -221,6 +221,9 @@ static void set_runtime_defaults(void)
     setenv("RECOMP_AC97_READY", "plain", 0);   /* DirectSound sees the codec */
     setenv("RECOMP_USB", "1", 0);              /* pads on the MCPX's OHCI */
     setenv("RECOMP_PB_EXEC", "1", 0);          /* execute the NV2A pushbuffer */
+#if !defined(__SWITCH__)
+    setenv("RECOMP_KEYBOARD", "1", 0);         /* keyboard as pad 1 (Enter = Start) */
+#endif
     /* DirectSound's DSP command word (XACT's effects-image download waits on
      * it, DSOUND sub_0038DAA3). No DSP is emulated, so the runtime answers
      * every command written here. Found with a watchdog snapshot; the same

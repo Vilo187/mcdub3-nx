@@ -81,8 +81,8 @@ build-vk:  ## Build with the Vulkan renderer (needs glslang 12+)
 build-debug:  ## Build hand-written code at -O0 for gdb (+ GEN_DEBUGINFO=1 for lifted C)
 	$(MAKE) build DEBUG=1
 
-run:  ## Run in a window (SECS=n to stop after n seconds)
-	bash tools/run_linux.sh
+run:  ## Run in a window; keyboard = pad 1 (SECS=n stops after n s; WATCH=1: F12 logs every draw of that frame)
+	$(if $(WATCH),RECOMP_GL_WATCH=all RECOMP_GL_WATCH_FRAME=key) bash tools/run_linux.sh
 
 run-gdb:  ## Run under gdb (bt = host chain; call print_guest_state())
 	GDB=1 bash tools/run_linux.sh

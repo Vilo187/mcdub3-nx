@@ -119,6 +119,17 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   (`MC3_NATIVE_BINK_AUDIO=0` to compare). The APU path itself is still
   suspect for in-game sound. `tools/audio_diff.py capture.wav movie.bik`
   measures holes, skips, repeats and drift against the original track.
+- Input must reach the game as native controls do (the emulated pad), so
+  the game decides what can be skipped: the Rockstar and Rockstar San Diego
+  logos cannot, mc3intro can (Enter). The keyboard is pad 1 by default
+  (src/main.c; RECOMP_KEYBOARD=0 off). `make run WATCH=1`: F12 writes every
+  draw of the frame on screen to the log (a diagnostic; nothing visible).
+  Keyboard (Linux since 2026-10-16,
+  input/sdl_keyboard.c; before that only a real pad worked): arrows = d-pad,
+  Enter = Start, Backspace = Back, keys A/B/X/Y = buttons A/B/X/Y (A = OK,
+  B = back, Y = delete profile), Q/E = White/Black, 1/3 = triggers,
+  numpad 8426 = left stick, IJKL = right stick. Unattended runs only:
+  `MC3_SKIP_MOVIES=1` pulses A+Start on the pad while intro movies play.
 - Measuring speed in the VM: headless runs (`make record`, `make profile`)
   render with llvmpipe (software) and run slower; windowed runs use virgl
   (the Mac's GPU). Judge frame rate windowed; use headless for relative

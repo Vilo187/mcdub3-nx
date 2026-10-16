@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <time.h>
 
 /* The generated register model (gen/recomp_types.h): the guest registers,
@@ -260,6 +261,43 @@ extern void mc3_bink_native_close(uint32_t hbink);
 extern void mc3_bink_native_audio(uint32_t hbink, int frame);
 extern int  mc3_bink_native_audio_active(void);
 
+/* MC3_SKIP_MOVIES: for unattended runs (headless, recordings) where nobody
+ * is there to press Enter. Off by default: in a window, press it yourself.
+ * A comma list of file names without the folder ("mc3intro.bik"), or 1 =
+ * the boot intro (rockstar, sdlogo, mc3intro). While such a movie is open,
+ * pad 1 pulses A + Start (3 frames held, 3 released: fresh presses) -- input
+ * like a player's, through the title's own handling, so only what the game
+ * lets you skip is skipped: the Rockstar and Rockstar San Diego logos play
+ * in full (as on an Xbox), mc3intro is cut short. */
+extern void usb_gamepad_set_held(int dev, uint8_t digital, uint8_t analog);
+#define PAD_START 0x10u                         /* digital mask */
+#define PAD_A     0x01u                         /* analog mask */
+static uint32_t s_skip_hbink;                   /* the movie being pressed through */
+static unsigned s_skip_frames;
+
+static int movie_skipped(const char *path)
+{
+    const char *list = getenv("MC3_SKIP_MOVIES"), *base = path, *p;
+    size_t n;
+
+    if (!list || !*list || !strcmp(list, "0"))
+        return 0;
+    if (!strcmp(list, "1"))
+        list = "rockstar.bik,sdlogo.bik,mc3intro.bik";
+    for (p = path; *p; p++)
+        if (*p == '\\' || *p == '/')
+            base = p + 1;
+    n = strlen(base);
+    for (p = list; *p; ) {
+        const char *e = strchr(p, ',');
+        size_t len = e ? (size_t)(e - p) : strlen(p);
+        if (len == n && !strncasecmp(p, base, n))
+            return 1;
+        p += len + (e ? 1 : 0);
+    }
+    return 0;
+}
+
 /* BinkOpen, 0x003752F0: stdcall (name, flags), returns the HBINK. */
 extern void sub_003752F0_gen(void);
 void sub_003752F0(void)
@@ -267,10 +305,16 @@ void sub_003752F0(void)
     char name[260] = "";
     uint32_t name_va = MEM32(g_esp + 4);
 
-    if (name_va && mc3_bink_native_enabled()) {
+    if (name_va)
         strncpy(name, (const char *)XBOX_PTR(name_va), sizeof name - 1);
+    if (name[0] && movie_skipped(name)) {
+        sub_003752F0_gen();
+        s_skip_hbink = g_eax;
+        s_skip_frames = 0;
+        fprintf(stderr, "[BINK] pressing A+Start through %s (MC3_SKIP_MOVIES)\n", name);
+    } else {
+        sub_003752F0_gen();
     }
-    sub_003752F0_gen();
     if (name[0] && g_eax)
         mc3_bink_native_open(g_eax, name);
 }
@@ -279,6 +323,11 @@ void sub_003752F0(void)
 extern void sub_003777D0_gen(void);
 void sub_003777D0(void)
 {
+    if (s_skip_hbink && MEM32(g_esp + 4) == s_skip_hbink) {
+        usb_gamepad_set_held(0, 0, 0);
+        fprintf(stderr, "[BINK] skipped after %u frames\n", s_skip_frames);
+        s_skip_hbink = 0;
+    }
     mc3_bink_native_close(MEM32(g_esp + 4));
     sub_003777D0_gen();
 }
@@ -294,6 +343,11 @@ static void bink_video_decode(void)
     static long calls;
     uint32_t map = MEM32(g_esp + 20);
     uint32_t hbink = map - BINK_DIRTY_MAP;
+
+    if (s_skip_hbink && hbink == s_skip_hbink) {
+        int down = (s_skip_frames++ % 6) < 3;
+        usb_gamepad_set_held(0, down ? PAD_START : 0, down ? PAD_A : 0);
+    }
 
     if (!mc3_difftest_wanted() && mc3_bink_native_enabled()) {
         int w = (int)MEM32(hbink + BINK_WIDTH), h = (int)MEM32(hbink + BINK_HEIGHT);
