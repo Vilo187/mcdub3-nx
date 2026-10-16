@@ -466,5 +466,53 @@
  {
   "start": "0x0040EF74",
   "note": "XPP. Indirect-call target hit 925x on the 2026-10-14 run 15. Starts right after sub_0040EEEA's `ret 8` (mov eax,ecx; mov ecx,[eax+0x66]: a thiscall method); its address is stored by XPP code at 0x00408750 (a registered callback)."
+ },
+ {
+  "start": "0x0031D100",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-16 run (menu scene drawn without textures or UI): 1021x. Virtual method (vtable 0x0046D2D0, slot 7) after int3 padding: sub esp,0x64; push ebp; push esi; mov esi,ecx. Its body holds a jump table at 0x0031D410 that func_id misreads as a vtable."
+ },
+ {
+  "start": "0x00176E20",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-16 run (menu scene drawn without textures or UI): 1021x. push ecx; mov eax,[0x4D75C4] directly at sub_00176E00's recorded end; pointer in .rdata at 0x0042D07C."
+ },
+ {
+  "start": "0x0027DBA0",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-16 run (menu scene drawn without textures or UI): 575x. sub esp,0x5C directly at sub_0027DAB0's recorded end; two pointers in .rdata (0x0041DF60)."
+ },
+ {
+  "start": "0x00157850",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-16 run (menu scene drawn without textures or UI): 1x. sub esp,0x64; push esi after int3 padding; pointer in .rdata at 0x00428760."
+ },
+ {
+  "start": "0x00123420",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-16 run (menu scene drawn without textures or UI): 2x. push ecx; push esi; mov esi,ecx after padding. Splits 'sub_001233CA', which is not code: that is sub_00123350's jump table (dwords at 0x001233CC, byte index at 0x00123408) misread as a function (mov edi,edi = 8B FF), and its range ran over this real function."
+ },
+ {
+  "start": "0x00319D80",
+  "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. Same vtable as 0x0031D100 (0x0046D2D0, slot 8): push ebp; lea ebp,[esp-0x78], directly after sub_00319C10."
+ },
+ {
+  "start": "0x00163290",
+  "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. mov eax,[esp+4] after int3 padding; pointer in .rdata at 0x00429790."
+ },
+ {
+  "start": "0x0016F270",
+  "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. mov eax,[0x4D75C4] directly after sub_0016F220's ret 4; pointer in .rdata at 0x0042B5A4."
+ },
+ {
+  "start": "0x00213680",
+  "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. sub esp,0x44; push ebx after int3 padding; 11 pointers in .rdata (first at 0x00438600)."
+ },
+ {
+  "start": "0x0022A630",
+  "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. sub esp,0xAC directly after sub_0022A010; pointer in .rdata at 0x0043956C."
+ },
+ {
+  "start": "0x0027F7F0",
+  "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. mov eax,[esp+4] after int3 padding; two pointers in .rdata (0x0041DF94)."
+ },
+ {
+  "start": "0x0029A7B0",
+  "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. push ecx; push esi; mov esi,ecx (thiscall) after int3 padding; pointer in .rdata at 0x00440214."
  }
 ]
