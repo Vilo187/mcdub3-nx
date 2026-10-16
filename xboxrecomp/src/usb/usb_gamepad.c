@@ -407,6 +407,28 @@ int usb_gamepad_connected(int dev)
         || xbox_InputGetState((DWORD)dev, &state) == 0;
 }
 
+static volatile uint8_t s_held_digital[USB_GAMEPADS], s_held_analog[USB_GAMEPADS];
+
+void usb_gamepad_set_held(int dev, uint8_t digital, uint8_t analog)
+{
+    if (dev < 0 || dev >= USB_GAMEPADS)
+        return;
+    s_held_digital[dev] = digital;
+    s_held_analog[dev] = analog;
+}
+
+/* The held buttons into a finished report. */
+static void apply_held(int dev, uint8_t *out)
+{
+    uint8_t a = s_held_analog[dev];
+    int i;
+
+    out[2] |= s_held_digital[dev];
+    for (i = 0; i < 8; i++)
+        if (a & (1u << i))
+            out[4 + i] = 0xFF;
+}
+
 int usb_gamepad_report(int dev, uint8_t *out, int max)
 {
     XBOX_INPUT_STATE state;
@@ -459,6 +481,7 @@ int usb_gamepad_report(int dev, uint8_t *out, int max)
     if (xbox_InputGetState((DWORD)dev, &state) != 0) {
         out[2] = synth;
         pad_script(dev, &out[2], &out[4]);
+        apply_held(dev, out);
         return 20;
     }
 
@@ -476,6 +499,7 @@ int usb_gamepad_report(int dev, uint8_t *out, int max)
     out[18] = (uint8_t)(g->sThumbRY & 0xFF);
     out[19] = (uint8_t)((g->sThumbRY >> 8) & 0xFF);
     pad_script(dev, &out[2], &out[4]);
+    apply_held(dev, out);
     return 20;
 }
 

@@ -40,6 +40,11 @@
 #include "../kernel/nv2a_backend.h"
 
 #include <SDL.h>
+
+#if !defined(_WIN32) && !defined(__SWITCH__)
+void xbox_sdl_keyboard_handle(const SDL_Event *e);   /* input/sdl_keyboard.c */
+int  xbox_sdl_keyboard_down(int scancode);
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1762,24 +1767,46 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
     {
         /* RECOMP_GL_WATCH=<hex va>: the state of draws that render into or
          * sample that surface/texture (first 24).
-         * RECOMP_GL_WATCH=all: every draw, from frame RECOMP_GL_WATCH_FRAME on
-         * (default 0) -- "the whole scene comes out wrong" has no address to
-         * watch yet. RECOMP_GL_WATCH_N: how many draws (default 24). */
-        static int watch_init, watch_n, watch_max = 24, watch_all;
-        static uint32_t watch_va, watch_frame;
+         * RECOMP_GL_WATCH=all: every draw of one frame -- "the whole scene
+         * comes out wrong" has no address to watch yet. Which frame:
+         * RECOMP_GL_WATCH_FRAME=<n>, or =key for the frame on screen when F12
+         * is pressed in the window (Linux). RECOMP_GL_WATCH_N=<n> caps the
+         * count, or with "all" keeps going past that frame up to n draws. */
+        static int watch_init, watch_n, watch_max = 24, watch_all, watch_key, watch_capped;
+        static uint32_t watch_va, watch_frame = 0xFFFFFFFFu;
         if (!watch_init) {
             const char *w = getenv("RECOMP_GL_WATCH");
             const char *e;
             watch_init = 1;
             watch_all = w && !strcmp(w, "all");
             watch_va = w && !watch_all ? (uint32_t)strtoul(w, NULL, 16) : 0;
-            if ((e = getenv("RECOMP_GL_WATCH_FRAME")) != NULL)
-                watch_frame = (uint32_t)strtoul(e, NULL, 10);
-            if ((e = getenv("RECOMP_GL_WATCH_N")) != NULL)
+            e = getenv("RECOMP_GL_WATCH_FRAME");
+            watch_key = e && !strcmp(e, "key");
+            if (watch_all && !watch_key)
+                watch_frame = e ? (uint32_t)strtoul(e, NULL, 10) : 0;
+            if ((e = getenv("RECOMP_GL_WATCH_N")) != NULL) {
                 watch_max = atoi(e);
+                watch_capped = 1;
+            } else if (watch_all) {
+                watch_max = 100000;             /* the whole frame */
+            }
+            if (w && watch_key)
+                fprintf(stderr, "  [WATCH] every draw of the frame on screen at F12%s\n",
+                        watch_capped ? " onwards (capped by RECOMP_GL_WATCH_N)" : "");
+            else if (w)
+                fprintf(stderr, "  [WATCH] watching %s from frame %u, up to %d draws\n",
+                        watch_all ? "every draw" : w, watch_all ? watch_frame : 0, watch_max);
         }
+#if !defined(_WIN32) && !defined(__SWITCH__)
+        if (watch_all && watch_key && watch_frame == 0xFFFFFFFFu
+            && xbox_sdl_keyboard_down(SDL_SCANCODE_F12)) {
+            watch_frame = s_frame;
+            fprintf(stderr, "  [WATCH] F12: dumping frame %u\n", watch_frame);
+        }
+#endif
         if (watch_n < watch_max &&
-            ((watch_all && s_frame >= watch_frame) ||
+            ((watch_all && watch_frame != 0xFFFFFFFFu &&
+              (watch_capped ? s_frame >= watch_frame : s_frame == watch_frame)) ||
              (watch_va && (s->va == watch_va || b->tex_va[0] == watch_va ||
               b->tex_va[1] == watch_va || b->tex_va[2] == watch_va ||
               b->tex_va[3] == watch_va)))) {
@@ -1848,7 +1875,8 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
                         if (b->direct[a2].type == 2) {
                             float f4[4] = { 0 };
                             memcpy(f4, q, 4 * (b->direct[a2].size < 4 ? b->direct[a2].size : 4));
-                            fprintf(stderr, " a%d(%g %g %g %g)", a2, f4[0], f4[1], f4[2], f4[3]);
+                            fprintf(stderr, " a%d/%u(%g %g %g %g)", a2, (unsigned)b->direct[a2].size,
+                                    f4[0], f4[1], f4[2], f4[3]);
                         } else {
                             uint32_t w4;
                             memcpy(&w4, q, 4);
@@ -2204,7 +2232,11 @@ swap:
     tex_bind_forget();
     {
         SDL_Event e;
-        while (SDL_PollEvent(&e)) { }
+        while (SDL_PollEvent(&e)) {
+#if !defined(_WIN32) && !defined(__SWITCH__)
+            xbox_sdl_keyboard_handle(&e);       /* RECOMP_KEYBOARD (input/) */
+#endif
+        }
     }
 }
 

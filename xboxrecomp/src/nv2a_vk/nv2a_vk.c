@@ -45,6 +45,10 @@
 #include <vulkan/vulkan.h>
 #if !defined(__SWITCH__)
 #include <SDL.h>
+
+#if !defined(_WIN32) && !defined(__SWITCH__)
+void xbox_sdl_keyboard_handle(const SDL_Event *e);   /* input/sdl_keyboard.c */
+#endif
 #include <SDL_vulkan.h>
 #endif
 #include <glslang/Include/glslang_c_interface.h>
@@ -3393,7 +3397,11 @@ static void vk_flip(void)
 #if !defined(__SWITCH__)
     if (s_win) {
         SDL_Event e;
-        while (SDL_PollEvent(&e)) { }
+        while (SDL_PollEvent(&e)) {
+#if !defined(_WIN32)
+            xbox_sdl_keyboard_handle(&e);       /* RECOMP_KEYBOARD (input/) */
+#endif
+        }
     }
 #endif
 }
