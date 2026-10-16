@@ -23,6 +23,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <math.h>
 #include <string.h>
 
 typedef struct {
@@ -277,6 +278,10 @@ static const char s_vk_prelude[] =
     "    vec4 u_vpoff;\n"
     "    vec2 u_aa;\n"
     "    int u_xform;\n"
+    "    vec4 u_mv[4];\n"
+    "    vec4 u_fogplane;\n"
+    "    vec4 u_fog0;\n"
+    "    vec4 u_fog1;\n"
     "};\n"
     /* Transform constants, 192 per instance: an instanced draw (nv2a_vk.c)
      * repeats one mesh with each instance's own set. NV2A_VK_INSTANCES. */
@@ -401,12 +406,110 @@ const char *nv2a_gl_vsh_main_program(void)
     return NV2A_VSH_MAIN("");
 }
 
+/* Fixed-function fog.
+ *
+ * The fixed-function shader used to end with vFog = 0.0. The pixel shader's
+ * final combiner blends with FOG.a = vFog, and D3D's fog blend is
+ * fog.a * colour + (1 - fog.a) * fog colour -- so every fixed-function draw
+ * with fog on came out as the plain fog colour. Midnight Club 3 draws its
+ * city that way: untextured dark grey buildings under visible lights and sky
+ * (2026-10-16). Now the NV2A's fog unit: a distance by FOG_GEN_MODE (0x2A0),
+ * then FOG_MODE's equation (0x29C) with FOG_PARAMS (0x9C0); off (0x2A4 = 0)
+ * is factor 1, no fog.
+ *
+ * ponytail: the equations' biases (-1 linear, -1.5 exp/exp2) and the
+ * constants 16 and 32 are xemu's reading of the hardware; specular-alpha fog
+ * is taken as the factor itself, which is what D3D means by it. Vertex
+ * programs still pass oFog.x through unchanged. */
+#define NV2A_FFP_FOG_DECL \
+    "uniform vec4 u_mv[4];     /* model-view rows (fog distance) */\n" \
+    "uniform vec4 u_fogplane;\n" \
+    "uniform vec4 u_fog0;      /* enabled, gen, equation, abs */\n" \
+    "uniform vec4 u_fog1;      /* param0, param1 */\n"
+
+#define NV2A_FFP_FOG_GLSL \
+    "float nv2a_ffp_fog() {\n" \
+    "    if (u_fog0.x == 0.0) return 1.0;\n" \
+    "    int gen = int(u_fog0.y);\n" \
+    "    if (gen == 0) return v4.a;                       /* SPEC_ALPHA */\n" \
+    "    vec3 eye = vec3(dot(u_mv[0], v0), dot(u_mv[1], v0), dot(u_mv[2], v0));\n" \
+    "    float d;\n" \
+    "    if (gen == 1) d = length(eye);                   /* RADIAL */\n" \
+    "    else if (gen == 6) d = v5.x;                     /* FOG_X */\n" \
+    "    else d = dot(u_fogplane.xyz, eye) + u_fogplane.w; /* PLANAR */\n" \
+    "    if (gen == 3 || u_fog0.w != 0.0) d = abs(d);\n" \
+    "    int eq = int(u_fog0.z);\n" \
+    "    if (eq == 0) return u_fog1.x + d * u_fog1.y - 1.0;\n" \
+    "    if (eq == 1) return u_fog1.x + exp2(d * u_fog1.y * 16.0) - 1.5;\n" \
+    "    return u_fog1.x + exp2(-d * d * u_fog1.y * u_fog1.y * 32.0) - 1.5;\n" \
+    "}\n"
+
+static float reg_float(const uint32_t *r, uint32_t method)
+{
+    float f;
+    memcpy(&f, &r[method / 4], 4);
+    return f;
+}
+
+void nv2a_ffp_fog_uniforms(const uint32_t *r, float mv[16], float plane[4],
+                           float fog0[4], float fog1[4])
+{
+    uint32_t mode = r[0x29C / 4], i;
+
+    for (i = 0; i < 16; i++)
+        mv[i] = reg_float(r, 0x480 + i * 4);
+    for (i = 0; i < 4; i++)
+        plane[i] = reg_float(r, 0x9D0 + i * 4);
+    fog0[0] = r[0x2A4 / 4] ? 1.0f : 0.0f;
+    fog0[1] = (float)(r[0x2A0 / 4] & 7);
+    switch (mode) {
+    case 0x0800: case 0x0802: fog0[2] = 1.0f; break;    /* EXP, EXP_ABS */
+    case 0x0801: case 0x0803: fog0[2] = 2.0f; break;    /* EXP2, EXP2_ABS */
+    default:                  fog0[2] = 0.0f; break;    /* LINEAR, LINEAR_ABS */
+    }
+    fog0[3] = (mode == 0x0802 || mode == 0x0803 || mode == 0x0804) ? 1.0f : 0.0f;
+    fog1[0] = reg_float(r, 0x9C0);
+    fog1[1] = reg_float(r, 0x9C4);
+    fog1[2] = fog1[3] = 0.0f;
+}
+
+float nv2a_ffp_fog_factor(const uint32_t *r, const float pos[4], float spec_a)
+{
+    float mv[16], plane[4], f0[4], f1[4], eye[3], d;
+    int i, gen;
+
+    nv2a_ffp_fog_uniforms(r, mv, plane, f0, f1);
+    if (f0[0] == 0.0f)
+        return 1.0f;
+    gen = (int)f0[1];
+    if (gen == 0)
+        return spec_a;
+    for (i = 0; i < 3; i++)
+        eye[i] = mv[4 * i] * pos[0] + mv[4 * i + 1] * pos[1] + mv[4 * i + 2] * pos[2]
+               + mv[4 * i + 3] * pos[3];
+    if (gen == 1)
+        d = sqrtf(eye[0] * eye[0] + eye[1] * eye[1] + eye[2] * eye[2]);
+    else
+        d = plane[0] * eye[0] + plane[1] * eye[1] + plane[2] * eye[2] + plane[3];
+    if (gen == 3 || f0[3] != 0.0f)
+        d = fabsf(d);
+    if (f0[2] == 0.0f)
+        return f1[0] + d * f1[1] - 1.0f;
+    if (f0[2] == 1.0f)
+        return f1[0] + exp2f(d * f1[1] * 16.0f) - 1.5f;
+    return f1[0] + exp2f(-d * d * f1[1] * f1[1] * 32.0f) - 1.5f;
+}
+
 const char *nv2a_gl_vsh_fixed(void)
 {
-    /* Vulkan: u_xform is a member of the prelude's uniform block. */
-    static const char decl[] = "uniform int u_xform;      /* 0 pre-transformed, 1 fixed-function */\n";
+    /* Vulkan: these uniforms are members of the prelude's uniform block. */
+    static const char decl[] =
+        "uniform int u_xform;      /* 0 pre-transformed, 1 fixed-function */\n"
+        NV2A_FFP_FOG_DECL;
     static const char body[] =
         "uniform int u_xform;      /* 0 pre-transformed, 1 fixed-function */\n"
+        NV2A_FFP_FOG_DECL
+        NV2A_FFP_FOG_GLSL
         "void main() {\n"
         "    if (u_xform == 1) {\n"
         "        vec4 clip = vec4(dot(u_m[0], v0), dot(u_m[1], v0),\n"
@@ -420,7 +523,7 @@ const char *nv2a_gl_vsh_fixed(void)
         "        gl_Position = nv2a_clip(v0.xyz * w, w);\n"
         "    }\n"
         "    vD0 = clamp(v3, 0.0, 1.0); vD1 = clamp(v4, 0.0, 1.0);\n"
-        "    vT0 = v9; vT1 = v10; vT2 = v11; vT3 = v12; vFog = 0.0;\n"
+        "    vT0 = v9; vT1 = v10; vT2 = v11; vT3 = v12; vFog = nv2a_ffp_fog();\n"
         "}\n";
     return nv2a_shader_vk ? body + sizeof decl - 1 : body;
 }

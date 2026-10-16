@@ -2633,6 +2633,9 @@ typedef struct {
     float aa[2];
     int32_t xform;
     int32_t pad;
+    float mv[16];                /* fixed-function fog (gl_vsh.c): offset 112 */
+    float fogplane[4];
+    float fog0[4], fog1[4];
 } VsBlock;
 
 typedef struct {
@@ -2965,6 +2968,7 @@ static void vk_draw_raw(const Nv2aRawBatch *b)
         vb->aa[0] = b->aa_sx > 0 ? b->aa_sx : 1.0f;
         vb->aa[1] = b->aa_sy > 0 ? b->aa_sy : 1.0f;
         vb->xform = b->xform == 1 ? 1 : 0;
+        nv2a_ffp_fog_uniforms(r, vb->mv, vb->fogplane, vb->fog0, vb->fog1);
         ub[0].buffer = s_f->ring;
         ub[0].offset = vat;
         ub[0].range = sizeof(VsBlock);
