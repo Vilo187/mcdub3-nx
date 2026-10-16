@@ -22,6 +22,7 @@ Nothing here has been sent yet.
 | 3 | Memory: AArch64 Linux puts the guest base too high for the 4 GB window | `794632b` | nfsu2-sw (POSIX memory layout) | yes |
 | 4 | Build: Switch data folder hard-coded to `nfsu2x` | `e7dca06` | nfsu2-sw | yes |
 | 5 | Repo: `tools/*/output.py` missing, so the lift pipeline can't run | `af03785` | nfsu2-sw | yes |
+| 5b | Renderer: fixed-function fog factor hard-coded to 0, so fogged draws become the fog colour | `dab6e43` | nfsu2-sw (gl_vsh.c, nv2a_gl, nv2a_vk) | yes |
 
 1. **`movsx` from `bp`/`sp`** (`tools/recomp/lifter.py`, `_lift_movsx`). The
    16-bit source list has ax, bx, cx, dx, si, di but not bp, sp, so
@@ -56,6 +57,14 @@ Nothing here has been sent yet.
    xboxrecomp 49ee746 but not in nfsu2-sw, so the stage-1 tools fail to
    import. Restored from upstream; nothing to change, just add them back.
    Also covered by the draft issue in `docs/drafts/`.
+
+5b. **Fixed-function fog** (`nv2a_gl_vsh_fixed` in `gl_vsh.c`). The shader
+   ends with `vFog = 0.0`. D3D's fog blend in the final combiner is
+   fog.a × colour + (1 − fog.a) × fog colour, so every fixed-function draw
+   with fog on comes out as the plain fog colour. MC3's menu city was flat
+   dark grey. Fix: the NV2A fog unit (gen mode, linear/exp/exp2 with
+   FOG_PARAMS, factor 1 when fog is off) in GL and Vulkan. Bias constants
+   follow xemu; MC3's parameters give a sensible 1 at the camera.
 
 ## Issues to report (no patch from us yet)
 
