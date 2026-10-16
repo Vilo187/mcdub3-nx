@@ -788,6 +788,7 @@ typedef struct {
     Nv2aPshKey pkey;
     GLuint     prog;
     GLint      u_c, u_surf, u_aa, u_m, u_vpoff, u_xform;
+    GLint      u_mv, u_fogplane, u_fog0, u_fog1;   /* fixed-function fog */
     GLint      u_t[4], u_tscale, u_c0, u_c1, u_fc0, u_fc1, u_fogcolor, u_afunc, u_aref;
     uint32_t   used;
     int        vpc_valid;       /* vpc holds what this program's "c" was given */
@@ -800,6 +801,7 @@ typedef struct {
     struct GlUni {
         float surf[4], aa[2], m[16], vpoff[4], tscale[4][2];
         float c0[8][4], c1[8][4], fog[4], fc[2][4], aref;
+        float mv[16], fogplane[4], fog0[4], fog1[4];
         int   xform, afunc;
     } uni;
 } GlProg;
@@ -1066,6 +1068,10 @@ static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
     p->u_m = glGetUniformLocation(p->prog, "u_m");
     p->u_vpoff = glGetUniformLocation(p->prog, "u_vpoff");
     p->u_xform = glGetUniformLocation(p->prog, "u_xform");
+    p->u_mv = glGetUniformLocation(p->prog, "u_mv");
+    p->u_fogplane = glGetUniformLocation(p->prog, "u_fogplane");
+    p->u_fog0 = glGetUniformLocation(p->prog, "u_fog0");
+    p->u_fog1 = glGetUniformLocation(p->prog, "u_fog1");
     p->u_tscale = glGetUniformLocation(p->prog, "u_tscale");
     p->u_c0 = glGetUniformLocation(p->prog, "u_c0");
     p->u_c1 = glGetUniformLocation(p->prog, "u_c1");
@@ -1727,6 +1733,8 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
         argb_vec4(r[0x1E24 / 4], u.fc[1]);
         u.aref = (float)(r[0x340 / 4] & 0xFF);
         u.xform = b->xform == 1 ? 1 : 0;
+        if (p->u_fog0 >= 0)                     /* fixed-function programs only */
+            nv2a_ffp_fog_uniforms(r, u.mv, u.fogplane, u.fog0, u.fog1);
         u.afunc = r[0x300 / 4] ? (GLint)r[0x33C / 4] : 0x207;
         if (!p->uni_valid || memcmp(&u, &p->uni, sizeof u) != 0) {
             p->uni = u;
@@ -1736,6 +1744,10 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
             if (p->u_m >= 0) glUniform4fv(p->u_m, 4, u.m);
             if (p->u_vpoff >= 0) glUniform4fv(p->u_vpoff, 1, u.vpoff);
             if (p->u_xform >= 0) glUniform1i(p->u_xform, u.xform);
+            if (p->u_mv >= 0) glUniform4fv(p->u_mv, 4, u.mv);
+            if (p->u_fogplane >= 0) glUniform4fv(p->u_fogplane, 1, u.fogplane);
+            if (p->u_fog0 >= 0) glUniform4fv(p->u_fog0, 1, u.fog0);
+            if (p->u_fog1 >= 0) glUniform4fv(p->u_fog1, 1, u.fog1);
             if (p->u_tscale >= 0) glUniform2fv(p->u_tscale, 4, &u.tscale[0][0]);
             if (p->u_c0 >= 0) glUniform4fv(p->u_c0, 8, &u.c0[0][0]);
             if (p->u_c1 >= 0) glUniform4fv(p->u_c1, 8, &u.c1[0][0]);
@@ -1749,17 +1761,28 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
 
     {
         /* RECOMP_GL_WATCH=<hex va>: the state of draws that render into or
-         * sample that surface/texture (first 24). */
-        static int watch_init, watch_n;
-        static uint32_t watch_va;
+         * sample that surface/texture (first 24).
+         * RECOMP_GL_WATCH=all: every draw, from frame RECOMP_GL_WATCH_FRAME on
+         * (default 0) -- "the whole scene comes out wrong" has no address to
+         * watch yet. RECOMP_GL_WATCH_N: how many draws (default 24). */
+        static int watch_init, watch_n, watch_max = 24, watch_all;
+        static uint32_t watch_va, watch_frame;
         if (!watch_init) {
             const char *w = getenv("RECOMP_GL_WATCH");
+            const char *e;
             watch_init = 1;
-            watch_va = w ? (uint32_t)strtoul(w, NULL, 16) : 0;
+            watch_all = w && !strcmp(w, "all");
+            watch_va = w && !watch_all ? (uint32_t)strtoul(w, NULL, 16) : 0;
+            if ((e = getenv("RECOMP_GL_WATCH_FRAME")) != NULL)
+                watch_frame = (uint32_t)strtoul(e, NULL, 10);
+            if ((e = getenv("RECOMP_GL_WATCH_N")) != NULL)
+                watch_max = atoi(e);
         }
-        if (watch_va && watch_n < 24 &&
-            (s->va == watch_va || b->tex_va[0] == watch_va || b->tex_va[1] == watch_va ||
-             b->tex_va[2] == watch_va || b->tex_va[3] == watch_va)) {
+        if (watch_n < watch_max &&
+            ((watch_all && s_frame >= watch_frame) ||
+             (watch_va && (s->va == watch_va || b->tex_va[0] == watch_va ||
+              b->tex_va[1] == watch_va || b->tex_va[2] == watch_va ||
+              b->tex_va[3] == watch_va)))) {
             watch_n++;
             fprintf(stderr, "  [WATCH] surf %08X %ux%u prim %u n %u xform %u attrs %04X direct %04X"
                     " modes %05X other %08X ctl %08X\n"
@@ -1780,6 +1803,13 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
             fprintf(stderr, "          4UB spec %08X diff %08X 4F spec %08X %08X %08X %08X fog en %u fc0 %08X fc1 %08X\n",
                     r[0x1940 / 4 + 4], r[0x1940 / 4 + 3], r[0x1A40 / 4], r[0x1A44 / 4],
                     r[0x1A48 / 4], r[0x1A4C / 4], r[0x29C / 4], r[0x1E20 / 4], r[0x1E24 / 4]);
+            {
+                float mv[16], pl[4], f0[4], f1[4];
+                nv2a_ffp_fog_uniforms(r, mv, pl, f0, f1);
+                fprintf(stderr, "          fog on %g gen %g eq %g abs %g params %g %g plane %g %g %g %g color %08X\n",
+                        f0[0], f0[1], f0[2], f0[3], f1[0], f1[1], pl[0], pl[1], pl[2], pl[3],
+                        r[0x2A8 / 4]);
+            }
             fprintf(stderr, "          blend %u %04X %04X alphatest %u func %X ref %u zmask %u ztest %u cmask %08X\n",
                     r[0x304 / 4], r[0x344 / 4], r[0x348 / 4], r[0x300 / 4], r[0x33C / 4], r[0x340 / 4],
                     r[0x35C / 4], r[0x30C / 4], r[0x358 / 4]);
@@ -1824,6 +1854,20 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
                             memcpy(&w4, q, 4);
                             fprintf(stderr, " a%d(t%u %08X)", a2, b->direct[a2].type, w4);
                         }
+                    }
+                    fprintf(stderr, "\n");
+                }
+                /* The fixed-function fog factor at the first vertices: 0 is
+                 * all fog colour, 1 none. */
+                if (b->xform == 1 && (b->attr_direct & 1) && b->direct[0].type == 2
+                    && b->direct[0].ptr) {
+                    fprintf(stderr, "          ffp fog factor:");
+                    for (v = 0; v < b->vertex_count && v < 4; v++) {
+                        float pos[4] = { 0, 0, 0, 1 };
+                        const uint8_t *q = b->direct[0].ptr + (size_t)v * b->direct[0].stride;
+                        memcpy(pos, q, 4 * (b->direct[0].size < 4 ? b->direct[0].size : 4));
+                        if (b->direct[0].size < 4) pos[3] = 1.0f;
+                        fprintf(stderr, " %g", nv2a_ffp_fog_factor(r, pos, 0.0f));
                     }
                     fprintf(stderr, "\n");
                 }
