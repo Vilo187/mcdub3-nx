@@ -1000,6 +1000,15 @@ static void raster_triangle(const float a[2], const float b[2],
 
 static const Nv2aBackend *s_backend;
 
+int nv2a_backend_prepare(void)
+{
+    if (!s_backend)
+        return 0;
+    if (s_backend->prepare)
+        s_backend->prepare();
+    return 1;
+}
+
 void nv2a_backend_register(const Nv2aBackend *backend)
 {
     s_backend = backend;

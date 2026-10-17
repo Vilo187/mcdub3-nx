@@ -1210,7 +1210,13 @@ static DWORD WINAPI nv2a_flag_thread(LPVOID param)
 static DWORD WINAPI nv2a_ack_thread(LPVOID param)
 {
     volatile uint32_t *regs = (volatile uint32_t *)param;
+    int prepared = 0;
     while (!InterlockedCompareExchange(&g_nv2a_ack_stop, 0, 0)) {
+        if (!prepared) {
+            /* The back end's slow set-up before the title draws (prepare). */
+            extern int nv2a_backend_prepare(void);   /* nv2a_pb_exec.c */
+            prepared = nv2a_backend_prepare();
+        }
         nv2a_ack_flags(regs);
         {
             volatile uint32_t *put =
