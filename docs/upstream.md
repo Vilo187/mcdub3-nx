@@ -26,6 +26,15 @@ Nothing here has been sent yet.
 | 5c | Executor: every inline draw taken as pre-transformed (only XYZRHW is) | `b889914` | nfsu2-sw (nv2a_pb_exec.c) | yes |
 | 5d | Input: keyboard does nothing on Linux (events dropped, key state stubbed) | `10f8602` | nfsu2-sw (input/, renderers) | yes |
 | 5e | Lifter: a jcc after a join of cmp/test of different widths lifts as `if (_flags)`, never taken | `77dc676` | xboxrecomp + nfsu2-sw | yes, both |
+| 5f | Devices: heap and contiguous-window bus addresses collide; the APU played window bytes for heap PCM. RAM tagged (bit 26) by MmGetPhysicalAddress | `f2f903f` | nfsu2-sw (kernel, apu, executor, ohci) | not checked |
+| 5g | APU: GP/EP DSP memory read as 0, so DirectSound reset both DSPs from every check (10 ms stall each, half-speed audio). Now storage, stub EP reads alive | `10d9044` | nfsu2-sw (apu_core.c) | not checked |
+| 5h | Executor: viewport scale/offset not mirrored into vertex-program constants c[-38]/c[-37]; D3D vertex shaders put every vertex at (0,0) | `b351443` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
+| 5i | Renderers: a narrower clip at a surface's address rebuilt (and wiped) the surface; reuse when it fits, in both dimensions | `3616927` | nfsu2-sw (nv2a_gl, nv2a_vk) | not checked |
+| 5j | Disassembler: `push ecx` + register save not a prologue, so a seed after a data table was rejected | `881259a` | xboxrecomp + nfsu2-sw | not checked |
+| 5k | Renderers: set up (window, context, shader cache) lazily at the first flip, i.e. during the first movie; optional `prepare` hook | `2b4129e` | nfsu2-sw (backend interface, nv2a_gl) | not checked |
+| 5l | Kernel: link up makes XNET wait for DHCP; `RECOMP_NET_LINK=0` reports no cable | `2aa2344` | xboxrecomp + nfsu2-sw | not checked |
+| 5m | Guest lock: uncontended mutex/critical-section calls handed the lock over (scheduler round trips on Horizon) | `3a7e533` | nfsu2-sw (kernel_bridge.c) | not checked; console measurement pending |
+| 5n | Executor: without reported flip retires, FLIP_STALL never waited; `RECOMP_FLIP_VBLANK=1` caps flips at the vblank | `7208296` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
 
 1. **`movsx` from `bp`/`sp`** (`tools/recomp/lifter.py`, `_lift_movsx`). The
    16-bit source list has ax, bx, cx, dx, si, di but not bp, sp, so
