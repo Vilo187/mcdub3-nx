@@ -497,12 +497,17 @@ static VkSurf *surf_get(uint32_t va, uint32_t w, uint32_t h, uint32_t aa_sx, uin
     /* h is the surface clip, not the allocation (NFSU2's split screen clips
      * the back buffer to each player's half): keep the surface while the
      * clip fits, grow it when it does not. Same as nv2a_gl.c. */
-    if (s && s->w == w && s->h >= h) {
+    /* Both ways, as in nv2a_gl.c (MC3's race minimap clips the back buffer
+     * to 175x451): a clip that fits uses the surface, one that does not
+     * grows it to cover both, never shrinks it. */
+    if (s && s->w >= w && s->h >= h) {
         s->used = s_frame;
         return s;
     }
-    if (s && s->w == w && s->h > h)
-        h = s->h;
+    if (s) {
+        if (s->w > w) w = s->w;
+        if (s->h > h) h = s->h;
+    }
     if (!s) {
         for (i = 0; i < VK_MAX_SURF; i++) {
             if (!s_surf[i].image) { victim = &s_surf[i]; break; }
