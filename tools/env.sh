@@ -69,10 +69,15 @@ mc3_fail() { echo "error: $*" >&2; exit 1; }
 mc3_manual_overrides() {
     local py
     for py in "$MC3_WORK/venv/bin/python3" python3; do
-        (cd "$XBOXRECOMP_DIR" && "$py" - "$MC3_REPO/src/recomp_manual.c" <<'PY'
-import sys
+        (cd "$XBOXRECOMP_DIR" && "$py" - "$MC3_REPO/src/recomp_manual.c" "$MC3_GEN_DIR/zz_trace_wrappers.c" <<'PY'
+import os, sys
 from tools.recomp.manual_scan import scan
-replaced, wrapped = scan(sys.argv[1])[:2]
+replaced, wrapped = set(), set()
+for path in sys.argv[1:]:          # the overrides, and the trace wrappers if lifted
+    if os.path.exists(path):
+        r, w = scan(path)[:2]
+        replaced |= set(r)
+        wrapped |= set(w)
 for a in sorted(replaced): print("replaces sub_%08X" % a)
 for a in sorted(wrapped):  print("wraps    sub_%08X" % a)
 PY
