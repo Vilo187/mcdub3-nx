@@ -193,6 +193,8 @@ static GlSurf *s_last;                  /* last surface drawn or cleared */
 static int     s_drew_any;              /* the title has drawn something */
 
 static int s_watch_hit;
+static int s_watch_dumping;   /* inside a dumped frame: clears are logged too */
+static void watch_shot(const GlSurf *s);   /* RECOMP_GL_WATCH_SHOTS */
 
 static GlSurf *surf_find(uint32_t va)
 {
@@ -1823,6 +1825,8 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
             fprintf(stderr, "  [WATCH] F12: dumping frame %u\n", watch_frame);
         }
 #endif
+        s_watch_dumping = watch_n < watch_max && watch_all && watch_frame != 0xFFFFFFFFu
+                          && (watch_capped ? s_frame >= watch_frame : s_frame == watch_frame);
         if (watch_n < watch_max &&
             ((watch_all && watch_frame != 0xFFFFFFFFu &&
               (watch_capped ? s_frame >= watch_frame : s_frame == watch_frame)) ||
@@ -1859,6 +1863,22 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
                         " tscale %g %g\n", i, b->tex_va[i], surf_find(b->tex_va[i]) ? " (surface)" : "",
                         r[base + 1], r[base + 3], r[base + 4], r[base + 5], r[base + 7],
                         tscale[i][0], tscale[i][1]);
+                if (((r[base + 1] >> 8) & 0xFF) == 0x0B) {
+                    /* Palettized: the palette it decodes through, and the
+                     * colours its first texels come out as (0x00000000 for
+                     * all of them is a texture that draws as nothing). */
+                    const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset();
+                    uint32_t pv = b->pal_va[i], k, c;
+                    fprintf(stderr, "             palette reg %08X va %08X:", r[base + 8], pv);
+                    for (k = 0; pv && k < 4; k++) {
+                        memcpy(&c, mem + pv + k * 4, 4);
+                        fprintf(stderr, " %08X", c);
+                    }
+                    fprintf(stderr, " | first indices");
+                    for (k = 0; b->tex_va[i] && k < 8; k++)
+                        fprintf(stderr, " %02X", mem[b->tex_va[i] + k]);
+                    fprintf(stderr, "\n");
+                }
             }
             fprintf(stderr, "          4UB spec %08X diff %08X 4F spec %08X %08X %08X %08X fog en %u fc0 %08X fc1 %08X\n",
                     r[0x1940 / 4 + 4], r[0x1940 / 4 + 3], r[0x1A40 / 4], r[0x1A44 / 4],
@@ -1917,6 +1937,74 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
                         }
                     }
                     fprintf(stderr, "\n");
+                }
+                /* A vertex program's output at the first vertices, from the
+                 * executor's CPU interpreter: where they land on the surface
+                 * (x, y in pixels after the divide by w), and with what
+                 * colour and texcoord. Off-surface or w <= 0 is invisible. */
+                if (b->xform == 2) {
+                    extern int nv2a_vp_debug_vertex(uint32_t, float[4], float[4], float[4]);
+                    for (v = 0; v < b->vertex_count && v < 4; v++) {
+                        float p4[4], d4[4], t4[4];
+                        int ok = nv2a_vp_debug_vertex(v, p4, d4, t4);
+                        float w = p4[3] != 0.0f ? p4[3] : 1.0f;
+                        fprintf(stderr, "          vp v%u%s oPos %g %g %g %g -> screen %g %g | oD0 %g %g %g %g"
+                                " | oT0 %g %g %g %g\n", v, ok ? "" : " (no image)",
+                                p4[0], p4[1], p4[2], p4[3], p4[0] / w, p4[1] / w,
+                                d4[0], d4[1], d4[2], d4[3], t4[0], t4[1], t4[2], t4[3]);
+                    }
+                }
+                /* Fixed function: the composite matrix this draw is
+                 * transformed by (world x view x projection x viewport, as
+                 * D3D uploads it) and where the first vertices land in
+                 * surface pixels (before the viewport offset). A small
+                 * model filling the screen has the wrong matrix here. */
+                if (b->xform == 1 && (b->attr_direct & 1) && b->direct[0].type == 2
+                    && b->direct[0].ptr) {
+                    const float *cm4 = b->composite;
+                    fprintf(stderr, "          composite r0 %g %g %g %g | r1 %g %g %g %g | r2 %g %g %g %g | r3 %g %g %g %g\n",
+                            cm4[0], cm4[1], cm4[2], cm4[3], cm4[4], cm4[5], cm4[6], cm4[7],
+                            cm4[8], cm4[9], cm4[10], cm4[11], cm4[12], cm4[13], cm4[14], cm4[15]);
+                    fprintf(stderr, "          ffp screen:");
+                    for (v = 0; v < b->vertex_count && v < 4; v++) {
+                        float pv[4] = { 0, 0, 0, 1 }, o4[4];
+                        int k4;
+                        const uint8_t *q = b->direct[0].ptr + (size_t)v * b->direct[0].stride;
+                        memcpy(pv, q, 4 * (b->direct[0].size < 4 ? b->direct[0].size : 4));
+                        if (b->direct[0].size < 4) pv[3] = 1.0f;
+                        for (k4 = 0; k4 < 4; k4++)
+                            o4[k4] = cm4[4 * k4] * pv[0] + cm4[4 * k4 + 1] * pv[1]
+                                   + cm4[4 * k4 + 2] * pv[2] + cm4[4 * k4 + 3] * pv[3];
+                        fprintf(stderr, " (%g, %g w %g)", o4[3] != 0 ? o4[0] / o4[3] : 0,
+                                o4[3] != 0 ? o4[1] / o4[3] : 0, o4[3]);
+                    }
+                    fprintf(stderr, "\n");
+                    {   /* All vertices: the screen box of those in front of
+                         * the eye, the smallest w, and how many are at or
+                         * behind it -- triangles joining those stretch
+                         * across the screen if they are not clipped. */
+                        float xmin = 1e30f, xmax = -1e30f, ymin = 1e30f, ymax = -1e30f, wmin = 1e30f;
+                        uint32_t behind = 0, vv;
+                        for (vv = 0; vv < b->vertex_count; vv++) {
+                            float pv[4] = { 0, 0, 0, 1 }, o4[4];
+                            int k4;
+                            const uint8_t *q = b->direct[0].ptr + (size_t)vv * b->direct[0].stride;
+                            memcpy(pv, q, 4 * (b->direct[0].size < 4 ? b->direct[0].size : 4));
+                            if (b->direct[0].size < 4) pv[3] = 1.0f;
+                            for (k4 = 0; k4 < 4; k4++)
+                                o4[k4] = cm4[4 * k4] * pv[0] + cm4[4 * k4 + 1] * pv[1]
+                                       + cm4[4 * k4 + 2] * pv[2] + cm4[4 * k4 + 3] * pv[3];
+                            if (o4[3] < wmin) wmin = o4[3];
+                            if (o4[3] <= 1e-6f) { behind++; continue; }
+                            if (o4[0] / o4[3] < xmin) xmin = o4[0] / o4[3];
+                            if (o4[0] / o4[3] > xmax) xmax = o4[0] / o4[3];
+                            if (o4[1] / o4[3] < ymin) ymin = o4[1] / o4[3];
+                            if (o4[1] / o4[3] > ymax) ymax = o4[1] / o4[3];
+                        }
+                        fprintf(stderr, "          ffp all %u vertices: x %g..%g y %g..%g, w min %g,"
+                                " %u at or behind the eye\n", b->vertex_count, xmin, xmax, ymin, ymax,
+                                wmin, behind);
+                    }
                 }
                 /* The fixed-function fog factor at the first vertices: 0 is
                  * all fog colour, 1 none. */
@@ -2015,6 +2103,8 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
                     r[0x1B00 / 4], (r[0x1B04 / 4] >> 8) & 0xFF);
         glDrawElements(mode, (GLsizei)n, idx_type, (const void *)(uintptr_t)idx_at);
         gl_step_done("draw");
+        if (s_watch_hit)
+            watch_shot(s);
         if (s_watch_hit) {
             /* What the watched draw left: the target's centre and corner. */
             uint8_t px[4];
@@ -2051,6 +2141,11 @@ static void gl_clear(const Nv2aSurface *sf, const Nv2aRenderState *rs,
     s = surf_bind(sf, rs ? rs->zeta_va : 0);
     if (!s)
         return;
+    if (s_watch_dumping)
+        fprintf(stderr, "  [WATCH] clear surf %08X %ux%u flags %02X (z %u stencil %u color %X) argb %08X"
+                " zs %08X zeta %08X rect h %08X v %08X\n", s->va, s->w, s->h, flags, flags & 1,
+                (flags >> 1) & 1, (flags >> 4) & 0xF, argb, zstencil, rs ? rs->zeta_va : 0,
+                s_regs ? s_regs[0x1D98 / 4] : 0, s_regs ? s_regs[0x1D9C / 4] : 0);
     glDisable(GL_SCISSOR_TEST);
     if (s_regs) {
         uint32_t hz = s_regs[0x1D98 / 4], vt = s_regs[0x1D9C / 4];
@@ -2116,6 +2211,47 @@ static void dump_bmp(const char *path, const uint8_t *bgra, uint32_t w, uint32_t
         fwrite("\0\0\0", 1, pad, f);
     }
     fclose(f);
+}
+
+/* RECOMP_GL_WATCH_SHOTS=<prefix>: during a watched frame (RECOMP_GL_WATCH),
+ * the screen-sized target as a BMP after every 50th draw into it, named by
+ * the draw's place in the dump (<prefix>_d0050.bmp ...). Where a picture
+ * goes wrong between two shots, the draws between them in the log are the
+ * suspects -- for a frame whose final image is wrong but whose every draw
+ * looks plausible on its own (MC3's race view: the 3D scene drawn, then
+ * gone, 2D on top). */
+static void watch_shot(const GlSurf *s)
+{
+    static int on = -1, n;
+    static char prefix[256];
+    static uint8_t *pix;
+    static size_t cap;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_GL_WATCH_SHOTS");
+        on = e && *e;
+        if (on) snprintf(prefix, sizeof prefix, "%s", e);
+    }
+    if (!on || s->w < 640)
+        return;
+    if (++n % 50)
+        return;
+    {
+        size_t need = (size_t)s->pw * s->ph * 4;
+        char path[320];
+        if (need > cap) {
+            free(pix);
+            cap = need;
+            pix = (uint8_t *)malloc(cap);
+        }
+        if (!pix)
+            return;
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, s->fbo);
+        glPixelStorei(GL_PACK_ALIGNMENT, 4);
+        glReadPixels(0, 0, (GLsizei)s->pw, (GLsizei)s->ph, GL_BGRA, GL_UNSIGNED_BYTE, pix);
+        snprintf(path, sizeof path, "%s_d%04d.bmp", prefix, n);
+        dump_bmp(path, pix, s->pw, s->ph);
+        fprintf(stderr, "          [shot] %s (screen draw %d)\n", path, n);
+    }
 }
 
 static void gl_flip(void)

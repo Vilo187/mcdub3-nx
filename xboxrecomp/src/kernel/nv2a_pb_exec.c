@@ -833,6 +833,20 @@ static const VpOut *vp_vertex(uint32_t index)
     return o;
 }
 
+/* Vertex `index` of the current batch through the CPU vertex-program
+ * interpreter, for a renderer's diagnostics (nv2a_gl's F12 dump): where the
+ * program puts it (oPos, screen pixels with the clip w), its colour (oD0)
+ * and first texture coordinate (oT0). Called on the executor's thread while
+ * that batch is current. Returns vp_run's "has an image" verdict. */
+int nv2a_vp_debug_vertex(uint32_t index, float pos[4], float d0[4], float t0[4])
+{
+    const VpOut *o = vp_vertex(index);
+    memcpy(pos, o->pos, sizeof o->pos);
+    memcpy(d0, o->d0, sizeof o->d0);
+    memcpy(t0, o->t0, sizeof o->t0);
+    return o->ok;
+}
+
 /* Is this batch transformed by the fixed-function unit? */
 /* Inline vertices (INLINE_ARRAY: D3D's DrawPrimitiveUP) go through the
  * transform like any others. Only a 4-component position is pre-transformed
