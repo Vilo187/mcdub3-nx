@@ -583,6 +583,11 @@ static CONDITION_VARIABLE s_gil_cv;
 static volatile uint64_t  s_gil_next, s_gil_serving;
 static volatile int       s_gil_on = -1;
 static RECOMP_TLS int     t_gil_depth;
+/* This kernel call kept the guest lock (kernel_call_tries_first); a bridge
+ * that has to block releases it around the wait (bridge_block_begin/end). */
+static RECOMP_TLS int     t_kernel_gil_kept;
+static int  bridge_block_begin(void);
+static void bridge_block_end(int d);
 
 static int gil_enabled(void)
 {
@@ -1838,9 +1843,17 @@ static void bridge_RtlInitializeCriticalSection(void)
 
 static void bridge_RtlEnterCriticalSection(void)
 {
+    extern BOOL xbox_RtlEnterCriticalSectionIfFree(PRTL_CRITICAL_SECTION cs);  /* kernel_rtl.c */
     uint32_t cs_va = STACK_ARG(0);
-    xbox_RtlEnterCriticalSection(XBOX_TO_NATIVE(cs_va));
     g_eax = 0;
+    /* Lock kept (kernel_call_tries_first): a free section is taken here. */
+    if (t_kernel_gil_kept && xbox_RtlEnterCriticalSectionIfFree(XBOX_TO_NATIVE(cs_va)))
+        return;
+    {
+        int d = bridge_block_begin();
+        xbox_RtlEnterCriticalSection(XBOX_TO_NATIVE(cs_va));
+        bridge_block_end(d);
+    }
 }
 
 static void bridge_RtlLeaveCriticalSection(void)
@@ -2199,7 +2212,36 @@ static HANDLE bridge_resolve_handle(uint32_t token);
 
 static struct { uint32_t r1, r2, token, n; uint64_t us; } s_mw[16];
 
+static void bridge_NtWaitForSingleObjectEx_wait(void);
+
+/* With the guest lock kept: an object that is already signalled is taken
+ * without a hand-over, and a poll (zero timeout) gets its answer the same
+ * way; anything else releases the lock and waits as before. */
 static void bridge_NtWaitForSingleObjectEx(void)
+{
+    if (t_kernel_gil_kept) {
+        uint32_t timeout_ptr = STACK_ARG(3);
+        LARGE_INTEGER zero;
+        NTSTATUS st;
+        zero.QuadPart = 0;
+        st = xbox_NtWaitForSingleObjectEx(bridge_resolve_handle(STACK_ARG(0)),
+                                          (KPROCESSOR_MODE)STACK_ARG(1),
+                                          (BOOLEAN)STACK_ARG(2), &zero);
+        if (st != STATUS_TIMEOUT
+                || (timeout_ptr && BRIDGE_MEM32(timeout_ptr) == 0
+                    && BRIDGE_MEM32(timeout_ptr + 4) == 0)) {
+            g_eax = (uint32_t)st;
+            return;
+        }
+    }
+    {
+        int d = bridge_block_begin();
+        bridge_NtWaitForSingleObjectEx_wait();
+        bridge_block_end(d);
+    }
+}
+
+static void bridge_NtWaitForSingleObjectEx_wait(void)
 {
     HANDLE   handle      = bridge_resolve_handle(STACK_ARG(0));
     uint32_t wait_mode   = STACK_ARG(1);
@@ -10111,10 +10153,67 @@ static int kernel_call_keeps_gil(int slot)
         || ord == 160 || ord == 161;          /* KeRaiseIrqlTo*, KfRaise/LowerIrql */
 }
 
+/* Lock calls that only block when the object is taken: acquiring a free
+ * mutex or critical section, releasing one, never waits on the Xbox and does
+ * not switch threads there. Releasing the guest lock for them made each one a
+ * hand-over: MC3's main thread waits on and releases a mutant (234, 221)
+ * millions of times per session, and with the loader thread running behind
+ * the legal screen it lost the lock at every one. On Linux a hand-over costs
+ * microseconds; on Horizon a scheduler round trip -- 66-75% of the main
+ * thread's time spent waiting, 350-720 ms frames, 4 fps (2026-10-17).
+ * These now run with the lock held (t_kernel_gil_kept); the waiting bridges
+ * try without waiting first and release it only to block (bridge_block_*).
+ * Marked busy throughout, as they touch host locks. RECOMP_KERNEL_FAST=0
+ * turns this off too. */
+static int kernel_call_tries_first(int slot)
+{
+    ULONG ord;
+    if (slot < 0 || slot >= XBOX_KERNEL_THUNK_TABLE_SIZE)
+        return 0;
+    {
+        const char *e = getenv("RECOMP_KERNEL_FAST");
+        static int on = -1;
+        if (on < 0) on = !(e && *e == '0');
+        if (!on) return 0;
+    }
+    ord = g_slot_ordinals[slot];
+    return ord == 234 || ord == 277          /* NtWaitForSingleObjectEx, RtlEnterCriticalSection */
+        || ord == 221 || ord == 294;         /* NtReleaseMutant, RtlLeaveCriticalSection */
+}
+
+/* In a bridge reached with the guest lock kept: about to block, so let
+ * everyone else run until it is back. -1 when the lock was not kept. */
+static int bridge_block_begin(void)
+{
+    int d;
+    if (!t_kernel_gil_kept)
+        return -1;
+    t_kernel_gil_kept = 0;
+    d = xbox_gil_suspend();
+    pending_start_flush(GetCurrentThreadId());
+    return d;
+}
+
+static void bridge_block_end(int d)
+{
+    if (d < 0)
+        return;
+    xbox_gil_resume(d);
+    t_kernel_gil_kept = 1;
+}
+
 static void kernel_thunk_dispatch(void)
 {
     if (kernel_call_keeps_gil(g_kernel_dispatch_slot)) {
         kernel_thunk_dispatch_body();
+        return;
+    }
+    if (kernel_call_tries_first(g_kernel_dispatch_slot)) {
+        xbox_kernel_busy(1);
+        t_kernel_gil_kept = 1;
+        kernel_thunk_dispatch_body();
+        t_kernel_gil_kept = 0;
+        xbox_kernel_busy(-1);
         return;
     }
     int gil = xbox_gil_suspend();                /* the kernel is not guest code */
