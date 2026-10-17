@@ -246,13 +246,25 @@ NTSTATUS __stdcall xbox_ExSaveNonVolatileSetting(
  *
  * PhyGetLinkState reports Ethernet link status. Xbox had a built-in 100Mbit
  * NIC. For PC, we report link-up since we'll handle networking differently.
+ *
+ * RECOMP_NET_LINK=0 reports no cable instead (0: no LINK_ACTIVE bit), what an
+ * Xbox without a network cable answers. With a link, XNET starts its network
+ * setup (DHCP, the HDD's network config) and a title that waits on it waits
+ * for the timeouts: Midnight Club 3 sat on a black screen for ~20 s before
+ * its first movie, a worker polling and XNET re-reading partition0 every
+ * second (2026-10-17). Offline titles want 0.
  * ============================================================================ */
 
 ULONG __stdcall xbox_PhyGetLinkState(BOOLEAN Verify)
 {
+    static int link = -1;
     (void)Verify;
-    /* Return link up, 100 Mbps, full duplex */
-    return 0x01; /* XNET_ETHERNET_LINK_ACTIVE */
+    if (link < 0) {
+        const char *e = getenv("RECOMP_NET_LINK");
+        link = !(e && e[0] == '0');
+    }
+    /* Link up: XNET_ETHERNET_LINK_ACTIVE (100 Mbps, full duplex not set). */
+    return link ? 0x01 : 0x00;
 }
 
 NTSTATUS __stdcall xbox_PhyInitialize(BOOLEAN ForceReset, PVOID Param2)
