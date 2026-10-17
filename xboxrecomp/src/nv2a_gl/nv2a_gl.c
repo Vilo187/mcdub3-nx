@@ -37,6 +37,7 @@
 #include "gl_api.h"
 #include "gl_psh.h"
 #include "gl_vsh.h"
+#include "../kernel/nv2a_present.h"
 #include "../kernel/nv2a_backend.h"
 
 #include <SDL.h>
@@ -148,6 +149,8 @@ static void bind_tex(GLuint tex)
  * the GL storage: w, h times the render scale. */
 typedef struct {
     uint32_t va, w, h, pw, ph;
+    uint32_t vw;                        /* drawn width (clip), <= w: what is shown */
+    uint32_t vw_frame;                  /* frame vw was last set in */
     GLuint   fbo, tex, ds;
     GLuint   ds_on;                     /* depth renderbuffer attached now */
     uint32_t used;
@@ -323,6 +326,13 @@ static GlSurf *surf_bind(const Nv2aSurface *sf, uint32_t zeta_va)
         return NULL;
     s = surf_get(sf->color_va, w, h, sf->aa_sx ? sf->aa_sx : 1,
                  sf->aa_sy ? sf->aa_sy : 1);
+    {   /* The widest clip of the frame: a narrower pass into the same
+         * surface (MC3's minimap, 175 wide) must not crop what is shown. */
+        uint32_t cw = sf->clip_x + sf->width < s->w ? sf->clip_x + sf->width : s->w;
+        if (s->vw_frame != s_frame || cw > s->vw)
+            s->vw = cw;
+        s->vw_frame = s_frame;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, s->fbo);
     if (s_shared_z < 0) {
         const char *e = getenv("RECOMP_GL_SHARED_Z");
@@ -2222,20 +2232,20 @@ static void gl_flip(void)
     glClearColor(0, 0, 0, 1);
     glClear(GL_COLOR_BUFFER_BIT);
     {
-        float lw = (float)s->w / (float)s->aa_sx, lh = (float)s->h / (float)s->aa_sy;
-        /* A widescreen title renders 640x480 anamorphic: show it at 16:9. */
-        if (xbox_video_widescreen() && lw < lh * 1.5f)
-            lw = lh * 16.0f / 9.0f;
-        float scale = (float)ww / lw < (float)wh / lh ? (float)ww / lw : (float)wh / lh;
-        int dw = (int)(lw * scale), dh = (int)(lh * scale);
-        int dx = (ww - dw) / 2, dy = (wh - dh) / 2;
+        /* nv2a_present.h: the drawn width, 16:9 for a widescreen title. */
+        uint32_t vw = s->vw ? s->vw : s->w;
+        GLint sw = (GLint)((uint64_t)s->pw * vw / s->w);
+        int rc[4], dx, dy, dw, dh;
+        nv2a_present_rect((float)vw / (float)s->aa_sx, (float)s->h / (float)s->aa_sy,
+                          ww, wh, rc);
+        dx = rc[0]; dy = rc[1]; dw = rc[2]; dh = rc[3];
         /* Scissored to the picture: Switch Mesa (nouveau) runs a scaled,
          * flipped blit over more than the destination rectangle, and the
          * pillarbox bars filled with the source's edge columns stretched
          * sideways. Blits obey the scissor test, so the bars stay cleared. */
         glEnable(GL_SCISSOR_TEST);
         glScissor(dx, dy, dw, dh);
-        glBlitFramebuffer(0, 0, (GLint)s->pw, (GLint)s->ph,
+        glBlitFramebuffer(0, 0, sw, (GLint)s->ph,
                           dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
         glDisable(GL_SCISSOR_TEST);
     }
