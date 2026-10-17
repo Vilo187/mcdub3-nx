@@ -2663,12 +2663,19 @@ static Nv2aBackend s_backend_q = {
     NV2A_BACKEND_RAW_DIRECT,
 };
 
+/* Window, context and the shader cache before the title draws (prepare). */
+static void gl_prepare(void)
+{
+    (void)ready();
+}
+
 static const Nv2aBackend s_backend_gl = {
     gl_clear,
     NULL,              /* draw: everything arrives through draw_raw */
     gl_flip,
     gl_draw_raw,
     NV2A_BACKEND_RAW_DIRECT,
+    gl_prepare,
 };
 
 void nv2a_gl_install(void)

@@ -167,7 +167,18 @@ typedef struct {
     void (*draw_raw)(const Nv2aRawBatch *b);
     /* NV2A_BACKEND_* bits. */
     uint32_t flags;
+    /* Optional: called once on the executor's thread before the title's
+     * first pushbuffer work, to do slow set-up (window, context, shader
+     * cache) up front. Done lazily at the first flip instead, it landed in
+     * the middle of the first movie: MC3's Rockstar logo showed nothing for
+     * ~1 s while its soundtrack (timed by Bink, not the screen) already
+     * played the tyre screeches. */
+    void (*prepare)(void);
 } Nv2aBackend;
+
+/* Run the registered back end's prepare() once; 0 while none is registered
+ * yet (call again later). On the executor's thread. */
+int nv2a_backend_prepare(void);
 
 /* draw_raw takes attributes in their stored format (Nv2aRawBatch.attr_direct).
  * RECOMP_GL_DIRECT=0 turns it off at run time. */
