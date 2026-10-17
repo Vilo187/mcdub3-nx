@@ -691,6 +691,146 @@ void sub_00378B30(void)
     bt_time(BT_AUDIO, bink_audio_decode);
 }
 
+/* ── Game timing: the clocks MC3 reads (MC3_TIME_TRACE=1) ──
+ *
+ * 2026-10-17: gameplay ran ~10x fast at a steady 60 fps while music and
+ * movies kept time, and every host clock checked out at the source. These
+ * wrap the title's own timer entry points and print once a second, per
+ * clock, how often it was read and how far it moved (in its own units):
+ *   sub_00188170  ms since boot: rdtsc / 733333        (1000 per second)
+ *   sub_002F64FB  QueryPerformanceCounter (rdtsc)      (733.33 M per second)
+ *   sub_002F650C  QueryPerformanceFrequency            (733333333)
+ *   sub_001EF3D0  rdtsc, low 32 bits                   (733.33 M per second) */
+static int time_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_TIME_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+
+static struct { const char *name; long calls; uint64_t first, last; } s_clk[4] = {
+    { "ms clock (0x188170)" }, { "QPC (0x2F64FB)" }, { "QPF (0x2F650C)" }, { "rdtsc lo (0x1EF3D0)" },
+};
+
+static void qpc_callers_print(void);
+
+static void time_note(int k, uint64_t v)
+{
+    static long long next;
+    struct timespec ts;
+    long long now;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    now = (long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+    if (!s_clk[k].calls++) s_clk[k].first = v;
+    s_clk[k].last = v;
+    if (!next) next = now + 1000;
+    if (now < next) return;
+    next = now + 1000;
+    for (int i = 0; i < 4; i++) {
+        if (!s_clk[i].calls) continue;
+        fprintf(stderr, "[TIME] %-20s %6ld reads/s, moved %llu (last %llu)\n", s_clk[i].name,
+                s_clk[i].calls, (unsigned long long)(s_clk[i].last - s_clk[i].first),
+                (unsigned long long)s_clk[i].last);
+        s_clk[i].calls = 0;
+    }
+    qpc_callers_print();
+}
+
+extern void sub_00188170_gen(void);
+void sub_00188170(void)
+{
+    sub_00188170_gen();
+    if (time_trace_on()) time_note(0, ((uint64_t)g_edx << 32) | g_eax);
+}
+/* QPC's callers: the return addresses of the last second, top 4 printed
+ * with the [TIME] lines (2026-10-17: 600k reads/s during the intro
+ * flythrough, none in the garage -- who polls it). */
+typedef struct { uint32_t ret; long n; } CallerCount;
+static CallerCount s_qpc_by[16], s_bink_by[16];
+
+static void caller_note(CallerCount *t, uint32_t ret)
+{
+    int i, low = 0;
+    for (i = 0; i < 16; i++) {
+        if (t[i].ret == ret) { t[i].n++; return; }
+        if (t[i].n < t[low].n) low = i;
+    }
+    t[low].ret = ret;
+    t[low].n = 1;
+}
+static void qpc_caller(uint32_t ret) { caller_note(s_qpc_by, ret); }
+
+static void callers_print(CallerCount *t, const char *what)
+{
+    for (int k = 0; k < 4; k++) {
+        int best = -1;
+        for (int i = 0; i < 16; i++)
+            if (t[i].n > 0 && (best < 0 || t[i].n > t[best].n)) best = i;
+        if (best < 0) break;
+        fprintf(stderr, "[TIME]   %s called from %08X: %ld\n", what, t[best].ret, t[best].n);
+        t[best].n = 0;                              /* printed */
+    }
+    memset(t, 0, 16 * sizeof *t);
+}
+
+static void qpc_callers_print(void)
+{
+    callers_print(s_qpc_by, "QPC");
+    callers_print(s_bink_by, "Bink timer");
+}
+
+/* Bink's millisecond timer (RADTimerRead): its callers, for the loop that
+ * reads it ~500k times a second during the intro flythrough. */
+extern void sub_00378160_gen(void);
+void sub_00378160(void)
+{
+    if (time_trace_on()) caller_note(s_bink_by, MEM32(g_esp));
+    sub_00378160_gen();
+}
+
+extern void sub_002F64FB_gen(void);
+void sub_002F64FB(void)
+{
+    uint32_t out = MEM32(g_esp + 4), ret = MEM32(g_esp);
+    sub_002F64FB_gen();
+    if (time_trace_on()) {
+        qpc_caller(ret);
+        time_note(1, ((uint64_t)MEM32(out + 4) << 32) | MEM32(out));
+    }
+}
+extern void sub_002F650C_gen(void);
+void sub_002F650C(void)
+{
+    uint32_t out = MEM32(g_esp + 4);
+    sub_002F650C_gen();
+    if (time_trace_on()) time_note(2, ((uint64_t)MEM32(out + 4) << 32) | MEM32(out));
+}
+extern void sub_001EF3D0_gen(void);
+void sub_001EF3D0(void)
+{
+    sub_001EF3D0_gen();
+    if (time_trace_on()) time_note(3, g_eax);
+}
+
+/* ── D3D's vblank handling, counted (MC3_PERF reports it) ──
+ *
+ * sub_003E4FD0 is D3D's vblank work: it advances the device's vblank count
+ * (+0x1C0) and retires flips. Its callers run it when PMC_INTR_0's display
+ * bit (0x01000000) is set -- on any interrupt, so a pushbuffer trap raised
+ * while that bit is still up is counted as one more vblank. Should be 60 a
+ * second; the report prints the real rate (2026-10-17: the intro flythrough
+ * runs fast on Linux and reads no clock, so its time base is suspect). */
+volatile long g_mc3_d3d_vblanks;
+extern void sub_003E4FD0_gen(void);
+void sub_003E4FD0(void)
+{
+    g_mc3_d3d_vblanks++;
+    sub_003E4FD0_gen();
+}
+
 /* ── Manual function overrides ─────────────────────────────── */
 
 /*

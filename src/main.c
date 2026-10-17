@@ -150,6 +150,17 @@ static void crash_signal(int sig, siginfo_t *si, void *uc)
     raise(sig);
 }
 
+/* `pkill -USR1 mc3_recomp` from another terminal: the watchdog's snapshot of
+ * the main guest thread (registers, indirect-call trail, stack for
+ * tools/stackwalk.py) while the game keeps running. For a hang: freeze it,
+ * then ask where it is. A diagnostic, so stdio in a handler is accepted. */
+static void snapshot_signal(int sig)
+{
+    extern void xbox_WatchdogDump(const char *why);
+    (void)sig;
+    xbox_WatchdogDump("SIGUSR1 snapshot");
+}
+
 static void install_crash_reporter(void)
 {
     static char altstack[64 * 1024];
@@ -168,10 +179,83 @@ static void install_crash_reporter(void)
     sigaction(SIGBUS, &sa, NULL);
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGFPE, &sa, NULL);
+    signal(SIGUSR1, snapshot_signal);
 }
 #else
 static void install_crash_reporter(void) {}
 #endif
+
+/* ------------------------------------------------------------------ */
+/* Performance report (MC3_PERF=<seconds>)                             */
+/* ------------------------------------------------------------------ */
+
+/* Every <seconds>, the numbers that say where a slow phase goes, as [perf]
+ * lines (cheap enough for the Switch's SD log at a few seconds):
+ *   - the main thread's time waiting for the guest lock, and how many single
+ *     waits took over 50 ms (a dropped frame): a worker busy in a loop with
+ *     no pre-emption point shows up here -- the legal screen on the Switch,
+ *     400-700 ms frames while the loader thread ran (2026-10-17);
+ *   - the main thread's kernel waits by caller; guest call counts;
+ *   - the APU's pacing; on the Switch, CPU share per thread.
+ * The frame rate is RECOMP_FPS_LOG=1's line. */
+extern void xbox_gil_main_wait(long long *wait_us, long long *long_waits);
+extern void xbox_main_wait_report(double secs);
+extern void xbox_perf_sample(void);
+extern int mcpx_apu_pacing_stats(char *buf, int cap);
+#ifdef __SWITCH__
+extern void xbox_nx_thread_report(double interval_s);
+#endif
+
+static void *perf_thread(void *arg)
+{
+    double secs = *(double *)arg;
+    for (;;) {
+        long long wait_us, long_waits;
+        char pace[320];
+        usleep((useconds_t)(secs * 1e6));
+        xbox_gil_main_wait(&wait_us, &long_waits);
+        {   /* the game's frame time (sub_001EDBE0: rdtsc delta, snapped to
+             * 1/60..1/15 and clamped to 0.0001..0.1 s). The intro flythrough
+             * steps by it; if nothing refreshes it during a load, it stays
+             * whatever the last frame before the load measured. */
+            extern ptrdiff_t g_xbox_mem_offset;          /* xbox_memory_layout.c */
+            uint32_t raw = *(volatile uint32_t *)((uintptr_t)0x0047C404u + g_xbox_mem_offset);
+            float dt;
+            memcpy(&dt, &raw, sizeof dt);
+            fprintf(stderr, "[perf] game frame time (0x47C404): %.4f s\n", dt);
+        }
+        {   /* D3D's vblank work per second (60 = right): recomp_manual.c */
+            extern volatile long g_mc3_d3d_vblanks;
+            static long last;
+            long now = g_mc3_d3d_vblanks;
+            fprintf(stderr, "[perf] D3D vblank handler: %.1f per second\n", (now - last) / secs);
+            last = now;
+        }
+        fprintf(stderr, "[perf] main thread: %.0f%% of the time waiting for the guest lock,"
+                        " %lld waits over 50 ms\n", wait_us / (secs * 1e4), long_waits);
+        xbox_main_wait_report(secs);
+        xbox_perf_sample();
+        mcpx_apu_pacing_stats(pace, sizeof pace);
+        fprintf(stderr, "[perf] APU: %s\n", pace);
+#ifdef __SWITCH__
+        xbox_nx_thread_report(secs);
+#endif
+    }
+    return NULL;
+}
+
+static void perf_report_start(void)
+{
+    static double secs;
+    const char *e = getenv("MC3_PERF");
+    pthread_t th;
+    if (!e || (secs = atof(e)) <= 0)
+        return;
+    if (pthread_create(&th, NULL, perf_thread, &secs) == 0) {
+        pthread_detach(th);
+        fprintf(stderr, "[perf] report every %.1f s (MC3_PERF)\n", secs);
+    }
+}
 
 /* ------------------------------------------------------------------ */
 /* Boot                                                                */
@@ -361,6 +445,7 @@ static int game_main(void)
                         "indirect calls will use the binary search\n");
 
     xbox_WatchdogStart();   /* inert unless RECOMP_WATCHDOG_SECS is set */
+    perf_report_start();    /* inert unless MC3_PERF is set */
 
     printf("Starting guest at 0x%08X (esp=0x%08X)\n", MC3_XBE_ENTRY_POINT, g_esp);
     xbox_gil_mark_main();   /* the frame-rate thread (RECOMP_GIL_EAGER) */
