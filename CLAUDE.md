@@ -109,7 +109,9 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   src/bink_native.c replaces only the video decode (0x0037CCD0); Bink keeps
   I/O, timing, audio and the YUV→RGB copy. Bink's frame buffer is Y, **V**, U,
   packed (pitch = width); FFmpeg's binkvideo is bit-exact with it.
-  `MC3_NATIVE_BINK=0` brings back the lifted decoder. Linux only so far.
+  `MC3_NATIVE_BINK=0` brings back the lifted decoder. On the Switch too
+  since 2026-10-17 (FFmpeg from the portlibs; paths opened as `file:sdmc:/…`,
+  since FFmpeg reads `sdmc:` as a protocol).
   Result (2026-10-15, windowed, virgl): movies at a steady 30 fps; per frame
   decode <1.5 ms, Bink's lifted YUV→RGB copy 4–7 ms, draw+Present ~11 ms,
   ~15 ms spare. `MC3_BINK_TRACE=1` prints this split every second.
@@ -118,9 +120,30 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   repeats 256–768-sample pieces, skips, and runs at ~84% speed. So FFmpeg
   plays the soundtrack on a runtime software-mixer voice (`apu_mixer_*`),
   synced to Bink's frame number, and Bink's decoded PCM is zeroed
-  (`MC3_NATIVE_BINK_AUDIO=0` to compare). The APU path itself is still
-  suspect for in-game sound. `tools/audio_diff.py capture.wav movie.bik`
-  measures holes, skips, repeats and drift against the original track.
+  (`MC3_NATIVE_BINK_AUDIO=0` to compare). `tools/audio_diff.py capture.wav
+  movie.bik` measures holes, skips, repeats and drift against the original
+  track. The renderer is set up at boot (Nv2aBackend.prepare): set up at the
+  first flip, the Rockstar logo stayed black ~1 s while its soundtrack (tyre
+  screeches) already played.
+- In-game audio (XACT, music WMA from `audio/XStreams/mx.xwb`) works since
+  2026-10-17, after four fixes, each found by measuring:
+  1. lifter: a jcc after a join of different-width cmps lifted as
+     `if (_flags)` (never taken) -- XACT refused every sound start;
+  2. bus addresses: heap PCM (0x0120FF80) was read from the contiguous window
+     at the same offset (noise); MmGetPhysicalAddress now tags RAM (bit 26);
+  3. APU GP/EP memory read as 0, so DirectSound found the EP "dead" (P-memory
+     word 6 != 0xCCCCCC) and reset both DSPs with a 10 ms stall from every
+     XACT call: half-speed APU, menu lag, garage hang. Now storage, and the
+     stub EP reads alive;
+  4. (movies) see above. Tools: `MC3_XACT_TRACE`, `MC3_WMA_TRACE`,
+     `RECOMP_APU_TRACE` (adds `[APU-ST]`: samples/s, stream consumption,
+     pacing), `RECOMP_AUDIO_DUMP=path,start,secs` (written at exit/Ctrl+C).
+- Rendering found and fixed 2026-10-17: vertex programs read the viewport
+  scale/offset as constants c[-38]/c[-37] (NV2A mirrors the registers there:
+  cars were invisible); a narrower clip into the back buffer (race minimap,
+  175x451) rebuilt the surface (black race screen). Find such bugs with
+  `make run WATCH=1 RECOMP_GL_WATCH_N=1500 RECOMP_GL_WATCH_SHOTS=<prefix>`:
+  F12 dumps every draw and clear of the frame, images every 50 draws.
 - Input must reach the game as native controls do (the emulated pad), so
   the game decides what can be skipped: the Rockstar and Rockstar San Diego
   logos cannot, mc3intro can (Enter). The keyboard is pad 1 by default
@@ -136,7 +159,15 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   render with llvmpipe (software) and run slower; windowed runs use virgl
   (the Mac's GPU). Judge frame rate windowed; use headless for relative
   profiles only.
-- Threads: TBD
+- Threads: the guest lock serialises guest code. On the Switch each
+  hand-over is a scheduler round trip: behind the legal screen (a loader
+  thread at work) the main thread waited 66-75% of the time in short waits,
+  4 fps. Uncontended lock calls (mutant/critical section) now keep the lock;
+  console measurement pending. `MC3_PERF=<s>` reports lock waits, CPU per
+  thread (Switch), APU pacing; `pkill -USR1 mc3_recomp` snapshots the main
+  thread's stack (`tools/stackwalk.py`).
+- Open (2026-10-17): the intro flythrough behind the legal screen runs ~10x
+  fast on Linux (normal on the console); it reads none of the game's clocks.
 
 ### First lift (2026-10-14)
 
@@ -160,3 +191,7 @@ TODO.md.
   lifted chunks + runtime link into `work/build-linux/mc3_recomp` (39 MB
   aarch64 ELF). Only warnings, all in the toolkit (printf `%lu` vs `DWORD`,
   `-Wnonnull` on `XBOX_TO_NATIVE`, comments, unused code). Next: first run.
+- 2026-10-17: music and sound in menus, garage and races; cars drawn; race view
+  and HUD drawn (racing itself not yet: open); garage reachable; movies native on the console; boot
+  black screen gone (RECOMP_NET_LINK=0). Open: flythrough speed (Linux),
+  legal-screen stall (console), 1.5x scale glitches, NSP forwarder.
