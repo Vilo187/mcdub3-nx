@@ -24,6 +24,9 @@ mc3_python
 
 SEEDS="$MC3_REPO/config/seed_functions.json"
 MANUAL="$MC3_REPO/src/recomp_manual.c"
+# TRACE=<sections>: failure-tracing wrappers for every function in them
+# (tools/trace_wrappers.py), lifted and compiled with the game; empty: none.
+TRACE_C="$MC3_GEN_DIR/zz_trace_wrappers.c"
 MMIO="${MC3_MMIO_SECTIONS:-DSOUND,XPP}"
 A="$MC3_ANALYSIS_DIR"
 
@@ -51,12 +54,25 @@ fi
 # recomp_types.h is written only when absent, so a stale copy would hide
 # register-model changes in the toolkit. Nothing edits it by hand.
 rm -f "$MC3_GEN_DIR/recomp_types.h"
+EXCLUDE="$MANUAL"
+rm -f "$TRACE_C"
+if [ -n "${TRACE:-}" ]; then
+    mkdir -p "$MC3_WORK/trace"
+    "$MC3_PYTHON" "$MC3_REPO/tools/trace_wrappers.py" --sections "$TRACE" \
+        --functions "$A/disasm/functions.json" --manual "$MANUAL" \
+        --out "$MC3_WORK/trace/trace_wrappers.c"
+    # One file for the lift to scan: the hand-written overrides + the trace.
+    cat "$MANUAL" "$MC3_WORK/trace/trace_wrappers.c" > "$MC3_WORK/trace/manual_all.c"
+    EXCLUDE="$MC3_WORK/trace/manual_all.c"
+fi
 "$MC3_PYTHON" -m tools.recomp "$MC3_XBE" --game-name "Midnight Club 3: DUB Edition" \
     --all --split 250 --gen-dir "$MC3_GEN_DIR" -o "$A/recomp" \
     --disasm-dir "$A/disasm" --func-id-dir "$A/func_id" --abi-dir "$A/abi" \
-    --exclude-manual "$MANUAL" --mmio-sections "$MMIO" \
+    --exclude-manual "$EXCLUDE" --mmio-sections "$MMIO" \
     ${MC3_RECOMP_ARGS:-} 2>&1 | tee "$A/recomp.log"
 
+# The trace wrappers are compiled with the lifted code (CMake globs gen/*.c).
+[ -n "${TRACE:-}" ] && cp "$MC3_WORK/trace/trace_wrappers.c" "$TRACE_C"
 # What the build checks the overrides against (mc3_check_lift_fresh).
 mc3_manual_overrides > "$MC3_GEN_DIR/.manual_overrides" || true
 
