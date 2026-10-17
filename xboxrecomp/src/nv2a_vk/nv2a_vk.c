@@ -36,6 +36,7 @@
 #include "nv2a_vk.h"
 #include "../nv2a_gl/gl_psh.h"
 #include "../nv2a_gl/gl_vsh.h"
+#include "../kernel/nv2a_present.h"
 #include "../kernel/nv2a_backend.h"
 
 #if defined(__SWITCH__)
@@ -262,6 +263,8 @@ static VkDeviceSize ring_alloc(VkDeviceSize size, VkDeviceSize align, void **ptr
  * the image: w, h times the render scale. */
 typedef struct {
     uint32_t va, w, h, pw, ph;
+    uint32_t vw;               /* drawn width (clip), <= w: what is shown */
+    uint32_t vw_frame;         /* frame vw was last set in */
     VkImage image; VkImageView view; VkDeviceMemory mem;
     uint32_t used;
     uint32_t aa_sx, aa_sy;
@@ -590,6 +593,13 @@ static VkSurf *target(const Nv2aSurface *sf, uint32_t zeta_va, VkDepthBuf **dout
     if (!w || !h || !sf->color_va || w > 4096 || h > 4096)
         return NULL;
     s = surf_get(sf->color_va, w, h, sf->aa_sx ? sf->aa_sx : 1, sf->aa_sy ? sf->aa_sy : 1);
+    if (s)
+        {   /* the widest clip of the frame, as in nv2a_gl.c */
+            uint32_t cw = sf->clip_x + sf->width < s->w ? sf->clip_x + sf->width : s->w;
+            if (s->vw_frame != s_frame || cw > s->vw)
+                s->vw = cw;
+            s->vw_frame = s_frame;
+        }
     if (s && zeta_va)
         *dout = depth_get(zeta_va, s->pw, s->ph);
     if (s)
@@ -3315,16 +3325,14 @@ static void vk_flip(void)
             if (s && s_drew_any) {
                 /* The logical aspect (16:9 for a widescreen title),
                  * letterboxed. Rows are top-first on both sides. */
-                float lw = (float)s->w / (float)s->aa_sx, lh = (float)s->h / (float)s->aa_sy;
-                float ww = (float)s_sc_extent.width, wh = (float)s_sc_extent.height, scale;
+                /* nv2a_present.h: the drawn width, 16:9 for a widescreen title. */
+                uint32_t vw = s->vw ? s->vw : s->w;
                 VkImageBlit bl;
-                int dw, dh, dx, dy;
+                int rc[4], dw, dh, dx, dy;
                 VkMemoryBarrier mb = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-                if (xbox_video_widescreen() && lw < lh * 1.5f)
-                    lw = lh * 16.0f / 9.0f;
-                scale = ww / lw < wh / lh ? ww / lw : wh / lh;
-                dw = (int)(lw * scale); dh = (int)(lh * scale);
-                dx = ((int)ww - dw) / 2; dy = ((int)wh - dh) / 2;
+                nv2a_present_rect((float)vw / (float)s->aa_sx, (float)s->h / (float)s->aa_sy,
+                                  (int)s_sc_extent.width, (int)s_sc_extent.height, rc);
+                dx = rc[0]; dy = rc[1]; dw = rc[2]; dh = rc[3];
                 mb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                 mb.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
                 vkCmdPipelineBarrier(s_cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -3332,7 +3340,7 @@ static void vk_flip(void)
                 memset(&bl, 0, sizeof bl);
                 bl.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
                 bl.srcSubresource.layerCount = 1;
-                bl.srcOffsets[1].x = (int32_t)s->pw;
+                bl.srcOffsets[1].x = (int32_t)((uint64_t)s->pw * vw / s->w);
                 bl.srcOffsets[1].y = (int32_t)s->ph;
                 bl.srcOffsets[1].z = 1;
                 bl.dstSubresource = bl.srcSubresource;
