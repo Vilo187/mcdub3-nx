@@ -13,12 +13,19 @@
  * Kept apart from main.c because <switch.h> and the runtime's Win32 vocabulary
  * collide. Only built for the Switch.
  *
- * Known next step (nfsu2-sw measured it): the SD log is the boot bottleneck
- * once the runtime gets chatty -- each flush is a card write. A RAM log with
- * a writer thread fixes it; do that when boot time matters.
+ * The log goes through memory: a line-buffered SD file made every line a
+ * card write, and the runtime logs thousands at boot (file opens, reads,
+ * NV2A) -- MC3 sat on a black screen for ~15 s before its first frame
+ * (2026-10-16). Now stdout and stderr write into a "log:" device, a 4 MB
+ * ring in RAM, and a writer thread empties it onto the card in blocks every
+ * 200 ms (sooner when half full). A crash or exit drains it synchronously.
+ * (The approach nfsu2-sw measured; this is our own implementation.)
  */
 #include <switch.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdalign.h>
+#include <sys/iosupport.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -43,6 +50,104 @@ static int s_sockets;
 /* Log                                                                 */
 /* ------------------------------------------------------------------ */
 
+/* The RAM ring: written by any thread (memcpy under a mutex), emptied by
+ * the writer thread. head - tail bytes are waiting; both only grow. */
+#define LOG_RING (4u << 20)
+static char       s_ring[LOG_RING];
+static u64        s_head, s_tail;
+static Mutex      s_ring_lock;          /* head, and the ring contents */
+static Mutex      s_file_lock;          /* the SD file and tail */
+static CondVar    s_ring_cv;
+static int        s_log_fd = -1;
+static Thread     s_writer;
+static volatile int s_writer_on;
+
+/* Write what is waiting to the card. Under s_file_lock only: s_head is read
+ * under the ring lock, the copy out happens without it (the writer is the
+ * only one advancing s_tail, and producers never pass it). */
+static void log_drain(void)
+{
+    u64 head, tail;
+    mutexLock(&s_file_lock);
+    mutexLock(&s_ring_lock);
+    head = s_head;
+    mutexUnlock(&s_ring_lock);
+    tail = s_tail;
+    while (tail < head) {
+        u64 at = tail % LOG_RING, n = head - tail;
+        if (n > LOG_RING - at) n = LOG_RING - at;
+        if (s_log_fd >= 0 && write(s_log_fd, s_ring + at, (size_t)n) < 0)
+            break;
+        tail += n;
+    }
+    mutexLock(&s_ring_lock);
+    s_tail = tail;
+    condvarWakeAll(&s_ring_cv);         /* room for a producer that waits */
+    mutexUnlock(&s_ring_lock);
+    mutexUnlock(&s_file_lock);
+}
+
+static void log_writer(void *arg)
+{
+    (void)arg;
+    while (s_writer_on) {
+        mutexLock(&s_ring_lock);
+        if (s_head - s_tail < LOG_RING / 2)
+            condvarWaitTimeout(&s_ring_cv, &s_ring_lock, 200000000ull);   /* 200 ms */
+        mutexUnlock(&s_ring_lock);
+        log_drain();
+    }
+}
+
+static ssize_t log_write_r(struct _reent *r, void *fd, const char *ptr, size_t len)
+{
+    size_t done = 0;
+    (void)r; (void)fd;
+    while (done < len) {
+        size_t n;
+        mutexLock(&s_ring_lock);
+        if (s_head - s_tail >= LOG_RING) {    /* full: empty it here */
+            mutexUnlock(&s_ring_lock);
+            log_drain();
+            continue;
+        }
+        n = LOG_RING - (size_t)(s_head - s_tail);
+        if (n > len - done) n = len - done;
+        {
+            u64 at = s_head % LOG_RING;
+            size_t first = n < LOG_RING - at ? n : (size_t)(LOG_RING - at);
+            memcpy(s_ring + at, ptr + done, first);
+            memcpy(s_ring, ptr + done + first, n - first);
+        }
+        s_head += n;
+        if (s_head - s_tail >= LOG_RING / 2)
+            condvarWakeOne(&s_ring_cv);
+        mutexUnlock(&s_ring_lock);
+        done += n;
+    }
+    return (ssize_t)len;
+}
+
+static int log_open_r(struct _reent *r, void *file, const char *path, int flags, int mode)
+{
+    (void)r; (void)file; (void)path; (void)flags; (void)mode;
+    return 0;
+}
+
+static int log_close_r(struct _reent *r, void *fd)
+{
+    (void)r; (void)fd;
+    return 0;
+}
+
+static const devoptab_t s_log_dev = {
+    .name       = "log",
+    .structSize = sizeof(int),
+    .open_r     = log_open_r,
+    .close_r    = log_close_r,
+    .write_r    = log_write_r,
+};
+
 static void log_open(void)
 {
     if (R_SUCCEEDED(socketInitializeDefault())) {
@@ -53,12 +158,56 @@ static void log_open(void)
         return;
 
     mkdir(APP_DIR, 0777);
-    if (!freopen(APP_DIR "/" MC3_APP "_log.txt", "w", stdout))
+    s_log_fd = open(APP_DIR "/" MC3_APP "_log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (s_log_fd < 0)
         return;
-    dup2(fileno(stdout), fileno(stderr));
-    /* Line-buffered: a crash loses at most the line being written. */
-    setvbuf(stdout, NULL, _IOLBF, 0);
-    setvbuf(stderr, NULL, _IOLBF, 0);
+    mutexInit(&s_ring_lock);
+    mutexInit(&s_file_lock);
+    condvarInit(&s_ring_cv);
+    if (AddDevice(&s_log_dev) < 0 || !freopen("log:", "w", stdout)
+            || !freopen("log:", "w", stderr)) {
+        /* No device: the old way, a line-buffered file. */
+        close(s_log_fd);
+        s_log_fd = -1;
+        if (freopen(APP_DIR "/" MC3_APP "_log.txt", "w", stdout))
+            dup2(fileno(stdout), fileno(stderr));
+        setvbuf(stdout, NULL, _IOLBF, 0);
+        setvbuf(stderr, NULL, _IOLBF, 0);
+        return;
+    }
+    /* Unbuffered into the device: each printf is one memcpy into the ring. */
+    setvbuf(stdout, NULL, _IONBF, 0);
+    setvbuf(stderr, NULL, _IONBF, 0);
+    s_writer_on = 1;
+    /* Core 2, low priority: off the game's cores, never ahead of them. */
+    if (R_FAILED(threadCreate(&s_writer, log_writer, NULL, NULL, 0x4000, 0x3B, 2))
+            || R_FAILED(threadStart(&s_writer)))
+        s_writer_on = 0;                /* still works: full ring drains inline */
+}
+
+/* The crash path: the faulting thread may hold a log lock, so no locks --
+ * write what the ring holds, best effort, and let the process die. */
+static void log_flush_crash(void)
+{
+    u64 tail = s_tail, head = s_head;
+    if (s_log_fd < 0)
+        return;
+    while (tail < head) {
+        u64 at = tail % LOG_RING, n = head - tail;
+        if (n > LOG_RING - at) n = LOG_RING - at;
+        if (write(s_log_fd, s_ring + at, (size_t)n) < 0)
+            break;
+        tail += n;
+    }
+}
+
+/* Whatever is in the ring, onto the card now (exit). */
+static void log_flush(void)
+{
+    fflush(stdout);
+    fflush(stderr);
+    if (s_log_fd >= 0)
+        log_drain();
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,8 +293,15 @@ void switch_boot(void)
 void switch_shutdown(void)
 {
     appletSetMediaPlaybackState(false);
-    fflush(stdout);
-    fflush(stderr);
+    if (s_writer_on) {
+        s_writer_on = 0;
+        condvarWakeAll(&s_ring_cv);
+        threadWaitForExit(&s_writer);
+        threadClose(&s_writer);
+    }
+    log_flush();
+    if (s_log_fd >= 0)
+        close(s_log_fd);
     if (s_sockets)
         socketExit();
 }
