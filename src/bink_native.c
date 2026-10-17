@@ -373,18 +373,29 @@ static int host_path(const char *xbox_name, char *out, size_t n)
     const char *dir;
     size_t i;
 
-    if (xbox_translate_path(xbox_name, out, (unsigned int)n))
-        return 1;
-    dir = getenv("MC3_GAME_DIR");
-    if (!dir || !*dir)
-        return 0;
-    if (xbox_name[0] && xbox_name[1] == ':')
-        xbox_name += 2;
-    while (*xbox_name == '\\' || *xbox_name == '/')
-        xbox_name++;
-    snprintf(out, n, "%s/%s", dir, xbox_name);
-    for (i = strlen(dir); out[i]; i++)
-        if (out[i] == '\\') out[i] = '/';
+    if (!xbox_translate_path(xbox_name, out, (unsigned int)n)) {
+        dir = getenv("MC3_GAME_DIR");
+        if (!dir || !*dir)
+            return 0;
+        if (xbox_name[0] && xbox_name[1] == ':')
+            xbox_name += 2;
+        while (*xbox_name == '\\' || *xbox_name == '/')
+            xbox_name++;
+        snprintf(out, n, "%s/%s", dir, xbox_name);
+        for (i = strlen(dir); out[i]; i++)
+            if (out[i] == '\\') out[i] = '/';
+    }
+    /* "sdmc:/switch/..." reads to FFmpeg as a URL with a protocol named
+     * "sdmc", so every movie on the Switch fell back to the lifted decoder
+     * (2026-10-17). "file:" names the protocol; it hands the rest to open(),
+     * which knows sdmc:. A path starting with '/' has no scheme to misread. */
+    if (out[0] != '/' && strchr(out, ':') && strncmp(out, "file:", 5)) {
+        size_t len = strlen(out);
+        if (len + 5 < n) {
+            memmove(out + 5, out, len + 1);
+            memcpy(out, "file:", 5);
+        }
+    }
     return 1;
 }
 
