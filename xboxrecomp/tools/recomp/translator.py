@@ -23,7 +23,7 @@ import sys
 from .config import va_to_file_offset, is_code_address
 from . import config as _config
 from .disasm import Disassembler
-from .lifter import (Lifter, lift_basic_block, detect_seh_helpers,
+from .lifter import (Lifter, lift_basic_block, detect_seh_helpers, MIXED_WIDTH,
                      _RESULT_SNAPSHOT_SETTERS, _as_addr_set,
                      detect_setjmp_helpers, _func_ident, _operand_width)
 
@@ -33,8 +33,18 @@ def _merge_flag_states(states):
 
     CMP/TEST save their operands into function-local _fa/_fb/_fas/_fbs at
     runtime. A shared consumer can use whichever predecessor executed. Keep
-    operation and width equal because sign/parity handling depends on them;
-    arithmetic states still reconstruct operands and cannot use this merge.
+    the operation equal; arithmetic states still reconstruct operands and
+    cannot use this merge.
+
+    Widths may differ. Each snapshot is masked (_fa/_fb) and sign-extended
+    (_fas/_fbs) at its own compare's width, so equality, unsigned and signed
+    order read the same from any of them. Only SF/OF of the difference need
+    the width, so a mixed join is marked MIXED_WIDTH and _make_condition
+    answers those from it and refuses the rest. MSVC emits this shape for a
+    switch whose arms compare different things before one shared jcc:
+    `cmp eax, 7; jmp L` / `cmp word [esi+30h], 7` / `L: jne` (XACT's sound
+    state check in MC3). Refusing it left `if (_flags)`: never taken, and
+    every sound start was rejected.
     """
     if not states or any(not state or not state[0] for state in states):
         return None
@@ -50,15 +60,27 @@ def _merge_flag_states(states):
         if all(kind in SSE_COMPARES for kind, _ in states[1:]):
             return first
         return None
-    if first[0] in ("cmp", "test") and len(first[1]) == 2:
+    kind = _snapshot_kind(first[0])
+    if kind and len(first[1]) == 2:
         width = _operand_width(first[1][0]) or _operand_width(first[1][1])
-        for kind, ops in states[1:]:
-            if kind != first[0] or len(ops) != 2:
+        mixed = first[0] != kind
+        for setter, ops in states[1:]:
+            if _snapshot_kind(setter) != kind or len(ops) != 2:
                 return None
-            if (_operand_width(ops[0]) or _operand_width(ops[1])) != width:
-                return None
-        return first
+            if (setter != kind
+                    or (_operand_width(ops[0]) or _operand_width(ops[1])) != width):
+                mixed = True
+        return (MIXED_WIDTH + kind, first[1]) if mixed else first
     return _merge_zero_flag(states)
+
+
+def _snapshot_kind(setter):
+    """'cmp' or 'test' for a snapshot state, mixed-width or not; else None."""
+    if setter in ("cmp", "test"):
+        return setter
+    if setter and setter.startswith(MIXED_WIDTH):
+        return setter[len(MIXED_WIDTH):]
+    return None
 
 
 def _merge_zero_flag(states):

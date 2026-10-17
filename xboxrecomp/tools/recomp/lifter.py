@@ -308,6 +308,10 @@ def _fmt_operand_write(op, value_expr):
 
 # Maps jcc mnemonic → (cmp_macro, test_macro, description)
 # cmp_macro takes (lhs, rhs), test_macro takes (lhs, rhs)
+# Flag-setter prefix for a join of cmp/test snapshots of different widths
+# (translator._merge_flag_states): "~mixed:cmp", "~mixed:test".
+MIXED_WIDTH = "~mixed:"
+
 COND_MAP = {
     "je":   ("CMP_EQ",  "TEST_Z",  "equal / zero"),
     "jz":   ("CMP_EQ",  "TEST_Z",  "zero"),
@@ -539,6 +543,14 @@ def _make_condition(jcc, flag_setter, flag_ops):
         if jcc in ("jne", "jnz"):
             return f"({dest} != 0)", desc
         return None
+
+    # A join of cmp (or test) snapshots taken at different widths. The
+    # snapshots are width-normalised, so everything but the sign of the
+    # result reads the same from each; js/jns need the width, refuse them.
+    if flag_setter and flag_setter.startswith(MIXED_WIDTH):
+        if jcc in ("js", "jns"):
+            return None
+        flag_setter = flag_setter[len(MIXED_WIDTH):]
 
     # A cmp/test that is not fused with its jcc snapshots its operands into
     # _fa/_fb (zero-extended) and _fas/_fbs (sign-extended) at the point the
