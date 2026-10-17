@@ -26,7 +26,9 @@ echo "== 3/4 Python venv with capstone for the lift pipeline ($MC3_WORK/venv)"
 mkdir -p "$MC3_WORK"
 # --copies: work/ is on the shared folder, which may not take symlinks.
 [ -x "$MC3_WORK/venv/bin/python3" ] || python3 -m venv --copies "$MC3_WORK/venv"
-"$MC3_WORK/venv/bin/pip" install -q --upgrade pip capstone pytest numpy unicorn
+# Through the venv's python, not bin/pip: pip's script carries the venv's
+# absolute path in its first line and breaks when the repo folder is renamed.
+"$MC3_WORK/venv/bin/python3" -m pip install -q --upgrade pip capstone pytest numpy unicorn
 # No shell profile changes: tools/env.sh puts work/venv on PATH for the scripts.
 
 echo "== 4/4 Docker, for the Switch build in devkitPro's container (switch/devkitpro-image)"
