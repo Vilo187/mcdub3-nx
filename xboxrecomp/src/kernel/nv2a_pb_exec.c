@@ -4050,6 +4050,34 @@ void nv2a_pb_flip_retired(unsigned n)
     }
 }
 
+/* RECOMP_FLIP_VBLANK=1: without reported retires, at most one flip per
+ * vblank. A flip on the console completes on a vblank, so a title that
+ * advances a fixed step per frame is paced by it; here nothing waited, and
+ * MC3 ran at whatever the host drew (100+ fps in the menu, ~10x speed in
+ * the garage). Only the vblank counter is waited on -- the timer thread
+ * advances it whatever the guest does -- so this cannot wait on the title
+ * the way a retire handshake can (a hook on D3D's retirement, sub_003E4EF0,
+ * deadlocked to 4 fps: D3D retires only flips the GPU has passed). Off by
+ * default: a project turns it on. */
+static void flip_wait_vblank(void)
+{
+    extern uint32_t xbox_vblank_count(void);   /* kernel_bridge.c */
+    static int on = -1;
+    static uint32_t last;
+    ULONGLONG give_up;
+
+    if (on < 0) {
+        const char *e = getenv("RECOMP_FLIP_VBLANK");
+        on = e && *e == '1';
+    }
+    if (!on)
+        return;
+    give_up = GetTickCount64() + 50;            /* a stopped vblank: go on */
+    while (xbox_vblank_count() == last && GetTickCount64() < give_up)
+        Sleep(1);
+    last = xbox_vblank_count();
+}
+
 /* On the executor's thread: fold reported retires into the read index. */
 static void flip_apply_retired(void)
 {
@@ -4396,6 +4424,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             /* The stall ends when the buffer being read is the one just
              * finished. Nothing reports retired flips, so that is now. */
             s_gpu.flip_read = s_gpu.flip_write;
+            flip_wait_vblank();
         }
         /* And this is a completed swap, which is what a title's own swap
          * counter counts -- see xbox_Nv2aFrameCounterFlip. */
