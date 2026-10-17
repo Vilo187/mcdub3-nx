@@ -535,6 +535,8 @@ static int fetch_attr(const VertexAttr *a, uint32_t index, float out[4])
 #define NV097_SET_COMPOSITE_MATRIX_LAST  0x06BC
 #define NV097_SET_VIEWPORT_OFFSET_FIRST  0x0A20
 #define NV097_SET_VIEWPORT_OFFSET_LAST   0x0A2C
+#define NV097_SET_VIEWPORT_SCALE_FIRST   0x0AF0
+#define NV097_SET_VIEWPORT_SCALE_LAST    0x0AFC
 #define NV097_SET_TRANSFORM_EXEC_MODE    0x1E94
 #define NV_XFORM_MODE_PROGRAM            2   /* low two bits; 0 = fixed */
 
@@ -4466,10 +4468,28 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             s_gpu.composite_set = 1;
             break;
         }
+        /* The viewport registers are also vertex-program constants: the
+         * NV2A mirrors SET_VIEWPORT_SCALE and _OFFSET into XF context slots
+         * 0x3A and 0x3B, which are D3D's c[-38] and c[-37] -- the epilogue
+         * every Xbox D3D vertex shader ends with (oPos.xyz = r12 * c[-38] /
+         * r12.w + c[-37]) reads them there. Kept only as fixed-function
+         * registers, both stayed 0 for programs that never uploaded them
+         * as constants, and every such vertex landed on (0,0): MC3's cars
+         * drew nothing but their shadows (xemu mirrors them the same way). */
         if (method >= NV097_SET_VIEWPORT_OFFSET_FIRST
          && method <= NV097_SET_VIEWPORT_OFFSET_LAST) {
-            memcpy(&s_gpu.vp_offset[(method - NV097_SET_VIEWPORT_OFFSET_FIRST) / 4],
-                   &param, 4);
+            uint32_t k = (method - NV097_SET_VIEWPORT_OFFSET_FIRST) / 4;
+            memcpy(&s_gpu.vp_offset[k], &param, 4);
+            memcpy(&s_vp.c[0x3B][k], &param, 4);
+            s_vp.gen++;
+            s_vp.const_gen++;
+            break;
+        }
+        if (method >= NV097_SET_VIEWPORT_SCALE_FIRST
+         && method <= NV097_SET_VIEWPORT_SCALE_LAST) {
+            memcpy(&s_vp.c[0x3A][(method - NV097_SET_VIEWPORT_SCALE_FIRST) / 4], &param, 4);
+            s_vp.gen++;
+            s_vp.const_gen++;
             break;
         }
         if (method == NV097_SET_TRANSFORM_EXEC_MODE) {
