@@ -2891,6 +2891,13 @@ static long long vb_now_us(void)
 static long long     s_vb_next_us;                /* when the next vblank is due */
 static volatile LONG s_vb_count;                  /* vblanks delivered */
 
+/* Vblanks delivered so far: the GPU's frame clock, for RECOMP_FLIP_VBLANK
+ * (nv2a_pb_exec.c). */
+uint32_t xbox_vblank_count(void)
+{
+    return (uint32_t)s_vb_count;
+}
+
 /* For the fps reports: "vblank 59.9 Hz" since the previous call, dt s ago. */
 void xbox_vblank_report(double dt, char *buf, size_t n)
 {
