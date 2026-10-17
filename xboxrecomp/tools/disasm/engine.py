@@ -630,6 +630,17 @@ class DisasmEngine:
 
         if m == "push" and ops in ("esi", "edi", "ebx"):
             return True
+        # `push ecx` reserves one local slot (MSVC's short `sub esp, 4`), and
+        # a frameless function then saves its registers. Alone it is too
+        # common to be evidence; followed by a callee-saved push it is the
+        # start of a function. MC3's 0x00123420 (push ecx; push esi; mov
+        # esi, ecx) sits after a jump table the sweep read as code, and
+        # without this its seed was rejected: the menu's "go to garage"
+        # screen was never built.
+        if m == "push" and ops == "ecx" and len(insns) > 1:
+            nxt = insns[1]
+            if nxt.mnemonic == "push" and nxt.op_str in ("esi", "edi", "ebx", "ebp"):
+                return True
         if m == "sub" and ops.startswith("esp,"):
             return True
         if m == "mov" and ops.replace(" ", "") == "edi,edi":
