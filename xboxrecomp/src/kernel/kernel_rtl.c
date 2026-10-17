@@ -470,6 +470,21 @@ static void xbox_cs_clear_owner(CRITICAL_SECTION* cs)
     }
 }
 
+/* The uncontended half of RtlEnterCriticalSection: take it if it is free,
+ * or say so without waiting. kernel_bridge.c calls this with the guest lock
+ * still held and falls back to the full enter (lock released) only when the
+ * section is owned elsewhere. */
+BOOL xbox_RtlEnterCriticalSectionIfFree(PRTL_CRITICAL_SECTION CriticalSection)
+{
+    CRITICAL_SECTION* cs = xbox_cs_shadow(CriticalSection);
+    if (!cs || !TryEnterCriticalSection(cs))
+        return FALSE;
+    InterlockedIncrement(&g_cs_enters);
+    crt_lock_trace("take", CriticalSection);
+    xbox_cs_note_owner(cs);
+    return TRUE;
+}
+
 VOID __stdcall xbox_RtlEnterCriticalSection(PRTL_CRITICAL_SECTION CriticalSection)
 {
     CRITICAL_SECTION* cs = xbox_cs_shadow(CriticalSection);
