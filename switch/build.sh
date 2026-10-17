@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Build the Switch NRO and stage an SD-card layout:
 #
-#   <SD>/switch/mcdub3/mc3_recomp.nro      (mc3_recomp-vulkan.nro with VULKAN=1)
-#   <SD>/switch/mcdub3/game/               the extracted disc (never the ISO)
-#   <SD>/switch/mcdub3/mcdub3_env.txt      optional KEY=VALUE runtime switches
-#   <SD>/switch/mcdub3/mcdub3_log.txt      written when no nxlink host listens
+#   <SD>/switch/mcdub3-nx/mcdub3.nro          (mcdub3-vulkan.nro with VULKAN=1)
+#   <SD>/switch/mcdub3-nx/game/               the extracted disc (never the ISO)
+#   <SD>/switch/mcdub3-nx/mcdub3_env.txt      optional KEY=VALUE runtime switches
+#   <SD>/switch/mcdub3-nx/mcdub3_log.txt      written when no nxlink host listens
 #
 # Environment (defaults from tools/env.sh):
 #   DEVKITPRO      /opt/devkitpro (switch-dev, switch-sdl2, switch-mesa)
@@ -17,7 +17,7 @@
 #   LTO=1          link-time optimisation (LTO_JOBS, ~2 GB each)
 #   NO_GAME=1      stage only the NRO (skip syncing the disc)
 #
-# Then: copy <SD>/switch/mcdub3/ to the card, or `nxlink -s` the NRO, and start
+# Then: copy <SD>/switch/mcdub3-nx/ to the card, or `nxlink -s` the NRO, and start
 # it from hbmenu with title takeover (hold R on a game) for full RAM.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
@@ -25,7 +25,7 @@ mc3_check_lift_fresh
 
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 SD="${SD_ROOT:-$MC3_WORK/switch_sd}"
-NRO_NAME=mc3_recomp
+NRO_NAME=mcdub3
 SUFFIX=""
 ARGS=(-DMC3_VULKAN=OFF)
 if [ "${VULKAN:-0}" = "1" ]; then
@@ -46,14 +46,18 @@ JOBS="${JOBS:-$(mc3_default_jobs)}"
 [ -f "$DEVKITPRO/portlibs/switch/include/SDL2/SDL.h" ] || mc3_fail "switch-sdl2 missing"
 [ -f "$MC3_GEN_DIR/recomp_funcs.h" ] || mc3_fail "no generated code in $MC3_GEN_DIR (tools/regen.sh)"
 
+# The app's identity (name, author, version, icon): switch/app.env.
+source "$MC3_REPO/switch/app.env"
 cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja \
+    -DMC3_SWITCH_TITLE="$APP_NAME" -DMC3_SWITCH_AUTHOR="$APP_AUTHOR" \
+    -DMC3_SWITCH_VERSION="$APP_VERSION" -DMC3_SWITCH_ICON="$MC3_REPO/$APP_ICON" \
     -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" \
-    -DMC3_APP="$MC3_APP" "${ARGS[@]}" >/dev/null
+    -DMC3_APP="$MC3_APP" -DMC3_SD_DIR="$MC3_SD_DIR" "${ARGS[@]}" >/dev/null
 ninja -C "$BUILD" -j"$JOBS"
 
-DEST="$SD/switch/$MC3_APP"
+DEST="$SD/switch/$MC3_SD_DIR"
 mkdir -p "$DEST"
 cp "$BUILD/mc3_recomp.nro" "$DEST/$NRO_NAME.nro"
 # Keep the ELF of every staged NRO, by hash: crash offsets in a console log
@@ -67,6 +71,11 @@ if [ "${NO_GAME:-0}" != "1" ]; then
     # copying (same disk, no extra space); only changed files are copied.
     rsync -a --size-only --link-dest="$MC3_GAME_DIR/" \
         "$MC3_GAME_DIR/" "$DEST/game/" --exclude '*_analysis.json'
+fi
+# Runtime switches for the console (switch/<app>_env.txt), staged with the NRO.
+if [ -f "$MC3_REPO/switch/${MC3_APP}_env.txt" ]; then
+    cp "$MC3_REPO/switch/${MC3_APP}_env.txt" "$DEST/${MC3_APP}_env.txt"
+    echo "  settings: ${MC3_APP}_env.txt staged"
 fi
 echo
 echo "staged $DEST"

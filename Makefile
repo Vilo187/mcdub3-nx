@@ -19,10 +19,10 @@ LOGS := $(WORK)/logs
 NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
-export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE \
+export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS
 
-.PHONY: help setup check-vm extract lift regen relift \
+.PHONY: help setup nsp check-vm extract lift regen relift \
         build build-vk build-debug run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
         switch switch-vk switch-lto send \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
@@ -125,14 +125,19 @@ switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-imag
 	@mkdir -p $(LOGS)
 	bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 
+nsp:  ## The NSP forwarder (home-menu app) from switch/app.env, in the container; KEYS=keys/prod.keys
+	@mkdir -p $(LOGS)
+	bash switch/$(if $(filter 1,$(NATIVE)),nsp.sh,docker_build.sh switch/nsp.sh) 2>&1 | tee $(LOGS)/nsp_$(NOW).log
+
 switch-vk:  ## Switch build with Vulkan (NVK)
 	$(MAKE) switch VULKAN=1
 
 switch-lto:  ## Switch build with link-time optimisation
 	$(MAKE) switch LTO=1
 
-send:  ## Send the NRO to the console over nxlink (hbmenu, press Y)
-	nxlink -s $(WORK)/switch_sd/switch/mcdub3/mc3_recomp$(if $(filter 1,$(VULKAN)),-vulkan,).nro
+send:  ## Send the NRO over nxlink (hbmenu, press Y) and log the game to work/logs/switch_*.log; SWITCH_IP=a.b.c.d, NATIVE=1
+	@mkdir -p $(LOGS)
+	bash switch/send.sh 2>&1 | tee $(LOGS)/switch_run_$(NOW).log
 
 ## Housekeeping
 log:  ## Show the end of the newest log in work/logs

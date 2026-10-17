@@ -9,13 +9,16 @@
  *
  * Game data is the extracted disc (default.xbe + data), never the ISO:
  *   Linux:  $MC3_GAME_DIR, else ./game
- *   Switch: sdmc:/switch/<MC3_APP>/game
+ *   Switch: sdmc:/switch/<MC3_SD_DIR>/game
  */
 
 #ifndef _WIN32
+#  include <pthread.h>
 #  include <signal.h>
 #  include <unistd.h>
 #endif
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -29,6 +32,9 @@
 #  error "config/xbe_facts.h is missing: run tools/first_lift.sh on the extracted disc"
 #endif
 
+#ifndef MC3_SD_DIR
+#  define MC3_SD_DIR "mcdub3-nx"
+#endif
 #ifndef MC3_APP
 #  define MC3_APP "mcdub3"
 #endif
@@ -38,8 +44,8 @@
 void switch_boot(void);
 void switch_shutdown(void);
 void switch_error_dialog(const char *msg);
-#  define MC3_DEFAULT_GAME_DIR "sdmc:/switch/" MC3_APP "/game"
-#  define MC3_DEFAULT_SAVE_DIR "sdmc:/switch/" MC3_APP "/save"
+#  define MC3_DEFAULT_GAME_DIR "sdmc:/switch/" MC3_SD_DIR "/game"
+#  define MC3_DEFAULT_SAVE_DIR "sdmc:/switch/" MC3_SD_DIR "/save"
 #else
 #  define MC3_DEFAULT_GAME_DIR "game"
 #  define MC3_DEFAULT_SAVE_DIR NULL
@@ -321,7 +327,7 @@ static int game_main(void)
          *   T:\ U:\ Z:\ and the raw partition images        -> save_dir
          * MC3_SAVE_DIR (tools/run_linux.sh: work/save) keeps the latter in
          * the repo instead of ~/.local/share; mcdub3_env.txt can set either
-         * on the Switch, where the defaults are sdmc:/switch/mcdub3/{game,save}. */
+         * on the Switch, where the defaults are sdmc:/switch/mcdub3-nx/{game,save}. */
         const char *save_dir = getenv("MC3_SAVE_DIR");
         xbox_path_init(game_dir, save_dir && save_dir[0] ? save_dir : MC3_DEFAULT_SAVE_DIR);
     }
