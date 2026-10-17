@@ -2496,7 +2496,9 @@ static void bridge_AvSetDisplayMode(void)
          * correctly a few megabytes away. */
         {
             extern int xbox_ContiguousIsPhysical(uint32_t phys);
-            if (fb_va && xbox_ContiguousIsPhysical(fb_va))
+            if (fb_va & XBOX_BUS_RAM_TAG)
+                fb_va &= ~XBOX_BUS_RAM_TAG;
+            else if (fb_va && xbox_ContiguousIsPhysical(fb_va))
                 fb_va = XBOX_CONTIG_BASE + fb_va;
         }
 

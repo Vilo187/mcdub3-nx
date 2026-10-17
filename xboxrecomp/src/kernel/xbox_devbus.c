@@ -32,6 +32,19 @@ int xbox_ContiguousIsPhysical(uint32_t phys)
     return phys >= g_contig_phys_lo && phys < g_contig_phys_hi;
 }
 
+/* The bus address MmGetPhysicalAddress gives ordinary RAM at `va`.
+ *
+ * Below the arena's start (the image, static data) the numbers cannot
+ * collide, so they pass through as before. From there to the end of RAM the
+ * arena can hand out the same numbers, now or later, so the address carries
+ * XBOX_BUS_RAM_TAG (kernel.h) and the device resolvers take it as a VA. */
+uint32_t xbox_BusAddressOfRam(uint32_t va)
+{
+    if (g_contig_phys_hi && va >= g_contig_phys_lo && va < XBOX_CONTIG_SIZE)
+        return va | XBOX_BUS_RAM_TAG;
+    return va;
+}
+
 /* Device interrupt lines, level-triggered, one bit per vector.
  *
  * A device model (the APU on vector 5) asserts its line; the timer thread
