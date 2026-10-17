@@ -514,5 +514,9 @@
  {
   "start": "0x0029A7B0",
   "note": "Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. push ecx; push esi; mov esi,ecx (thiscall) after int3 padding; pointer in .rdata at 0x00440214."
+ },
+ {
+  "start": "0x0030F0D0",
+  "note": "Indirect-call target hit on the 2026-10-17 run when selecting a profile at the title screen ([ICALL] Failed to resolve VA 0x0030F0D0, then the game stopped). thiscall (push ebx; push ebp; push esi; mov esi,ecx) after int3 padding, ends with ret 4 at 0x0030F1FC; sub_0030F200 stores its address at 0x0030F2AA as a callback. The bytes before it (0x0030EF97..0x0030F0C4) are sub_0030EED6's switch arms and table, already lifted, so the seed splits nothing."
  }
 ]

@@ -25,6 +25,7 @@ Nothing here has been sent yet.
 | 5b | Renderer: fog factor 0 for fixed-function draws and for vertex programs that write no fog, so they become the fog colour | `dab6e43`, `2503293` | nfsu2-sw (gl_vsh.c, nv2a_gl, nv2a_vk) | yes |
 | 5c | Executor: every inline draw taken as pre-transformed (only XYZRHW is) | `b889914` | nfsu2-sw (nv2a_pb_exec.c) | yes |
 | 5d | Input: keyboard does nothing on Linux (events dropped, key state stubbed) | `10f8602` | nfsu2-sw (input/, renderers) | yes |
+| 5e | Lifter: a jcc after a join of cmp/test of different widths lifts as `if (_flags)`, never taken | `77dc676` | xboxrecomp + nfsu2-sw | yes, both |
 
 1. **`movsx` from `bp`/`sp`** (`tools/recomp/lifter.py`, `_lift_movsx`). The
    16-bit source list has ax, bx, cx, dx, si, di but not bp, sp, so
@@ -67,6 +68,14 @@ Nothing here has been sent yet.
    dark grey. Fix: the NV2A fog unit (gen mode, linear/exp/exp2 with
    FOG_PARAMS, factor 1 when fog is off) in GL and Vulkan. Bias constants
    follow xemu; MC3's parameters give a sensible 1 at the camera.
+
+5e. **Mixed-width flag join** (`tools/recomp/translator.py`,
+   `_merge_flag_states`). A jcc reached from `cmp eax, 7` on one edge and
+   `cmp word [esi+30h], 7` on the other got no flag state, so it lifted as
+   `if (_flags)`: never taken. The cmp/test snapshots are already masked
+   and sign-extended at each compare's width, so only js/jns depend on it.
+   In MC3 this was XACT's sound state check: every sound start was refused,
+   with no music or effects at all. Regression tests in `test_flag_join.py`.
 
 ## Issues to report (no patch from us yet)
 
