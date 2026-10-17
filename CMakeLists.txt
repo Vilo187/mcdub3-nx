@@ -35,9 +35,11 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/xbe_facts.h")
     message(FATAL_ERROR "config/xbe_facts.h is missing: run tools/first_lift.sh.")
 endif()
 
-# On the Switch: sdmc:/switch/<MC3_APP>/ for the game, logs, settings and caches.
-set(MC3_APP "mcdub3" CACHE STRING "Application name and Switch data directory")
-set(XBOXRECOMP_APP_NAME "${MC3_APP}" CACHE STRING "" FORCE)
+# On the Switch: sdmc:/switch/<MC3_SD_DIR>/ for the game, saves, settings and
+# caches; files in it are named after MC3_APP (<MC3_APP>.nro, _env.txt, _log.txt).
+set(MC3_APP "mcdub3" CACHE STRING "Application name: the NRO and its files")
+set(MC3_SD_DIR "mcdub3-nx" CACHE STRING "Switch data directory, sdmc:/switch/<this>")
+set(XBOXRECOMP_APP_NAME "${MC3_SD_DIR}" CACHE STRING "" FORCE)
 
 # Vulkan (nv2a_vk; NVK on the Switch) instead of OpenGL (nv2a_gl).
 option(MC3_VULKAN "Render with Vulkan instead of OpenGL" OFF)
@@ -60,7 +62,7 @@ endif()
 
 add_executable(${PROJECT_NAME} ${MC3_SOURCES} ${MC3_GEN_SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)
-target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_APP="${MC3_APP}")
+target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_APP="${MC3_APP}" MC3_SD_DIR="${MC3_SD_DIR}")
 if(MC3_VULKAN)
     target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_VULKAN=1)
 endif()

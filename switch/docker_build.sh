@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The Switch build, inside devkitPro's own container image.
 #
-#   switch/docker_build.sh            (make switch; NATIVE=1 skips this)
+#   switch/docker_build.sh [script]   (make switch / make nsp; NATIVE=1 skips this)
+#                                     script: default switch/build.sh
 #
 # Why a container: one toolchain everywhere -- this VM, another developer's
 # machine, GitHub Actions -- pinned by digest in switch/devkitpro-image, with
@@ -22,13 +23,14 @@ DOCKER=(docker)
 docker info >/dev/null 2>&1 || DOCKER=(sudo docker)   # not in the docker group yet
 
 ENVS=()
-for v in MC3_WORK MC3_GAME_DIR MC3_GEN_DIR MC3_APP SD_ROOT BUILD_DIR JOBS VULKAN LTO LTO_JOBS NO_GAME; do
+SCRIPT="${1:-switch/build.sh}"
+for v in MC3_WORK MC3_GAME_DIR MC3_GEN_DIR MC3_APP MC3_SD_DIR SD_ROOT BUILD_DIR JOBS VULKAN LTO LTO_JOBS NO_GAME KEYS; do
     [ -n "${!v:-}" ] && ENVS+=(-e "$v=${!v}")
 done
 
-echo "switch build in $IMAGE"
+echo "$SCRIPT in $IMAGE"
 exec "${DOCKER[@]}" run --rm \
     -u "$(id -u):$(id -g)" -e HOME=/tmp \
     -v "$MC3_REPO:$MC3_REPO" -w "$MC3_REPO" \
     "${ENVS[@]}" \
-    "$IMAGE" bash switch/build.sh
+    "$IMAGE" bash "$SCRIPT"

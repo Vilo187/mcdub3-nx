@@ -2,8 +2,8 @@
  * switch_nx.c -- Nintendo Switch (Horizon / libnx) boot glue.
  *
  *   log       nxlink to the PC when launched with `nxlink -s`, otherwise
- *             sdmc:/switch/<MC3_APP>/<MC3_APP>_log.txt
- *   settings  sdmc:/switch/<MC3_APP>/<MC3_APP>_env.txt, KEY=VALUE per line,
+ *             sdmc:/switch/<MC3_SD_DIR>/<MC3_APP>_log.txt
+ *   settings  sdmc:/switch/<MC3_SD_DIR>/<MC3_APP>_env.txt, KEY=VALUE per line,
  *             '#' starts a comment; applied with setenv before boot, so every
  *             RECOMP_* / MC3_* switch works on the console without a rebuild
  *   crashes   CPU exception handler: host PC as an ELF offset (for
@@ -28,7 +28,10 @@
 #ifndef MC3_APP
 #  define MC3_APP "mcdub3"
 #endif
-#define APP_DIR "sdmc:/switch/" MC3_APP
+#ifndef MC3_SD_DIR
+#  define MC3_SD_DIR "mcdub3-nx"
+#endif
+#define APP_DIR "sdmc:/switch/" MC3_SD_DIR
 
 void print_guest_state(void);   /* main.c */
 extern char __start__[];        /* libnx: the ELF's load address */
@@ -108,11 +111,10 @@ void __libnx_exception_handler(ThreadExceptionDump *ctx)
             (unsigned long long)(ctx->pc.x - base),
             (unsigned long long)ctx->far.x,
             (unsigned long long)(ctx->lr.x - base));
-    fprintf(stderr, "  aarch64-none-elf-addr2line -f -e mc3_recomp.elf 0x%llX\n",
+    fprintf(stderr, "  aarch64-none-elf-addr2line -f -e work/elf/mcdub3-<build>.elf 0x%llX\n",
             (unsigned long long)(ctx->pc.x - base));
     print_guest_state();
-    fflush(stdout);
-    fflush(stderr);
+    log_flush_crash();
     svcExitProcess();
 }
 

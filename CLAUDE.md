@@ -42,7 +42,7 @@ Technical docs (stages, what sits where, VM, the loop): CONTRIBUTING.md, the sou
 | ready for console | `make switch send`, Eden, then hardware |
 
 Runtime switches: any `RECOMP_*` / `MC3_*` variable; on the Switch in
-`sdmc:/switch/mcdub3/mcdub3_env.txt`. The full `RECOMP_*` list with meanings is
+`sdmc:/switch/mcdub3-nx/mcdub3_env.txt`. The full `RECOMP_*` list with meanings is
 in nfsu2-sw's README (Configuration section); the toolkit is the same.
 
 ## Lessons inherited from nfsu2-sw (verify for MC3)

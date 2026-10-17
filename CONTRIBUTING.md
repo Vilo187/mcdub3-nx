@@ -130,14 +130,14 @@ game (lifted code)        \Device\CdRom0\..., D:\..., \Device\Harddisk0\Partitio
 
 | | Linux (debug) | Switch |
 |---|---|---|
-| `game_dir` | `<repo>/game` (tools/env.sh → `MC3_GAME_DIR`) | `sdmc:/switch/mcdub3/game` |
-| `save_dir` | `<repo>/work/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3/save` |
+| `game_dir` | `<repo>/game` (tools/env.sh → `MC3_GAME_DIR`) | `sdmc:/switch/mcdub3-nx/game` |
+| `save_dir` | `<repo>/work/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3-nx/save` |
 | chosen by | the scripts, through environment variables | `src/main.c` defaults (`#ifdef __SWITCH__`) |
-| override | `MC3_GAME_DIR=…`, `MC3_SAVE_DIR=…` | the same keys in `sdmc:/switch/mcdub3/mcdub3_env.txt` |
+| override | `MC3_GAME_DIR=…`, `MC3_SAVE_DIR=…` | the same keys in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` |
 
 So nothing about files is decided twice: the scripts in `tools/` only exist on
 the development machine and set the Linux folders; `switch/build.sh` stages the
-same layout on the SD card (`work/switch_sd/switch/mcdub3/`); the game code and
+same layout on the SD card (`work/switch_sd/switch/mcdub3-nx/`); the game code and
 the path layer are identical on both.
 
 ## Project layout
@@ -149,7 +149,7 @@ Legend: **[git]** tracked · **[ignored]** gitignored (local only) ·
 **[generated]** written by a tool, safe to delete and regenerate.
 
 ```
-mcdub3-sw/
+mcdub3-nx/
 ├── Makefile                  [git] the development loop; `make` lists targets
 ├── CMakeLists.txt            [git] stage 2: one C project, Linux and Switch hosts
 ├── README.md                 [git] what this is, quick start
@@ -184,8 +184,10 @@ mcdub3-sw/
 │   └── extract_disc.sh         make extract: ISO → game/
 ├── switch/
 │   ├── build.sh              [git] the NRO build + SD-card staging (runs in the container)
-│   ├── docker_build.sh       [git] make switch: build.sh inside devkitPro's pinned image
-│   └── devkitpro-image       [git] the pinned image (tag@digest), shared with CI
+│   ├── nsp.sh                [git] make nsp: the home-menu forwarder (nx-hbloader + hacBrewPack)
+│   ├── docker_build.sh       [git] make switch / nsp: a script inside devkitPro's pinned image
+│   ├── devkitpro-image       [git] the pinned image (tag@digest), shared with CI
+│   └── app.env               [git] the app's identity: name, author, version, title ID, icon, NRO path
 ├── vm/
 │   └── setup-ubuntu.sh       [git] make setup: packages, Docker + devkitPro image, Python venv
 │
@@ -237,8 +239,8 @@ mcdub3-sw/
     │   │                       object files for gen/, src/ and the toolkit runtime
     │   └── mc3_recomp          the Linux executable
     ├── build-linux-vk/, build-linux-dbg/      variants (VULKAN=1, DEBUG=1)
-    ├── build-switch/, build-switch-vk/        Switch build trees (make switch); mc3_recomp.nro/.elf
-    ├── switch_sd/            [generated] SD-card staging: switch/mcdub3/{mc3_recomp.nro, game/}
+    ├── build-switch/, build-switch-vk/        Switch build trees (make switch); mc3_recomp.elf -> mcdub3.nro
+    ├── switch_sd/            [generated] SD-card staging: switch/mcdub3-nx/{mcdub3.nro, game/}
     ├── elf/                  [generated] one ELF per staged NRO, to resolve console crash addresses
     ├── save/                 [generated] the title's drive letters (T:, U:, Z:) and partition images
     ├── logs/                 [generated] every make lift/build/run/switch log, timestamped
@@ -281,14 +283,14 @@ UTM both work. Why: [ADR 0003](docs/decisions/0003-linux-vm-debug-loop.md).
      expanding disk only uses what is actually written; see the budget below.
    - **Hardware → Graphics:** leave Parallels' default; check it after
      install (below).
-   - **Options → Sharing:** share **only the repo folder** (`mcdub3-sw`), not
+   - **Options → Sharing:** share **only the repo folder** (`mcdub3-nx`), not
      the whole home folder. It shows up under `/media/psf/`.
 2. Install **Parallels Tools** when prompted: shared folders and the
    graphics driver need it.
-3. Symlink the share somewhere short: `ln -s /media/psf/mcdub3-sw ~/mcdub3-sw`.
+3. Symlink the share somewhere short: `ln -s /media/psf/mcdub3-nx ~/mcdub3-nx`.
    Every path is relative to the repo root: the disc in `game/`, everything
    generated in `work/` (both gitignored). Run the scripts from the root.
-4. `cd ~/mcdub3-sw && bash vm/setup-ubuntu.sh`, then open a new shell.
+4. `cd ~/mcdub3-nx && bash vm/setup-ubuntu.sh`, then open a new shell.
 
 ### Ubuntu 22.04
 
@@ -389,7 +391,7 @@ shared folder; nothing is copied to the VM disk. Run everything from the repo
 root:
 
 ```sh
-cd ~/mcdub3-sw
+cd ~/mcdub3-nx
 bash tools/first_lift.sh
 ```
 
@@ -415,9 +417,18 @@ installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
 ## Sending builds to the Switch
 
 - **nxlink** (fastest): open hbmenu, press **Y** (netloader), then
-  `nxlink -s work/switch_sd/switch/mcdub3/mc3_recomp.nro`. `-s` keeps the
+  `nxlink -s work/switch_sd/switch/mcdub3-nx/mcdub3.nro`. `-s` keeps the
   connection open and streams the log to your terminal. The game data must
-  already be on the card at `sdmc:/switch/mcdub3/game/`.
-- **SD card**: copy `work/switch_sd/switch/mcdub3/` to the card.
+  already be on the card at `sdmc:/switch/mcdub3-nx/game/`.
+- **SD card**: copy `work/switch_sd/switch/mcdub3-nx/` to the card.
 - Start with **title takeover** (hold R while launching a game). Applet mode
   leaves too little memory.
+- Or install the **NSP forwarder**: `make nsp` builds
+  `work/nsp/mcdub3-<version>.nsp`, a home-menu app that starts
+  `sdmc:/switch/mcdub3-nx/mcdub3.nro` as an application (full memory). It is
+  nx-hbloader (devkitPro's NRO loader) built with that path and our title ID,
+  packed by hacBrewPack with your console's keys (`keys/prod.keys`, never
+  committed). Name, author, version, title ID and icon come from
+  `switch/app.env`, which also feeds the NRO's own metadata. The icon,
+  `assets/icon.jpg`, must be a baseline 256x256 JPEG without EXIF data. The
+  NSP holds only the forwarder: a new game build needs only a new NRO.

@@ -40,8 +40,10 @@ mc3_python() {
     exit 1
 }
 
-# The Switch app name: sdmc:/switch/$MC3_APP/ on the card.
+# The Switch app: files named $MC3_APP (.nro, _env.txt, _log.txt) in
+# sdmc:/switch/$MC3_SD_DIR/ on the card.
 export MC3_APP="${MC3_APP:-mcdub3}"
+export MC3_SD_DIR="${MC3_SD_DIR:-mcdub3-nx}"
 
 # Parallel compile jobs: ~1.5 GB of RAM per job on the generated chunks.
 mc3_default_jobs() {

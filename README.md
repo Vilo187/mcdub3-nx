@@ -17,7 +17,7 @@ Skeleton. The lift pipeline runs; the game has not been lifted yet.
 
 ```
 default.xbe ──xboxrecomp (Python)──▶ lifted C ──┬── GCC, Linux ──▶ windowed debug build
-                                                └── devkitA64 ───▶ mc3_recomp.nro (Switch)
+                                                └── devkitA64 ───▶ mcdub3.nro (Switch)
 ```
 
 ## Quick start (in the Ubuntu ARM64 VM: CONTRIBUTING.md)
@@ -56,11 +56,11 @@ Everything is relative to the repo root, and both folders are gitignored:
 ## On the Switch
 
 ```
-sdmc:/switch/mcdub3/
-├── mc3_recomp.nro
-├── mcdub3_env.txt      optional: KEY=VALUE per line (any RECOMP_* / MC3_* switch)
-├── mcdub3_log.txt      written when not launched through nxlink
-└── game/               the extracted disc (not the ISO)
+sdmc:/switch/mcdub3-nx/
+├── mcdub3.nro
+├── mcdub3_env.txt   optional: KEY=VALUE per line (any RECOMP_* / MC3_* switch)
+├── mcdub3_log.txt   written when not launched through nxlink
+└── game/            the extracted disc (not the ISO)
 ```
 
 Start with title takeover (hold **R** while launching a game).
