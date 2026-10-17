@@ -108,36 +108,54 @@ target_link_libraries(${PROJECT_NAME} PRIVATE m)
 # Movies: FFmpeg decodes Bink video in place of the lifted decoder
 # (src/bink_native.c). Linux only for now; the Switch needs its own LGPL,
 # Bink-only FFmpeg build. Without FFmpeg the lifted decoder plays the movies.
-option(MC3_NATIVE_BINK "Decode Bink movie video with FFmpeg" ON)
-if(MC3_NATIVE_BINK AND NOT NINTENDO_SWITCH)
+option(MC3_NATIVE_BINK "Decode Bink movies (video and sound) with FFmpeg" ON)
+if(MC3_NATIVE_BINK)
+    # Linux: the system's shared FFmpeg. Switch: devkitPro's static
+    # switch-ffmpeg from the portlibs (in the pinned container image; GPL
+    # build, all decoders, NEON) -- linked with its static dependency list.
+    if(NINTENDO_SWITCH AND NOT PKG_CONFIG_EXECUTABLE
+       AND EXISTS "$ENV{DEVKITPRO}/portlibs/switch/bin/aarch64-none-elf-pkg-config")
+        set(PKG_CONFIG_EXECUTABLE "$ENV{DEVKITPRO}/portlibs/switch/bin/aarch64-none-elf-pkg-config")
+    endif()
     find_package(PkgConfig)
     if(PkgConfig_FOUND)
-        pkg_check_modules(MC3_FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil)
+        if(NINTENDO_SWITCH)
+            pkg_check_modules(MC3_FFMPEG libavformat libavcodec libavutil)
+        else()
+            pkg_check_modules(MC3_FFMPEG IMPORTED_TARGET libavformat libavcodec libavutil)
+        endif()
     endif()
     if(MC3_FFMPEG_FOUND)
         target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_NATIVE_BINK=1)
-        target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::MC3_FFMPEG)
+        if(NINTENDO_SWITCH)
+            target_include_directories(${PROJECT_NAME} PRIVATE ${MC3_FFMPEG_STATIC_INCLUDE_DIRS})
+            target_link_libraries(${PROJECT_NAME} PRIVATE ${MC3_FFMPEG_STATIC_LDFLAGS})
+        else()
+            target_link_libraries(${PROJECT_NAME} PRIVATE PkgConfig::MC3_FFMPEG)
+        endif()
         # Movie sound plays on the runtime's software mixer (apu/apu.h).
         set_property(SOURCE src/bink_native.c APPEND PROPERTY
             INCLUDE_DIRECTORIES ${XBOXRECOMP_DIR}/src)
-        message(STATUS "Bink video: FFmpeg ${MC3_FFMPEG_libavcodec_VERSION}")
+        message(STATUS "Bink movies: FFmpeg ${MC3_FFMPEG_libavcodec_VERSION}")
     else()
-        message(STATUS "Bink video: FFmpeg not found, lifted decoder")
+        message(STATUS "Bink movies: FFmpeg not found, lifted decoder")
     endif()
 endif()
 
 # ── Nintendo Switch homebrew (devkitA64 + libnx) ────────────────
 if(NINTENDO_SWITCH)
     set(MC3_SWITCH_TITLE "Midnight Club 3 (Xbox recomp)" CACHE STRING "Title in hbmenu")
-    set(MC3_SWITCH_AUTHOR "mcdub3-sw" CACHE STRING "Author in hbmenu")
-    set(MC3_SWITCH_VERSION "0.0.1")
+    set(MC3_SWITCH_AUTHOR "mcdub3-nx" CACHE STRING "Author in hbmenu")
+    set(MC3_SWITCH_VERSION "0.0.1" CACHE STRING "Version in hbmenu")   # switch/app.env sets all four
     set(MC3_SWITCH_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg" CACHE FILEPATH
         "256x256 JPEG icon (libnx default when missing)")
 
     if(MC3_VULKAN)
         target_link_libraries(${PROJECT_NAME} PRIVATE nx m)    # NVK comes with nv2a_vk
     else()
-        target_link_libraries(${PROJECT_NAME} PRIVATE EGL glapi drm_nouveau nx m)
+        # stdc++ after Mesa: its GLSL compiler is C++, and with FFmpeg's static
+        # flags in the line, CMake put Mesa after SDL2's -lstdc++ (2026-10-16).
+        target_link_libraries(${PROJECT_NAME} PRIVATE EGL glapi drm_nouveau stdc++ nx m)
     endif()
 
     set(MC3_NACP "${CMAKE_CURRENT_BINARY_DIR}/${MC3_APP}.nacp")
