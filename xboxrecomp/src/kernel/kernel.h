@@ -398,6 +398,17 @@ typedef VOID (__stdcall *PXBOX_SYSTEM_ROUTINE)(PVOID StartContext);
 #define XBOX_CONTIG_BASE 0x80000000u
 #define XBOX_CONTIG_SIZE (64u * 1024u * 1024u)
 
+/* Bus address tag for ordinary guest RAM. The window above is separate
+ * storage, so its physical addresses (VA - XBOX_CONTIG_BASE) are the same
+ * numbers as heap VAs: MC3's decoded music sits at heap 0x0120FF80, inside
+ * the range the arena had handed out, and the APU played the window's bytes
+ * at that offset instead. MmGetPhysicalAddress therefore marks RAM the arena
+ * could overlap with this bit -- above any physical address the 64 MB window
+ * can produce -- and every device resolver (APU, NV2A executor, OHCI) reads
+ * a tagged address as the VA without it. xbox_devbus.c. */
+#define XBOX_BUS_RAM_TAG 0x04000000u
+uint32_t xbox_BusAddressOfRam(uint32_t va);
+
 /* Default GPU instance size, used when a caller asks to claim everything. */
 #define XBOX_GPU_INSTANCE_DEFAULT (128u * 1024u)
 

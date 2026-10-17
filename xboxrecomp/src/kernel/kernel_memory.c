@@ -181,7 +181,7 @@ ULONG_PTR __stdcall xbox_MmGetPhysicalAddress(PVOID BaseAddress)
     uint32_t va = (uint32_t)(uintptr_t)BaseAddress;
     return (ULONG_PTR)((va >= XBOX_CONTIG_BASE &&
                         (uint64_t)va < (uint64_t)XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE)
-                     ? va - XBOX_CONTIG_BASE : va);
+                     ? va - XBOX_CONTIG_BASE : xbox_BusAddressOfRam(va));
 }
 
 VOID __stdcall xbox_MmPersistContiguousMemory(PVOID BaseAddress, ULONG NumberOfBytes, BOOLEAN Persist)

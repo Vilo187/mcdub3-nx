@@ -484,6 +484,8 @@ extern int xbox_ContiguousIsPhysical(uint32_t phys);
 
 static uint32_t bus_to_va(uint32_t bus)
 {
+    if (bus & XBOX_BUS_RAM_TAG)                 /* ordinary RAM: kernel.h */
+        return bus & ~XBOX_BUS_RAM_TAG;
     if (bus && xbox_ContiguousIsPhysical(bus))
         return OHCI_CONTIG_BASE + bus;
     /* Below the XBE base (0x10000) nothing is RAM a driver could DMA into as

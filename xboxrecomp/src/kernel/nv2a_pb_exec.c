@@ -104,6 +104,9 @@ static uint32_t dma_resolve(uint32_t offset)
 {
     extern int xbox_ContiguousIsPhysical(uint32_t phys);
 
+    if (offset & XBOX_BUS_RAM_TAG)              /* ordinary RAM: kernel.h */
+        return offset & ~XBOX_BUS_RAM_TAG;
+
     /* Did this runtime hand the offset out as contiguous memory? Then the
      * bytes live in the window, and that is not a guess: the arena is a bump
      * allocator from XBOX_CONTIG_BASE, so everything below its high-water
