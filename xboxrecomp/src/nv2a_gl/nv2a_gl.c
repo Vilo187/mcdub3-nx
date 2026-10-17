@@ -214,12 +214,21 @@ static GlSurf *surf_get(uint32_t va, uint32_t w, uint32_t h,
      * for the HUD, every frame. Rebuilding (and clearing) the surface on
      * each change left only the HUD, over a black 3D world. Keep the
      * surface while the clip fits; grow it when it does not. */
-    if (s && s->w == w && s->h >= h) {
+    /* Both ways: MC3 draws its race minimap into the back buffer clipped
+     * to 175x451 (pitch unset for that pass, so the width came from the
+     * clip). Matching the width exactly rebuilt the surface at 175 wide --
+     * the finished race scene deleted, the minimap drawn into an empty
+     * target, and that target presented: a black screen with a minimap,
+     * every frame of a race. A clip that fits uses the surface; one that
+     * does not grows it to cover both, never shrinks it. */
+    if (s && s->w >= w && s->h >= h) {
         s->used = s_frame;
         return s;
     }
-    if (s && s->w == w && s->h > h)
-        h = s->h;
+    if (s) {
+        if (s->w > w) w = s->w;
+        if (s->h > h) h = s->h;
+    }
     if (!s) {
         for (i = 0; i < GL_MAX_SURF; i++) {
             if (!s_surf[i].fbo) { victim = &s_surf[i]; break; }
