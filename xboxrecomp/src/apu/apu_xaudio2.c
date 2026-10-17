@@ -248,6 +248,11 @@ void xa2_get_stats(Xa2Stats *out)
 
 #include <stdlib.h>
 #include <SDL.h>
+#if !defined(__SWITCH__)
+#include <fcntl.h>
+#include <signal.h>
+#include <unistd.h>
+#endif
 
 #define SDLA_SAMPLE_RATE   48000
 #define SDLA_CHANNELS      2
@@ -347,7 +352,8 @@ int xa2_queue_target(void)
  * device (48 kHz s16 stereo, after volume and limiter), from <start> seconds
  * after the device opened, kept in RAM and written in one go when full -- a
  * console capture to compare with a Linux one (SD writes while playing would
- * disturb what is being measured). */
+ * disturb what is being measured). A run that ends first (exit, Ctrl+C)
+ * writes what it has. */
 static struct {
     int      on;
     FILE    *f;
@@ -356,6 +362,36 @@ static struct {
     int16_t *buf;
     size_t   n, cap;                    /* int16 values */
 } s_dump;
+
+static void dump_write(void);
+
+#if !defined(__SWITCH__)
+/* Ctrl+C: write what was captured (open/write only: async-signal-safe),
+ * then end the run as the signal would have. */
+static void dump_on_signal(int sig)
+{
+    /* Ctrl+C also ends the `| tee` the run logs through; the threads still
+     * logging would then take SIGPIPE and kill the process mid-write. */
+    signal(SIGPIPE, SIG_IGN);
+    if (s_dump.on) {
+        int fd = open(s_dump.path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        s_dump.on = 0;
+        if (fd >= 0) {
+            const char *p = (const char *)s_dump.buf;
+            size_t left = s_dump.n * sizeof(int16_t);
+            while (left) {
+                ssize_t w = write(fd, p, left);
+                if (w <= 0) break;
+                p += w;
+                left -= (size_t)w;
+            }
+            close(fd);
+        }
+    }
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+#endif
 
 static void dump_init(void)
 {
@@ -373,6 +409,11 @@ static void dump_init(void)
     s_dump.buf = s_dump.cap ? (int16_t *)malloc(s_dump.cap * sizeof(int16_t)) : NULL;
     if (!s_dump.buf) return;
     s_dump.on = 1;
+    atexit(dump_write);
+#if !defined(__SWITCH__)
+    signal(SIGINT, dump_on_signal);     /* Ctrl+C ends most runs */
+    signal(SIGTERM, dump_on_signal);
+#endif
     fprintf(stderr, "[AUDIO] dump: %llu s from %llu s to %s\n",
             (unsigned long long)(s_dump.left / SDLA_SAMPLE_RATE),
             (unsigned long long)(s_dump.skip / SDLA_SAMPLE_RATE), s_dump.path);
@@ -391,6 +432,14 @@ static void dump_block(const int16_t *pcm, int num_samples)
     memcpy(s_dump.buf + s_dump.n, pcm, take * sizeof(int16_t));
     s_dump.n += take;
     if (s_dump.n < s_dump.cap) return;
+    dump_write();
+}
+
+/* Writes what was captured: when full, or at exit with whatever is there,
+ * so a run that ends early still leaves its capture. */
+static void dump_write(void)
+{
+    if (!s_dump.on) return;
     s_dump.on = 0;
     s_dump.f = fopen(s_dump.path, "wb");
     if (s_dump.f) {
@@ -399,8 +448,7 @@ static void dump_block(const int16_t *pcm, int num_samples)
     }
     fprintf(stderr, "[AUDIO] dump written: %s (%zu bytes)%s\n", s_dump.path,
             s_dump.n * sizeof(int16_t), s_dump.f ? "" : " -- open failed");
-    free(s_dump.buf);
-    s_dump.buf = NULL;
+    /* Not freed: at exit the audio thread may still be in dump_block. */
 }
 
 int xa2_submit_samples(const int16_t *samples, int num_samples)
