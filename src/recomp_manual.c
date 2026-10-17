@@ -134,6 +134,290 @@ void sub_003DF4D0(void)
 extern void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls);
 extern long mc3_difftest_wanted(void);
 
+/* ── Music: the WMA decoder XACT drives (MC3_WMA_TRACE=1) ──
+ *
+ * The music (audio/XStreams/mx.xwb, 110 tracks) is WMA, stereo 44.1 kHz;
+ * XACT decodes it on the CPU through the WMADEC section's media object and
+ * plays the PCM from a looping buffer voice. On 2026-10-16 that voice ran
+ * but every sample it read was zero, so the menu song was silent. This logs
+ * what the decoder is asked and answers: XACT creates it with
+ * sub_003EFE0D (0x003D6868, when the wave's format tag is 2 = WMA); its
+ * vtable is at 0x0046EEA8 (constructor sub_003EFD63). Per method: the first
+ * calls in full, then every 500th, with stdcall arguments (this, a, b), the
+ * HRESULT, and for any argument that looks like an XMEDIAPACKET
+ * {pvBuffer, dwMaxSize, pdwCompletedSize, ...} the completed size and the
+ * peak 16-bit sample in it. Each is difftest-capable: Process is slot 4,
+ * `make difftest FUNC=003EFCE7 CALL=<n>`. */
+static int wma_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_WMA_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+
+/* An XMEDIAPACKET's completed size and 16-bit peak, or 0 if `va` is not one. */
+static int wma_packet(uint32_t va, uint32_t *done, uint32_t *max, int *peak)
+{
+    uint32_t buf, size, done_va, n, i;
+    if (va < 0x10000u || va >= 0x84000000u)
+        return 0;
+    buf = MEM32(va); size = MEM32(va + 4); done_va = MEM32(va + 8);
+    if (buf < 0x10000u || buf >= 0x84000000u || !size || size > 0x400000u)
+        return 0;
+    n = done_va && done_va < 0x84000000u ? MEM32(done_va) : size;
+    if (n > size) n = size;
+    *done = n; *max = size; *peak = 0;
+    for (i = 0; i + 1 < n; i += 2) {
+        int v = (int16_t)MEM16(buf + i);
+        if (v < 0) v = -v;
+        if (v > *peak) *peak = v;
+    }
+    return 1;
+}
+
+static void wma_call(uint32_t addr, int method, void (*fn)(void))
+{
+    static long calls[11], dcalls[11];
+    uint32_t a0, a1, a2;
+    long n;
+    /* Creation is rare and the question is often whether it happens at
+     * all: logged (first 4) with or without the trace. */
+    if (!wma_trace_on() && (method != 10 || calls[10] >= 4)) {
+        mc3_difftest_call(addr, fn, &dcalls[method]);
+        return;
+    }
+    a0 = MEM32(g_esp + 4); a1 = MEM32(g_esp + 8); a2 = MEM32(g_esp + 12);
+    n = ++calls[method];
+    mc3_difftest_call(addr, fn, &dcalls[method]);
+    if (n <= 12 || n % 500 == 0) {
+        uint32_t d, m;
+        int pk;
+        fprintf(stderr, "[WMA] %s #%ld (%08X, %08X, %08X) -> %08X",
+                method == 10 ? "create" : "method", n, a0, a1, a2, g_eax);
+        if (method < 10)
+            fprintf(stderr, " [vtable +0x%02X]", method * 4);
+        if (wma_packet(a1, &d, &m, &pk))
+            fprintf(stderr, " | a: %u/%u bytes peak %d", d, m, pk);
+        if (wma_packet(a2, &d, &m, &pk))
+            fprintf(stderr, " | b: %u/%u bytes peak %d", d, m, pk);
+        fprintf(stderr, "\n");
+    }
+}
+
+/* Written out, not by macro: tools/recomp/manual_scan.py reads the text. */
+extern void sub_003EFE0D_gen(void);
+void sub_003EFE0D(void) { wma_call(0x003EFE0Du, 10, sub_003EFE0D_gen); }   /* create: (out object, ...) */
+extern void sub_003EF9BF_gen(void);
+void sub_003EF9BF(void) { wma_call(0x003EF9BFu, 2, sub_003EF9BF_gen); }
+extern void sub_003EFA01_gen(void);
+void sub_003EFA01(void) { wma_call(0x003EFA01u, 3, sub_003EFA01_gen); }
+extern void sub_003EFCE7_gen(void);
+void sub_003EFCE7(void) { wma_call(0x003EFCE7u, 4, sub_003EFCE7_gen); }
+extern void sub_003EF9FC_gen(void);
+void sub_003EF9FC(void) { wma_call(0x003EF9FCu, 5, sub_003EF9FC_gen); }
+extern void sub_003EFC83_gen(void);
+void sub_003EFC83(void) { wma_call(0x003EFC83u, 6, sub_003EFC83_gen); }
+extern void sub_003EFABA_gen(void);
+void sub_003EFABA(void) { wma_call(0x003EFABAu, 7, sub_003EFABA_gen); }
+extern void sub_003EFB20_gen(void);
+void sub_003EFB20(void) { wma_call(0x003EFB20u, 8, sub_003EFB20_gen); }
+extern void sub_003EF8EF_gen(void);
+void sub_003EF8EF(void) { wma_call(0x003EF8EFu, 9, sub_003EF8EF_gen); }
+
+/* ── Music: XACT's API as the game calls it (MC3_XACT_TRACE=1) ──
+ *
+ * With MC3_WMA_TRACE on, XACT never created a WMA decoder (2026-10-16):
+ * the songs fail before decoding, and the in-game music player shuffles
+ * through them forever. These are the 37 XACT functions the game calls
+ * directly (0x003D1159..0x003D1794; the last ten are jmp thunks). Each
+ * logs its first 3 calls, and every call returning a failure HRESULT (bit
+ * 31 set; a few may return counts or pointers instead), with ecx and four
+ * stack arguments. */
+extern void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls);
+
+static int xact_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_XACT_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+
+static void xact_call(uint32_t addr, int slot, void (*fn)(void))
+{
+    static long calls[64], failures, dcalls[64];
+    uint32_t c, a0, a1, a2, a3;
+    long n;
+    /* Every XACT wrapper can also be captured: make difftest FUNC=<addr>. */
+    if (!xact_trace_on()) { mc3_difftest_call(addr, fn, &dcalls[slot]); return; }
+    c = g_ecx;
+    a0 = MEM32(g_esp + 4); a1 = MEM32(g_esp + 8);
+    a2 = MEM32(g_esp + 12); a3 = MEM32(g_esp + 16);
+    uint32_t desc[4] = { 0, 0, 0, 0 };
+    n = ++calls[slot];
+    /* sub_003D162D / sub_003D8B33's second argument is a descriptor:
+     * flags (bit 2: streamed), then three words (+0xC: the stream's
+     * source). Read before the call, while it is the caller's. */
+    if ((addr == 0x003D162Du || addr == 0x003D8B33u) && a1 >= 0x10000u && a1 < 0x84000000u) {
+        desc[0] = MEM32(a1); desc[1] = MEM32(a1 + 4);
+        desc[2] = MEM32(a1 + 8); desc[3] = MEM32(a1 + 12);
+    }
+    mc3_difftest_call(addr, fn, &dcalls[slot]);
+    if (n <= 3 || ((g_eax & 0x80000000u) && failures++ < 400)) {
+        fprintf(stderr, "[XACT] sub_%08X #%ld (ecx %08X; %08X %08X %08X %08X) -> %08X%s",
+                addr, n, c, a0, a1, a2, a3, g_eax,
+                (g_eax & 0x80000000u) ? "  FAILED" : "");
+        if (desc[0] | desc[1] | desc[2] | desc[3])
+            fprintf(stderr, " desc {%08X %08X %08X %08X}", desc[0], desc[1], desc[2], desc[3]);
+        fprintf(stderr, "\n");
+    }
+}
+
+/* Written out, not by macro: tools/recomp/manual_scan.py reads the text. */
+/* XACT's variation choice, 0x003D796F: thiscall (table offset, flags,
+ * float), returns the chosen entry or 0. sub_003D7E76 turns 0 into wave
+ * index 0xFFFF and sub_003D89F6 into E_FAIL (0x003D8AA5) -- every song in
+ * the music player. Pure computation (mode (flags >> 13) & 15, an RNG at
+ * sub_003D21D9 / sub_003D21E2): wrapped for difftest, and logged with
+ * MC3_XACT_TRACE. The first call is at boot (the menu song). */
+extern void sub_003D796F_gen(void);
+void sub_003D796F(void)
+{
+    static long calls, logged;
+    uint32_t c = g_ecx, a0 = MEM32(g_esp + 4), a1 = MEM32(g_esp + 8), a2 = MEM32(g_esp + 12);
+    uint32_t entry = 0;
+    if (c >= 0x10000u && c < 0x84000000u)
+        entry = MEM32(MEM32(c + 4) + a0);
+    mc3_difftest_call(0x003D796Fu, sub_003D796F_gen, &calls);
+    if (xact_trace_on() && logged++ < 40)
+        fprintf(stderr, "[XACT] variation sub_003D796F #%ld (ecx %08X; %08X %08X %08X)"
+                " table word %08X (mode %u, count %u) -> %08X\n", logged, c, a0, a1, a2,
+                entry, (entry >> 13) & 15, entry & 0x1FFF, g_eax);
+}
+
+/* XACT sound states (2026-10-17). Starting a sound moves it to state 5
+ * (sub_003D7750 -> sub_003D549F(5)); the only refused transition is from
+ * state 7, "stopped", and that refusal is the music player's E_FAIL: every
+ * song is stopped before it starts. sub_003D5C0F is XACT's stop (state 7 +
+ * cleanup), called from nine places. With MC3_XACT_TRACE these log who stops
+ * a sound (the return address names the caller) and every move to state 7 or
+ * refused transition, with the sound object and its state before. */
+extern void sub_003D5C0F_gen(void);
+void sub_003D5C0F(void)
+{
+    static long n;
+    uint32_t snd = g_ecx, ret = MEM32(g_esp), flags = MEM32(g_esp + 4);
+    uint32_t state = snd >= 0x10000u && snd < 0x84000000u ? MEM16(snd + 0x30) : 0xFFFF;
+    if (xact_trace_on() && n++ < 200)
+        fprintf(stderr, "[XACT] stop sound %08X (state %u, flags %08X) called from %08X\n",
+                snd, state, flags, ret);
+    sub_003D5C0F_gen();
+}
+
+extern void sub_003D549F_gen(void);
+void sub_003D549F(void)
+{
+    static long n;
+    uint32_t snd = g_ecx, ret = MEM32(g_esp), want = MEM32(g_esp + 4);
+    uint32_t before = snd >= 0x10000u && snd < 0x84000000u ? MEM16(snd + 0x30) : 0xFFFF;
+    sub_003D549F_gen();
+    if (xact_trace_on() && (want == 7 || !g_eax) && n++ < 300)
+        fprintf(stderr, "[XACT] sound %08X state %u -> %u %s (from %08X)\n",
+                snd, before, want, g_eax ? "ok" : "REFUSED", ret);
+}
+
+/* One level down, inside sub_003D162D -> sub_003D8B33 (2026-10-16: E_FAIL
+ * 403x while the music player shuffled): which step fails. */
+extern void sub_003D8B33_gen(void);
+void sub_003D8B33(void) { xact_call(0x003D8B33u, 40, sub_003D8B33_gen); }
+extern void sub_003D0E04_gen(void);
+void sub_003D0E04(void) { xact_call(0x003D0E04u, 41, sub_003D0E04_gen); }   /* streamed (flag 4) */
+extern void sub_003D89F6_gen(void);
+void sub_003D89F6(void) { xact_call(0x003D89F6u, 42, sub_003D89F6_gen); }
+extern void sub_003D7C30_gen(void);
+void sub_003D7C30(void) { xact_call(0x003D7C30u, 43, sub_003D7C30_gen); }
+extern void sub_003DAB5B_gen(void);
+void sub_003DAB5B(void) { xact_call(0x003DAB5Bu, 44, sub_003DAB5B_gen); }
+extern void sub_003D1159_gen(void);
+void sub_003D1159(void) { xact_call(0x003D1159u, 0, sub_003D1159_gen); }
+extern void sub_003D118B_gen(void);
+void sub_003D118B(void) { xact_call(0x003D118Bu, 1, sub_003D118B_gen); }
+extern void sub_003D1230_gen(void);
+void sub_003D1230(void) { xact_call(0x003D1230u, 2, sub_003D1230_gen); }
+extern void sub_003D1248_gen(void);
+void sub_003D1248(void) { xact_call(0x003D1248u, 3, sub_003D1248_gen); }
+extern void sub_003D128E_gen(void);
+void sub_003D128E(void) { xact_call(0x003D128Eu, 4, sub_003D128E_gen); }
+extern void sub_003D12CD_gen(void);
+void sub_003D12CD(void) { xact_call(0x003D12CDu, 5, sub_003D12CD_gen); }
+extern void sub_003D1310_gen(void);
+void sub_003D1310(void) { xact_call(0x003D1310u, 6, sub_003D1310_gen); }
+extern void sub_003D1353_gen(void);
+void sub_003D1353(void) { xact_call(0x003D1353u, 7, sub_003D1353_gen); }
+extern void sub_003D1392_gen(void);
+void sub_003D1392(void) { xact_call(0x003D1392u, 8, sub_003D1392_gen); }
+extern void sub_003D13CD_gen(void);
+void sub_003D13CD(void) { xact_call(0x003D13CDu, 9, sub_003D13CD_gen); }
+extern void sub_003D140C_gen(void);
+void sub_003D140C(void) { xact_call(0x003D140Cu, 10, sub_003D140C_gen); }
+extern void sub_003D142C_gen(void);
+void sub_003D142C(void) { xact_call(0x003D142Cu, 11, sub_003D142C_gen); }
+extern void sub_003D146B_gen(void);
+void sub_003D146B(void) { xact_call(0x003D146Bu, 12, sub_003D146B_gen); }
+extern void sub_003D14A6_gen(void);
+void sub_003D14A6(void) { xact_call(0x003D14A6u, 13, sub_003D14A6_gen); }
+extern void sub_003D14E1_gen(void);
+void sub_003D14E1(void) { xact_call(0x003D14E1u, 14, sub_003D14E1_gen); }
+extern void sub_003D1520_gen(void);
+void sub_003D1520(void) { xact_call(0x003D1520u, 15, sub_003D1520_gen); }
+extern void sub_003D1563_gen(void);
+void sub_003D1563(void) { xact_call(0x003D1563u, 16, sub_003D1563_gen); }
+extern void sub_003D159B_gen(void);
+void sub_003D159B(void) { xact_call(0x003D159Bu, 17, sub_003D159B_gen); }
+extern void sub_003D15B3_gen(void);
+void sub_003D15B3(void) { xact_call(0x003D15B3u, 18, sub_003D15B3_gen); }
+extern void sub_003D15CF_gen(void);
+void sub_003D15CF(void) { xact_call(0x003D15CFu, 19, sub_003D15CF_gen); }
+extern void sub_003D15FA_gen(void);
+void sub_003D15FA(void) { xact_call(0x003D15FAu, 20, sub_003D15FA_gen); }
+extern void sub_003D162D_gen(void);
+void sub_003D162D(void) { xact_call(0x003D162Du, 21, sub_003D162D_gen); }
+extern void sub_003D1660_gen(void);
+void sub_003D1660(void) { xact_call(0x003D1660u, 22, sub_003D1660_gen); }
+extern void sub_003D1697_gen(void);
+void sub_003D1697(void) { xact_call(0x003D1697u, 23, sub_003D1697_gen); }
+extern void sub_003D16CE_gen(void);
+void sub_003D16CE(void) { xact_call(0x003D16CEu, 24, sub_003D16CE_gen); }
+extern void sub_003D1701_gen(void);
+void sub_003D1701(void) { xact_call(0x003D1701u, 25, sub_003D1701_gen); }
+extern void sub_003D1734_gen(void);
+void sub_003D1734(void) { xact_call(0x003D1734u, 26, sub_003D1734_gen); }
+extern void sub_003D1767_gen(void);
+void sub_003D1767(void) { xact_call(0x003D1767u, 27, sub_003D1767_gen); }
+extern void sub_003D176C_gen(void);
+void sub_003D176C(void) { xact_call(0x003D176Cu, 28, sub_003D176C_gen); }
+extern void sub_003D1771_gen(void);
+void sub_003D1771(void) { xact_call(0x003D1771u, 29, sub_003D1771_gen); }
+extern void sub_003D1776_gen(void);
+void sub_003D1776(void) { xact_call(0x003D1776u, 30, sub_003D1776_gen); }
+extern void sub_003D177B_gen(void);
+void sub_003D177B(void) { xact_call(0x003D177Bu, 31, sub_003D177B_gen); }
+extern void sub_003D1780_gen(void);
+void sub_003D1780(void) { xact_call(0x003D1780u, 32, sub_003D1780_gen); }
+extern void sub_003D1785_gen(void);
+void sub_003D1785(void) { xact_call(0x003D1785u, 33, sub_003D1785_gen); }
+extern void sub_003D178A_gen(void);
+void sub_003D178A(void) { xact_call(0x003D178Au, 34, sub_003D178A_gen); }
+extern void sub_003D178F_gen(void);
+void sub_003D178F(void) { xact_call(0x003D178Fu, 35, sub_003D178F_gen); }
+extern void sub_003D1794_gen(void);
+void sub_003D1794(void) { xact_call(0x003D1794u, 36, sub_003D1794_gen); }
+
 /* ── Movies: where a frame's time goes (MC3_BINK_TRACE=1) ──
  *
  * The movie loop (sub_0032E7F0) per frame: BinkDoFrame, lock the texture,
