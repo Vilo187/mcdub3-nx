@@ -793,6 +793,12 @@ void mcpx_apu_ring_stats(uint32_t *stale, uint32_t *total)
     *total = tot;
 }
 
+/* RECOMP_APU_TRACE: per stream voice and second, the source frames it
+ * consumed (44100 for a 44.1 kHz voice playing steadily), how often it found
+ * no packet queued, and the packets it finished with their mean length. */
+static struct { uint32_t frames, dry, segs, seg_frames; } s_st[MCPX_HW_MAX_VOICES];
+static uint32_t s_vp_frames;            /* VP frames (32 output samples) run */
+
 static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
                        int num_samples_requested)
 {
@@ -858,6 +864,7 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
         count = d->vp.ssl[v].count[ssl_index];
 
         if (count == 0) {
+            s_st[v].dry++;
             voice_set_mask(d, (uint16_t)v, NV_PAVS_VOICE_PAR_OFFSET,
                            NV_PAVS_VOICE_PAR_OFFSET_CBO, 0);
             d->vp.ssl[v].ssl_seg = 0;
@@ -980,8 +987,12 @@ static int voice_get_samples(MCPXAPUState *d, uint32_t v, float samples[][2],
         }
     }
 
+    if (stream)
+        s_st[v].frames += (uint32_t)sample_count;
     if (cbo >= ebo) {
         if (stream) {
+            s_st[v].segs++;
+            s_st[v].seg_frames += ebo + 1;
             d->vp.ssl[v].ssl_seg += 1;
             cbo = 0;
             if (d->vp.ssl[v].ssl_seg < d->vp.ssl[v].count[ssl_index]) {
@@ -1405,6 +1416,22 @@ static void apu_vp_trace_second(void)
     fprintf(stderr, "[APU-VP] unpaused %d sounding %d (voice-frames/s) mixpeak %.3f\n"
                     "[APU-VP]   quiet: %s\n[APU-VP]   loud:  %s\n",
             g_tr_unpaused, g_tr_sounding, g_vp_mix_peak, g_tr_quiet, g_tr_loud);
+    {   /* where the rest of the second went: the frame thread's pacing */
+        extern int mcpx_apu_pacing_stats(char *buf, int cap);   /* apu_core.c */
+        char pace[320];
+        mcpx_apu_pacing_stats(pace, sizeof pace);
+        fprintf(stderr, "[APU-ST] %u output samples this second (48000 = real time)\n"
+                        "[APU-ST]   pacing: %s\n", s_vp_frames * NUM_SAMPLES_PER_FRAME, pace);
+    }
+    s_vp_frames = 0;
+    for (int v = 0; v < MCPX_HW_MAX_VOICES; v++) {
+        if (!s_st[v].frames && !s_st[v].dry) continue;
+        fprintf(stderr, "[APU-ST]   stream v%03X: consumed %u frames, dry %u times,"
+                        " %u packets done (mean %u frames)\n", v, s_st[v].frames,
+                s_st[v].dry, s_st[v].segs,
+                s_st[v].segs ? s_st[v].seg_frames / s_st[v].segs : 0);
+        memset(&s_st[v], 0, sizeof s_st[v]);
+    }
     g_tr_unpaused = g_tr_sounding = 0;
     g_tr_quiet[0] = g_tr_loud[0] = 0;
 }
@@ -1421,6 +1448,7 @@ void mcpx_apu_vp_frame(MCPXAPUState *d,
 {
     memset(d->vp.sample_buf, 0, sizeof(d->vp.sample_buf));
     g_vp_voices_now = 0;
+    s_vp_frames++;
 
     for (int list = 0; list < 3; list++) {
         hwaddr top, current, next;
