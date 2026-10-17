@@ -665,10 +665,24 @@ static int gil_higher_waiting(int p)
     return 0;
 }
 
+/* The main thread's time waiting for the lock, and how many waits took
+ * over 50 ms (a dropped frame's worth), for a periodic report: a busy worker
+ * that never reaches a pre-emption point shows up here and nowhere else. */
+static volatile LONG s_gil_main_wait_us, s_gil_main_long;   /* reset per report: < 2^31 us */
+
+void xbox_gil_main_wait(long long *wait_us, long long *long_waits)
+{
+    *wait_us = InterlockedExchange(&s_gil_main_wait_us, 0);
+    *long_waits = InterlockedExchange(&s_gil_main_long, 0);
+}
+
 static void gil_lock(void)
 {
     uint64_t me;
     int eager = gil_eager(), prio = eager ? gil_prio_now() : 0, counted = 0;
+    LARGE_INTEGER t0, t1, f;
+    if (t_gil_main)
+        QueryPerformanceCounter(&t0);
     EnterCriticalSection(&s_gil_cs);
     me = s_gil_next++;
     if (me != s_gil_serving && eager) {
@@ -703,6 +717,15 @@ static void gil_lock(void)
         g_gil_contended = 0;               /* nobody behind us */
     }
     LeaveCriticalSection(&s_gil_cs);
+    if (t_gil_main) {
+        int64_t us;
+        QueryPerformanceCounter(&t1);
+        QueryPerformanceFrequency(&f);
+        us = (int64_t)((t1.QuadPart - t0.QuadPart) * 1000000 / f.QuadPart);
+        InterlockedExchangeAdd(&s_gil_main_wait_us, (LONG)us);
+        if (us > 50000)
+            InterlockedIncrement(&s_gil_main_long);
+    }
 }
 
 static void gil_unlock(void)
