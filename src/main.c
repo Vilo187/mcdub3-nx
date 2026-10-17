@@ -227,6 +227,12 @@ static void set_runtime_defaults(void)
     setenv("RECOMP_AC97_READY", "plain", 0);   /* DirectSound sees the codec */
     setenv("RECOMP_USB", "1", 0);              /* pads on the MCPX's OHCI */
     setenv("RECOMP_PB_EXEC", "1", 0);          /* execute the NV2A pushbuffer */
+    setenv("RECOMP_NET_LINK", "0", 0);         /* no cable: XNET skips its network
+                                                * setup instead of timing out (the
+                                                * ~20 s black screen before the logo) */
+    setenv("RECOMP_FLIP_VBLANK", "1", 0);      /* one flip per vblank, as on the
+                                                * console: unpaced, the menus
+                                                * presented at 100+ fps */
 #if !defined(__SWITCH__)
     setenv("RECOMP_KEYBOARD", "1", 0);         /* keyboard as pad 1 (Enter = Start) */
 #endif
@@ -238,6 +244,20 @@ static void set_runtime_defaults(void)
 #ifdef __SWITCH__
     setenv("RECOMP_QUIET", "1", 0);            /* every log line costs an SD write */
 #endif
+}
+
+/* Every MC3_* / RECOMP_* setting in effect, defaults included, so a log
+ * says which switches a run had -- a variable mistyped on the command line
+ * otherwise looks exactly like a feature that found nothing. */
+extern char **environ;
+static void log_settings(void)
+{
+    char **e;
+    printf("settings:");
+    for (e = environ; e && *e; e++)
+        if (!strncmp(*e, "MC3_", 4) || !strncmp(*e, "RECOMP_", 7))
+            printf(" %s", *e);
+    printf("\n");
 }
 
 static int game_main(void)
@@ -257,6 +277,7 @@ static int game_main(void)
     printf("=== " MC3_XBE_TITLE_NAME " (Xbox) - static recompilation ===\n");
     install_crash_reporter();
     set_runtime_defaults();
+    log_settings();
 
     game_dir = getenv("MC3_GAME_DIR");
     if (!game_dir || !game_dir[0])
