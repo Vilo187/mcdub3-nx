@@ -742,6 +742,39 @@ void mcpx_apu_shutdown(MCPXAPUState *d)
 uint64_t mcpx_apu_vp_read(void *opaque, hwaddr addr, unsigned int size);
 void mcpx_apu_vp_write(void *opaque, hwaddr addr, uint64_t val, unsigned int size);
 
+/* GP (0x30000) and EP (0x50000) DSP memory as the CPU sees it.
+ *
+ * The DSPs are a passthrough stub (apu_dsp.c), but their memories are
+ * storage on the bus, so writes are kept and read back. Words are 24 bits
+ * wide, as on the DSP56300; the reset registers at +0xFFFC only read back.
+ *
+ * DirectSound decides whether the EP is alive by reading its P-memory word 6
+ * (0xFE85A018) and comparing it with 0xCCCCCC; anything else and it resets
+ * both DSPs (sub_0038E225 in MC3: a 10 ms stall, the voice pipeline idle
+ * while held). It never writes that word itself -- the running EP program
+ * does -- so a stub EP that runs nothing answers as a running one would:
+ * EP_ALIVE_WORD reads 0xCCCCCC until something writes it. Reading 0 here
+ * reset the DSPs from every XACT call: MC3's menu lagged on each sound, the
+ * music came out at half speed, and the garage never loaded behind the stop
+ * of the menu music. ponytail: a stub's answer, like the doorbell ack. */
+#define APU_DSP_MEM_BASE 0x30000u
+#define APU_DSP_MEM_SIZE 0x30000u              /* GP 0x30000.., EP 0x50000.. */
+static uint32_t s_dsp_mem[APU_DSP_MEM_SIZE / 4];
+#define EP_ALIVE_WORD  0x5A018u                 /* EP P-memory word 6 */
+static int s_ep_alive_written;
+
+static void dsp_mem_trace(uint64_t addr, uint32_t val, int is_write)
+{
+    static int writes, reads;
+    if (addr < 0x5A000 || addr >= 0x5C000)  /* EP P-memory only */
+        return;
+    if (is_write && writes++ < 4)
+        fprintf(stderr, "[APU] EP program write +%05X = %06X (%d so far)\n",
+                (unsigned)addr, val, writes);
+    if (!is_write && addr == 0x5A018 && reads++ < 4)
+        fprintf(stderr, "[APU] EP program word 6 read: %06X (DirectSound wants CCCCCC)\n", val);
+}
+
 /* Dispatch a VP-region access (offset 0x20000-0x2FFFF from APU base) */
 void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
                              unsigned int size, bool is_write)
@@ -759,7 +792,13 @@ void mcpx_apu_dispatch_mmio(MCPXAPUState *d, hwaddr addr, uint64_t val,
             mcpx_apu_write(d, addr, val, size);
         }
     }
-    /* GP (0x30000) and EP (0x50000) regions ignored for now */
+    else if (addr >= APU_DSP_MEM_BASE && addr < APU_DSP_MEM_BASE + APU_DSP_MEM_SIZE
+             && is_write) {
+        s_dsp_mem[(addr - APU_DSP_MEM_BASE) / 4] = (uint32_t)val & 0xFFFFFFu;
+        if (addr == EP_ALIVE_WORD)
+            s_ep_alive_written = 1;
+        dsp_mem_trace(addr, (uint32_t)val & 0xFFFFFFu, 1);
+    }
 }
 
 /* ============================================================
@@ -774,6 +813,12 @@ uint64_t mcpx_apu_mmio_read(MCPXAPUState *d, uint64_t addr, unsigned int size)
         return mcpx_apu_vp_read(d, addr - 0x20000, size);
     } else if (addr < 0x20000) {
         return mcpx_apu_read(d, (hwaddr)addr, size);
+    } else if (addr >= APU_DSP_MEM_BASE && addr < APU_DSP_MEM_BASE + APU_DSP_MEM_SIZE) {
+        uint32_t v = s_dsp_mem[(addr - APU_DSP_MEM_BASE) / 4];
+        if (addr == EP_ALIVE_WORD && !s_ep_alive_written)
+            v = 0xCCCCCCu;
+        dsp_mem_trace(addr, v, 0);
+        return v;
     }
     return 0;
 }
