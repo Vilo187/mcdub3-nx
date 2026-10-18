@@ -184,7 +184,7 @@ mcdub3-nx/
 │   └── extract_disc.sh         make extract: ISO → game/
 ├── switch/
 │   ├── build.sh              [git] the NRO build + SD-card staging (runs in the container)
-│   ├── nsp.sh                [git] make nsp: the home-menu forwarder (nx-hbloader + hacBrewPack)
+│   ├── nsp.sh                [git] make nsp: the home-menu forwarder (NTON's recipe + hacBrewPack)
 │   ├── docker_build.sh       [git] make switch / nsp: a script inside devkitPro's pinned image
 │   ├── devkitpro-image       [git] the pinned image (tag@digest), shared with CI
 │   └── app.env               [git] the app's identity: name, author, version, title ID, icon, NRO path
@@ -426,9 +426,15 @@ installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
 - Or install the **NSP forwarder**: `make nsp` builds
   `work/nsp/mcdub3-<version>.nsp`, a home-menu app that starts
   `sdmc:/switch/mcdub3-nx/mcdub3.nro` as an application (full memory). It is
-  nx-hbloader (devkitPro's NRO loader) built with that path and our title ID,
-  packed by hacBrewPack with your console's keys (`keys/prod.keys`, never
-  committed). Name, author, version, title ID and icon come from
-  `switch/app.env`, which also feeds the NRO's own metadata. The icon,
-  `assets/icon.jpg`, must be a baseline 256x256 JPEG without EXIF data. The
-  NSP holds only the forwarder: a new game build needs only a new NRO.
+  built the way [NTON](https://github.com/rlaphoenix/NTON) builds forwarders:
+  NTON's forwarder program (nx-hbloader + Forwarder-Mod, firmware 21+)
+  reading the NRO path from its romfs, NTON's NACP settings, the icon
+  re-encoded as a bare JPEG, and a start-up logo, packed by hacBrewPack with
+  your console's keys (`keys/prod.keys`, never committed). NTON and
+  hacBrewPack are fetched at pinned commits; nothing of theirs is in this
+  repo. Name, author, version, title ID, icon (`assets/cover-art.jpg`, any
+  image) and logo folder come from `switch/app.env`. The start-up logo
+  covers the launch: put `NintendoLogo.png` (256x128) and
+  `StartupMovie.gif` (256x80) in `assets/logo/` (personal, gitignored), or
+  NTON's are used. The NSP holds only the forwarder: a new game build needs
+  only a new NRO.
