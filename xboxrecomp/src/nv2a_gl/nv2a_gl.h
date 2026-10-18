@@ -15,4 +15,8 @@ void nv2a_gl_install(void);
  * compiled at start-up (no program binaries). Any thread. */
 void nv2a_gl_prewarm_start(void);
 
+/* Hold the 4:3-to-16:9 fill (RECOMP_GL_FILL) off while > 0: +1 when a movie
+ * that should keep its original framing starts, -1 when it ends. */
+void nv2a_gl_fill_hold(int delta);
+
 #endif
