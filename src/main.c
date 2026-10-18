@@ -513,6 +513,7 @@ static int game_main(void)
 
     /* The USB host controllers the title's XPP library drives to find pads. */
     xbox_OhciInit();
+    fprintf(stderr, "[BOOT] USB up\n");   /* boot markers: the Switch log is timestamped */
 
 #ifndef _WIN32
     /* GPU renderer for the pushbuffer executor; MC3_GPU=0 keeps the
@@ -527,8 +528,10 @@ static int game_main(void)
 #  endif
     }
 #endif
+    fprintf(stderr, "[BOOT] renderer installed\n");
 
     xbox_kernel_init();
+    fprintf(stderr, "[BOOT] kernel up\n");
     {
         /* Where the Xbox paths land (xboxrecomp kernel_path.c):
          *   \Device\CdRom0\, D:\ and Harddisk0\Partition1\ -> game_dir
@@ -540,6 +543,7 @@ static int game_main(void)
         const char *save_dir = getenv("MC3_SAVE_DIR");
         xbox_path_init(game_dir, save_dir && save_dir[0] ? save_dir : MC3_DEFAULT_SAVE_DIR);
     }
+    fprintf(stderr, "[BOOT] paths set\n");
     xbox_kernel_bridge_init();
 
     g_esp = XBOX_STACK_TOP;

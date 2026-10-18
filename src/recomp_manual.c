@@ -956,6 +956,66 @@ void sub_0001B740(void)
     sub_0001B740_gen();
 }
 
+/* ── Save-game deletion, traced (MC3_SAVE_TRACE=1) ──
+ *
+ * Deleting a profile says "deleted" but leaves it on disk, and no file call
+ * reaches the kernel (2026-10-18). sub_0002A5D0(name) is the game's delete:
+ * it calls XDeleteSaveGame (sub_002F4E4E) with "<letter>:\\" only when its
+ * device's drive letter ([this+8]) is set. This logs which way it goes and
+ * what XDeleteSaveGame returned. */
+static int save_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_SAVE_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+
+static void save_trace_name(char *out, size_t cap, uint32_t va)
+{
+    size_t i = 0;
+    for (; va && i + 1 < cap; i++) {        /* wide string, ASCII shown */
+        uint16_t c = MEM16(va + 2 * i);
+        if (!c) break;
+        out[i] = c < 0x80 ? (char)c : '?';
+    }
+    out[i] = 0;
+}
+
+extern void sub_0002A5D0_gen(void);
+void sub_0002A5D0(void)
+{
+    uint32_t self = g_ecx, name = MEM32(g_esp + 4), ret = MEM32(g_esp);
+    char n[64];
+    if (save_trace_on()) {
+        save_trace_name(n, sizeof n, name);
+        fprintf(stderr, "[SAVE] delete \"%s\" device %08X letter '%c' (0x%02X), from %08X\n",
+                n, self, MEM8(self + 8) >= 0x20 ? MEM8(self + 8) : '?', MEM8(self + 8), ret);
+    }
+    sub_0002A5D0_gen();
+    if (save_trace_on())
+        fprintf(stderr, "[SAVE] delete -> %u\n", g_eax);
+}
+
+extern void sub_002F4E4E_gen(void);
+void sub_002F4E4E(void)
+{
+    uint32_t root = MEM32(g_esp + 4), name = MEM32(g_esp + 8);
+    char n[64], r[8] = {0};
+    int i;
+    if (save_trace_on()) {
+        save_trace_name(n, sizeof n, name);
+        for (i = 0; i < 7 && root && MEM8(root + i); i++)
+            r[i] = (char)MEM8(root + i);
+        fprintf(stderr, "[SAVE] XDeleteSaveGame(\"%s\", \"%s\")\n", r, n);
+    }
+    sub_002F4E4E_gen();
+    if (save_trace_on())
+        fprintf(stderr, "[SAVE] XDeleteSaveGame -> %u\n", g_eax);
+}
+
 /* ── Manual function overrides ─────────────────────────────── */
 
 /*
