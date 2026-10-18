@@ -5,32 +5,44 @@
 #   make nsp                          (runs this in devkitPro's container)
 #   KEYS=<path>                       default keys/prod.keys (never committed)
 #
-# Everything comes from switch/app.env: name, author, version, title ID, icon,
-# the NRO's path on the card, and the pinned sources of the two tools:
-#   nx-hbloader   devkitPro's own NRO loader (what hbmenu runs), built with
-#                 APP_NRO as its default NRO and APP_TITLE_ID in its NPDM:
-#                 that is the forwarder (exefs/main, exefs/main.npdm)
-#   hacBrewPack   packs exefs + control (NACP, icon) into an NSP, encrypted
-#                 with the console's keys
-# Both are built from source in work/tools (once per pin). Output:
-# work/nsp/mcdub3-<version>.nsp. Install it with your installer of choice;
-# the NRO itself stays at APP_NRO (make switch, then copy to the card).
+# Built the way NTON (rlaphoenix/NTON) builds forwarders, which work on
+# current firmware; NTON itself ships Windows binaries, so this redoes its
+# steps with tools built here. The first version of this script ran plain
+# nx-hbloader with the path compiled in and no romfs: the NSP installed but
+# did not start the game, and the home menu showed no icon (2026-10-18).
+#
+#   exefs    NTON's forwarder program (nx-hbloader + Forwarder-Mod, built
+#            for firmware 21+), title ID patched in by hacBrewPack
+#   romfs    nextNroPath / nextArgv: APP_NRO, where the forwarder looks
+#   control  NACP from nacptool, then NTON's settings: no user selection,
+#            screenshots and video capture on, no save data, one language;
+#            the icon re-encoded as a bare baseline JPEG (else a '?')
+#   logo     APP_LOGO_DIR if it holds both files, else NTON's
+#
+# Everything comes from switch/app.env. Output: work/nsp/mcdub3-<version>.nsp.
+#
+# Two phases, because the container may have no DNS (the VM's Docker could
+# not resolve github.com, 2026-10-18): `nsp.sh prepare` runs on the host
+# (make nsp does it first) and fetches NTON and hacBrewPack at their pinned
+# commits into work/tools and re-encodes the icon there (Pillow in
+# work/venv); the build itself then runs offline in the container.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
 source "$MC3_REPO/switch/app.env"
-
-KEYS="${KEYS:-$MC3_REPO/keys/prod.keys}"
-[ -f "$KEYS" ] || mc3_fail "no keys at $KEYS (your console's prod.keys; never committed)"
-[ -n "${DEVKITPRO:-}" ] && [ -x "$DEVKITPRO/tools/bin/nacptool" ] \
-    || mc3_fail "devkitPro tools not found: run this through make nsp (container)"
 TOOLS="$MC3_WORK/tools"
 STAGE="$MC3_WORK/nsp-stage"
 OUT="$MC3_WORK/nsp"
+HBP_DIR="$TOOLS/hacbrewpack"
+NTON_DIR="$TOOLS/nton"
+ICON_OUT="$TOOLS/icon_AmericanEnglish.jpg"
 mkdir -p "$TOOLS" "$OUT"
 
 # A source tree at a pinned commit (cloned once, then only checked out).
 fetch() {
     local repo=$1 ref=$2 dir=$3
+    if [ "$(git -C "$dir" rev-parse HEAD 2>/dev/null)" = "$ref" ]; then
+        return 0                         # already there: no network needed
+    fi
     [ -d "$dir/.git" ] || git clone --quiet "$repo" "$dir"
     if ! git -C "$dir" cat-file -e "$ref^{commit}" 2>/dev/null; then
         git -C "$dir" fetch --quiet origin
@@ -39,68 +51,101 @@ fetch() {
     git -C "$dir" clean --quiet -fdx
 }
 
+if [ "${1:-}" = prepare ]; then
+    echo "== prepare (host): sources and icon"
+    fetch "$HACBREWPACK_REPO" "$HACBREWPACK_REF" "$HBP_DIR"
+    fetch "$NTON_REPO" "$NTON_REF" "$NTON_DIR"
+    rm -f "$ICON_OUT"
+    if [ -f "$MC3_REPO/$APP_ICON" ]; then
+        # A bare baseline JPEG, 256x256, 4:2:0, nothing else in it: anything
+        # more and the home menu shows a '?' or nothing (NTON does the same).
+        mc3_python                       # sets MC3_PYTHON (work/venv or the system)
+        PY="$MC3_PYTHON"
+        "$PY" -c "import PIL" 2>/dev/null || "$PY" -m pip install --quiet pillow \
+            || mc3_fail "cannot install Pillow for $PY (needed to clean the icon)"
+        "$PY" - "$MC3_REPO/$APP_ICON" "$ICON_OUT" <<'PY'
+import sys
+from PIL import Image
+src, dst = sys.argv[1:3]
+im = Image.open(src).convert("RGB")
+if im.size != (256, 256):
+    im = im.resize((256, 256), Image.LANCZOS)
+clean = Image.new("RGB", im.size)
+clean.putdata(list(im.getdata()))
+clean.save(dst, format="JPEG", quality=98, subsampling=2)
+PY
+        echo "   icon: $APP_ICON -> ${ICON_OUT#$MC3_REPO/}"
+    fi
+    exit 0
+fi
+
+KEYS="${KEYS:-$MC3_REPO/keys/prod.keys}"
+[ -f "$KEYS" ] || mc3_fail "no keys at $KEYS (your console's prod.keys; never committed)"
+[ -n "${DEVKITPRO:-}" ] && [ -x "$DEVKITPRO/tools/bin/nacptool" ] \
+    || mc3_fail "devkitPro tools not found: run this through make nsp (container)"
+
 echo "== hacBrewPack ${HACBREWPACK_REF:0:12}"
-HBP_DIR="$TOOLS/hacbrewpack"
 if [ ! -x "$HBP_DIR/hacbrewpack" ] || [ "$(git -C "$HBP_DIR" rev-parse HEAD 2>/dev/null)" != "$HACBREWPACK_REF" ]; then
     fetch "$HACBREWPACK_REPO" "$HACBREWPACK_REF" "$HBP_DIR"
     cp "$HBP_DIR/config.mk.template" "$HBP_DIR/config.mk"
     make -C "$HBP_DIR" -j"$(nproc)" >/dev/null
 fi
 
-echo "== forwarder: nx-hbloader ${HBLOADER_REF:0:12} -> $APP_NRO, title $APP_TITLE_ID"
-HBL_DIR="$TOOLS/nx-hbloader"
-fetch "$HBLOADER_REPO" "$HBLOADER_REF" "$HBL_DIR"
-grep -q '^#define DEFAULT_NRO ' "$HBL_DIR/source/main.c" \
-    || mc3_fail "nx-hbloader no longer has DEFAULT_NRO: check the pin"
-sed -i "s|^#define DEFAULT_NRO .*|#define DEFAULT_NRO \"$APP_NRO\"|" "$HBL_DIR/source/main.c"
-python3 - "$HBL_DIR/hbl.json" "$APP_TITLE_ID" "$APP_NAME" <<'PY'
-import json, sys
-path, tid, name = sys.argv[1], "0x" + sys.argv[2], sys.argv[3]
-j = json.load(open(path))
-j["title_id"] = j["title_id_range_min"] = j["title_id_range_max"] = tid
-j["name"] = "mcdub3"
-json.dump(j, open(path, "w"), indent=4)
-PY
-make -C "$HBL_DIR" -j"$(nproc)" >/dev/null
+echo "== NTON ${NTON_REF:0:12} (forwarder program, defaults)"
+fetch "$NTON_REPO" "$NTON_REF" "$NTON_DIR"
+NTON_ASSETS="$NTON_DIR/nton/assets"
+[ -f "$NTON_ASSETS/exefs/main" ] && [ -f "$NTON_ASSETS/exefs/main.npdm" ] \
+    || mc3_fail "NTON has no nton/assets/exefs at this commit: check the pin"
+
+rm -rf "$STAGE"
+mkdir -p "$STAGE/exefs" "$STAGE/romfs" "$STAGE/control" "$STAGE/logo"
+cp "$NTON_ASSETS/exefs/main" "$NTON_ASSETS/exefs/main.npdm" "$STAGE/exefs/"
+
+echo "== romfs: forward to $APP_NRO"
+printf '%s' "$APP_NRO" > "$STAGE/romfs/nextNroPath"
+printf '%s' "$APP_NRO" > "$STAGE/romfs/nextArgv"
 
 echo "== control: NACP and icon"
-rm -rf "$STAGE"
-mkdir -p "$STAGE/exefs" "$STAGE/control"
-cp "$HBL_DIR/hbl.nso" "$STAGE/exefs/main"
-cp "$HBL_DIR/hbl.npdm" "$STAGE/exefs/main.npdm"
 "$DEVKITPRO/tools/bin/nacptool" --create "$APP_NAME" "$APP_AUTHOR" "$APP_VERSION" \
     "$STAGE/control/control.nacp" --titleid="0x$APP_TITLE_ID" >/dev/null
-if [ -f "$MC3_REPO/$APP_ICON" ]; then
-    # The home menu wants a baseline 256x256 JPEG; some EXIF fields leave the
-    # install stuck (hacBrewPack's README). Checked, not converted.
-    python3 - "$MC3_REPO/$APP_ICON" <<'PY'
-import struct, sys
-d = open(sys.argv[1], "rb").read()
-if d[:2] != b"\xff\xd8":
-    sys.exit(f"{sys.argv[1]}: not a JPEG")
-i, size = 2, None
-while i + 4 <= len(d):
-    marker, length = d[i + 1], struct.unpack(">H", d[i + 2:i + 4])[0]
-    if marker == 0xE1 and d[i + 4:i + 8] == b"Exif":
-        sys.exit(f"{sys.argv[1]}: has EXIF data; save it again without (e.g. via BMP)")
-    if marker in (0xC0, 0xC1):
-        size = struct.unpack(">HH", d[i + 5:i + 9])[::-1]
-    if marker == 0xC2:
-        sys.exit(f"{sys.argv[1]}: progressive JPEG; save it as baseline")
-    if marker == 0xDA:
-        break
-    i += 2 + length
-if size != (256, 256):
-    sys.exit(f"{sys.argv[1]}: {size}, needs 256x256")
+python3 - "$STAGE/control/control.nacp" "$APP_NAME" "$APP_AUTHOR" "$APP_VERSION" <<'PY'
+import sys
+path, name, publisher, version = sys.argv[1:5]
+d = bytearray(open(path, "rb").read())
+# One name and publisher (AmericanEnglish), as NTON stores them.
+d[0x0:0x3000] = b"\0" * 0x3000
+d[0x0:0x200] = name.encode()[:0x1FF].ljust(0x200, b"\0")
+d[0x200:0x300] = publisher.encode()[:0xFF].ljust(0x100, b"\0")
+d[0x3060:0x3070] = version.encode()[:0xF].ljust(0x10, b"\0")
+d[0x3025] = 0x00                     # StartupUserAccount: none
+d[0x3034] = 0x00                     # Screenshot: allowed
+d[0x3035] = 0x02                     # VideoCapture: enabled
+for off in (0x3080, 0x3088, 0x3090, 0x3098, 0x30A0, 0x3148, 0x3150, 0x3158,
+            0x3160, 0x3168, 0x3170, 0x3178, 0x3180):
+    d[off:off + 8] = b"\0" * 8       # no save data: the game keeps its own
+d[0x3188:0x318A] = b"\0\0"           # cache storage index max
+open(path, "wb").write(d)
 PY
-    cp "$MC3_REPO/$APP_ICON" "$STAGE/control/icon_AmericanEnglish.dat"
+if [ -f "$ICON_OUT" ]; then
+    cp "$ICON_OUT" "$STAGE/control/icon_AmericanEnglish.dat"
+elif [ -f "$MC3_REPO/$APP_ICON" ]; then
+    mc3_fail "icon not prepared: run 'bash switch/nsp.sh prepare' on the host first (make nsp does)"
 else
     echo "   no icon at $APP_ICON: the home menu shows a placeholder"
 fi
 
+LOGO_DIR="$MC3_REPO/${APP_LOGO_DIR:-assets/logo}"
+if [ -f "$LOGO_DIR/NintendoLogo.png" ] && [ -f "$LOGO_DIR/StartupMovie.gif" ]; then
+    echo "== start-up logo: ${APP_LOGO_DIR:-assets/logo}"
+    cp "$LOGO_DIR/NintendoLogo.png" "$LOGO_DIR/StartupMovie.gif" "$STAGE/logo/"
+else
+    echo "== start-up logo: NTON's"
+    cp "$NTON_ASSETS/logo/NintendoLogo.png" "$NTON_ASSETS/logo/StartupMovie.gif" "$STAGE/logo/"
+fi
+
 echo "== pack"
 (cd "$STAGE" && "$HBP_DIR/hacbrewpack" -k "$KEYS" --titleid "$APP_TITLE_ID" \
-    --exefsdir exefs --controldir control --noromfs --nologo \
+    --exefsdir exefs --romfsdir romfs --controldir control --logodir logo \
     --nspdir nsp --ncadir nca --tempdir tmp --backupdir backup)
 NSP="$OUT/mcdub3-$APP_VERSION.nsp"
 mv "$STAGE/nsp/$APP_TITLE_ID.nsp" "$NSP"
