@@ -208,9 +208,11 @@ TODO.md.
   `-Wnonnull` on `XBOX_TO_NATIVE`, comments, unused code). Next: first run.
 - 2026-10-17: music and sound in menus, garage and races; cars drawn; race view
   and HUD drawn (racing itself not yet: open); garage reachable; movies native on the console; boot
-  black screen gone (RECOMP_NET_LINK=0). Open: 1.5x scale glitches, NSP forwarder.
+  black screen gone (RECOMP_NET_LINK=0). Open: NSP forwarder.
 - 2026-10-18: frame pacing fixed (flythrough, menus, garage at hardware
-  speed on Linux; boot black screen short again).
+  speed on Linux; boot black screen short again). The Switch "1.5x scale
+  glitches" (menu, RECOMP_GL_SCALE=1.5) were the slow menu navigation fixed
+  on 2026-10-17 (APU EP alive, In-game audio fix 3): closed.
 - 2026-10-18 (Switch): legal-screen stall fixed -- MC3's heartbeat thread
   (sub_00196230) polls with Sleep(0) and took the guest lock back at every
   main-thread kernel call; a guest yield now gives way for a quantum
