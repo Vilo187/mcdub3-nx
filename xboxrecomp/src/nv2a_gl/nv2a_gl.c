@@ -413,6 +413,8 @@ typedef struct {
     uint32_t va, color, w, h, pitch, hash, bytes;
     GLuint   tex;
     uint32_t used, checked;
+    uint32_t levels;                    /* mip levels the title gave it */
+    uint32_t mips;                      /* levels the GL texture holds */
 } GlTex;
 
 #define GL_MAX_TEX 1024
@@ -603,8 +605,103 @@ static void tex_account(GlTex *t, uint32_t bytes)
     }
 }
 
+/* ── Mipmaps ──────────────────────────────────────────────────────────
+ *
+ * Only level 0 was uploaded, so everything a few metres away was sampled
+ * from the full-size image: distant roads and buildings shimmered and
+ * crawled. Most of MC3's race textures are DXT with 4 levels of their own
+ * (2026-10-18 survey). The title's levels follow level 0 in memory: DXT and
+ * swizzled A8R8G8B8/X8R8G8B8 upload them as they are; other decoded formats
+ * that ask for levels get them from the GPU. Single-level textures stay
+ * single-level, as on the hardware. Sampling (bind_stage) then goes
+ * trilinear with anisotropic filtering. From nfsu2-sw's Vulkan renderer
+ * (the idea). RECOMP_GL_MIPS=0 uploads level 0 only, as before. */
+static int s_mips_on = -1;
+
+static int mips_wanted(const GlTex *t)
+{
+    if (s_mips_on < 0) {
+        const char *e = getenv("RECOMP_GL_MIPS");
+        s_mips_on = !(e && *e == '0');
+    }
+    return s_mips_on && t->levels > 1 && t->w > 1 && t->h > 1
+        && !(t->w & (t->w - 1)) && !(t->h & (t->h - 1));
+}
+
+/* The texture is bound; it holds `n` levels. */
+static void tex_set_levels(GlTex *t, uint32_t n)
+{
+    t->mips = n ? n : 1;
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, (GLint)t->mips - 1);
+}
+
+static void tex_mips_dxt(GlTex *t, GLenum fmt, uint32_t size0)
+{
+    const uint8_t *base = (const uint8_t *)xbox_GetMemoryOffset() + t->va;
+    uint32_t l, off = size0, n = 1;
+    if (mips_wanted(t)) {
+        for (l = 1; l < t->levels; l++) {
+            uint32_t lw = t->w >> l ? t->w >> l : 1, lh = t->h >> l ? t->h >> l : 1;
+            uint32_t sz = tex_bytes(t->color, lw, lh, 0);
+            glCompressedTexImage2D(GL_TEXTURE_2D, (GLint)l, fmt, (GLsizei)lw, (GLsizei)lh, 0,
+                                   (GLsizei)sz, base + off);
+            off += sz;
+            n++;
+            if (lw == 1 && lh == 1)
+                break;
+        }
+        tex_account(t, off - size0);
+    }
+    tex_set_levels(t, n);
+}
+
+static void tex_mips_argb(GlTex *t, const uint32_t *src, uint32_t fill)
+{
+    uint32_t l, n = 1, x, y;
+    size_t off;
+    if (mips_wanted(t)) {
+        off = (size_t)t->w * t->h;
+        for (l = 1; l < t->levels; l++) {
+            uint32_t lw = t->w >> l ? t->w >> l : 1, lh = t->h >> l ? t->h >> l : 1;
+            const uint32_t *ls = src + off;
+            for (y = 0; y < lh; y++)
+                for (x = 0; x < lw; x++)
+                    s_decode[(size_t)y * lw + x] = ls[swizzle_index(x, y, lw, lh)] | fill;
+            glTexImage2D(GL_TEXTURE_2D, (GLint)l, GL_RGBA8, (GLsizei)lw, (GLsizei)lh, 0,
+                         GL_BGRA, GL_UNSIGNED_BYTE, s_decode);
+            off += (size_t)lw * lh;
+            n++;
+            if (lw == 1 && lh == 1)
+                break;
+        }
+        tex_account(t, (uint32_t)((off - (size_t)t->w * t->h) * 4));
+    }
+    tex_set_levels(t, n);
+}
+
+static void tex_mips_generate(GlTex *t)
+{
+    if (mips_wanted(t) && glGenerateMipmap) {
+        glGenerateMipmap(GL_TEXTURE_2D);
+        tex_account(t, t->w * t->h * 4 / 3);
+        tex_set_levels(t, 32);               /* the chain to 1x1 */
+        t->mips = t->levels;                 /* > 1: sampled with mipmaps */
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 1000);
+        return;
+    }
+    tex_set_levels(t, 1);
+}
+
+static GlTex *s_tex_cur;                     /* what tex_get returned last */
+static GLuint tex_done(GlTex *t)
+{
+    s_tex_cur = t;
+    return t->tex;
+}
+
 static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
-                      uint32_t pitch)
+                      uint32_t pitch, uint32_t levels)
 {
     GlTex *t = NULL, *victim = NULL;
     uint32_t i, hash;
@@ -612,7 +709,8 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
 
     for (i = s_tex_head[tex_bucket(va, color, w, h)]; i; i = s_tex_next[i - 1]) {
         GlTex *c = &s_tex[i - 1];
-        if (c->tex && c->va == va && c->color == color && c->w == w && c->h == h) {
+        if (c->tex && c->va == va && c->color == color && c->w == w && c->h == h
+            && c->levels == levels) {
             t = c;
             break;
         }
@@ -626,7 +724,7 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
     /* Once per frame per texture is enough to notice an update. */
     if (t && t->checked == s_frame) {
         t->used = s_frame;
-        return t->tex;
+        return tex_done(t);
     }
     /* Linear images (movies, UI, CPU-drawn) in full; swizzled ones, mostly
      * static game textures, sampled. */
@@ -636,7 +734,7 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
         hash ^= bytes_hash(s_palette_va, 1024) * 31u;
     if (t && t->hash == hash) {
         t->used = t->checked = s_frame;
-        return t->tex;
+        return tex_done(t);
     }
     if (!t) {
         t = victim;
@@ -647,7 +745,7 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
             tex_index_del(t);
         }
         memset(t, 0, sizeof *t);
-        t->va = va; t->color = color; t->w = w; t->h = h;
+        t->va = va; t->color = color; t->w = w; t->h = h; t->levels = levels;
         tex_index_add(t);
         glGenTextures(1, &t->tex);
         tex_param_forget(t->tex);
@@ -665,7 +763,7 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
                         GL_UNSIGNED_BYTE, (const uint8_t *)xbox_GetMemoryOffset() + va);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
         gl_step_done("texture upload");
-        return t->tex;
+        return tex_done(t);
     }
     t->va = va; t->color = color; t->w = w; t->h = h; t->pitch = pitch;
     t->hash = hash; t->used = t->checked = s_frame;
@@ -682,7 +780,7 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
                      GL_UNSIGNED_BYTE, (const uint8_t *)xbox_GetMemoryOffset() + va);
         glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
         tex_account(t, w * h * 4);
-        return t->tex;
+        return tex_done(t);
     }
 
     if (color == 0x0C || color == 0x0E || color == 0x0F) {
@@ -706,8 +804,9 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
                                    (GLsizei)size, (const uint8_t *)xbox_GetMemoryOffset() + va);
             if (glGetError() == GL_NO_ERROR) {
                 tex_account(t, size);
+                tex_mips_dxt(t, fmt, size);
                 gl_step_done("texture upload");
-                return t->tex;
+                return tex_done(t);
             }
             s3tc = 0;
             fprintf(stderr, "  [GL] compressed DXT upload refused; decoding DXT on the CPU\n");
@@ -734,12 +833,14 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0,
                      GL_BGRA, GL_UNSIGNED_BYTE, s_decode);
         tex_account(t, w * h * 4);
+        tex_mips_argb(t, src, fill);
         gl_step_done("texture upload");
     } else if (s_decode && (color == 0x0B ? decode_indexed(va, w, h, s_decode)
                                     : nv2a_backend_decode_texture(&nt, s_decode))) {
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0,
                      GL_BGRA, GL_UNSIGNED_BYTE, s_decode);
         tex_account(t, w * h * 4);
+        tex_mips_generate(t);
         gl_step_done("texture upload");
     } else {
         static const uint32_t magenta = 0xFFFF00FFu;
@@ -750,7 +851,7 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
             fprintf(stderr, "  [GL] texture 0x%08X format 0x%02X not decodable\n",
                     va, color);
     }
-    return t->tex;
+    return tex_done(t);
 }
 
 static GLint wrap_mode(uint32_t m)
@@ -953,6 +1054,44 @@ static void depth_tex_prepare(const uint32_t *regs, const Nv2aRawBatch *b)
     }
 }
 
+/* RECOMP_GL_ANISO: anisotropic filtering of mipmapped textures, 1..16
+ * (default 16, 1 = off; capped by the driver). RECOMP_GL_LOD_BIAS: mip
+ * bias, negative = sharper (default -0.25). Both as nfsu2-sw's Vulkan. */
+static float tex_aniso(void)
+{
+    static float a = -1.0f;
+    if (a < 0.0f) {
+        const char *e = getenv("RECOMP_GL_ANISO");
+        GLfloat mx = 0.0f;
+        a = e ? (float)atof(e) : 16.0f;
+        while (glGetError() != GL_NO_ERROR) { }
+        {
+            GLint mi = 0;
+            glGetIntegerv(GL_MAX_TEXTURE_MAX_ANISOTROPY, &mi);   /* float on most; int is fine */
+            mx = (GLfloat)mi;
+        }
+        if (glGetError() != GL_NO_ERROR || mx < 1.0f)
+            mx = 1.0f;                                          /* not supported */
+        if (a < 1.0f) a = 1.0f;
+        if (a > mx) a = mx;
+        fprintf(stderr, "  [GL] mipmaps %s, anisotropic filtering %gx (driver max %g)\n",
+                s_mips_on == 0 ? "off" : "on", a, mx);
+    }
+    return a;
+}
+
+static float tex_lod_bias(void)
+{
+    static int set;
+    static float b;
+    if (!set) {
+        const char *e = getenv("RECOMP_GL_LOD_BIAS");
+        b = e ? (float)atof(e) : -0.25f;
+        set = 1;
+    }
+    return b;
+}
+
 /* Bind stage `i` from the method shadow; returns the texcoord scale. */
 static void bind_stage(const uint32_t *regs, int i, float scale[2])
 {
@@ -963,6 +1102,7 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
     uint32_t va, w, h, pitch = 0;
     GLuint tex = 0;
     GlSurf *rt;
+    int mipped = 0;
 
     scale[0] = scale[1] = 1.0f;
     active_unit(i);
@@ -999,7 +1139,8 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
         tex = zd->rgba;
         rt_scale(w, h, zd->lw, zd->lh, zd->ax ? zd->ax : 1, zd->ay ? zd->ay : 1, scale);
     } else {
-        tex = tex_get(va, color, w, h, pitch);
+        tex = tex_get(va, color, w, h, pitch, (format >> 16) & 0xF);
+        mipped = s_tex_cur && s_tex_cur->tex == tex && s_tex_cur->mips > 1;
     }
     bind_tex(tex);
     {
@@ -1010,9 +1151,18 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
         uint32_t addr = regs[base + 2];
         uint32_t filter = regs[base + 5];
         GLint mag = ((filter >> 24) & 0xF) == 1 ? GL_NEAREST : GL_LINEAR;
-        GLint min = ((filter >> 16) & 0xFF) == 1 ? GL_NEAREST : GL_LINEAR;
-        uint32_t key = (addr & 0xF0F) | ((uint32_t)(mag == GL_NEAREST) << 16)
-                     | ((uint32_t)(min == GL_NEAREST) << 17) | 0x80000000u;
+        uint32_t nmin = (filter >> 16) & 0xFF;
+        GLint min = nmin == 1 ? GL_NEAREST : GL_LINEAR;
+        uint32_t key;
+        /* A mipmapped filter on a texture that has its levels: trilinear
+         * (nearest-based modes keep nearest texels), anisotropic. */
+        int mip = mipped && nmin >= 3 && nmin <= 6;
+        if (mip)
+            min = (nmin == 3 || nmin == 5) ? 0x2702 /* NEAREST_MIPMAP_LINEAR */
+                                           : GL_LINEAR_MIPMAP_LINEAR;
+        key = (addr & 0xF0F) | ((uint32_t)(mag == GL_NEAREST) << 16)
+            | ((uint32_t)(min == GL_NEAREST) << 17) | ((uint32_t)mip << 18)
+            | ((uint32_t)(min == 0x2702) << 19) | 0x80000000u;
         TexParam *tp = &s_tex_param[tex % TEX_PARAM_SLOTS];
         if (tp->id != tex || tp->key != key) {
             tp->id = tex;
@@ -1021,6 +1171,11 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, wrap_mode((addr >> 8) & 0xF));
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min);
+            if (glTexParameterf) {
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
+                                mip && min == GL_LINEAR_MIPMAP_LINEAR ? tex_aniso() : 1.0f);
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, mip ? tex_lod_bias() : 0.0f);
+            }
         }
     }
 }
