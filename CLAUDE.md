@@ -167,8 +167,18 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   console measurement pending. `MC3_PERF=<s>` reports lock waits, CPU per
   thread (Switch), APU pacing; `pkill -USR1 mc3_recomp` snapshots the main
   thread's stack (`tools/stackwalk.py`).
-- Open (2026-10-17): the intro flythrough behind the legal screen runs ~10x
-  fast on Linux (normal on the console); it reads none of the game's clocks.
+- Frame pacing (fixed 2026-10-18): the first flythrough (1.55 s vs 5.5 s on
+  hardware), menus and garage ran 2-4x fast on Linux, with every clock and
+  the frame time right. The game asks D3D for presentation interval 2
+  (30 fps) there and advances per frame, so the presenter must honour D3D's
+  flip targets: sub_003E4EF0 (retirement) reports to nv2a_pb_flip_retired.
+  That only works once D3D's PGRAPH handler (sub_003E5540) runs under the
+  executor's trap lock and reports traps taken: its write-one-to-clear ack
+  is a no-op on plain memory, and the trap storm (412k flips, targets
+  millions of vblanks ahead) wrecked the flip queue. D3D device 0x003EE718:
+  vblank count +0x1C0, last target +0x1C8. `MC3_FLIP_TRACE=1` logs the
+  pushbuffer callback (sub_003E52D0; param & 0x1F = command, 1 = flip,
+  (param >> 5) & 7 = interval); `MC3_FLIP_PACE=0` / `MC3_TRAP_HOOK=0` undo.
 
 ### First lift (2026-10-14)
 
@@ -194,5 +204,6 @@ TODO.md.
   `-Wnonnull` on `XBOX_TO_NATIVE`, comments, unused code). Next: first run.
 - 2026-10-17: music and sound in menus, garage and races; cars drawn; race view
   and HUD drawn (racing itself not yet: open); garage reachable; movies native on the console; boot
-  black screen gone (RECOMP_NET_LINK=0). Open: flythrough speed (Linux),
-  legal-screen stall (console), 1.5x scale glitches, NSP forwarder.
+  black screen gone (RECOMP_NET_LINK=0). Open: legal-screen stall (console), 1.5x scale glitches, NSP forwarder.
+- 2026-10-18: frame pacing fixed (flythrough, menus, garage at hardware
+  speed on Linux; boot black screen short again).
