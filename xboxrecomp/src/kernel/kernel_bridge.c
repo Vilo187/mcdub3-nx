@@ -1187,10 +1187,12 @@ static void bridge_NtClose(void)
     /* Close real handles but skip fake/synthetic ones */
     if (raw_handle && raw_handle != 0xDEAD0001u && raw_handle != 0xBEEF0010u) {
         HANDLE h = bridge_take_handle(raw_handle);
-        if (h && h != INVALID_HANDLE_VALUE) {
-            xbox_dir_forget(h);          /* a directory's open enumeration */
-            CloseHandle(h);
-        }
+        if (h && h != INVALID_HANDLE_VALUE)
+            /* Not CloseHandle: xbox_NtClose also drops a directory's open
+             * enumeration and carries out a delete-on-close mark
+             * (FileDispositionInformation) -- closed here directly, every
+             * XDeleteSaveGame "succeeded" and deleted nothing (2026-10-18). */
+            xbox_NtClose(h);
     }
     g_eax = 0; /* STATUS_SUCCESS */
 }

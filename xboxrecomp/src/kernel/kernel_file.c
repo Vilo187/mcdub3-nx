@@ -871,6 +871,37 @@ static int handle_stat(HANDLE h, int fd, struct stat *st)
     return fstat(fd, st);
 }
 
+/* The host path an OBJECT_ATTRIBUTES names. A relative name with a
+ * RootDirectory is relative to that handle's directory, as on the Windows
+ * side (translate_obj_path): XDeleteSaveGame opens the save folder and then
+ * each file in it by bare name. Ignored here, every one of those opens
+ * failed, XDeleteSaveGame returned ERROR_FILE_NOT_FOUND, and MC3's deleted
+ * profiles stayed (2026-10-18). */
+static BOOL posix_obj_path(PXBOX_OBJECT_ATTRIBUTES ObjectAttributes, char *host_path, DWORD cap)
+{
+    const char *xbox_path = get_xbox_path(ObjectAttributes);
+    if (!xbox_path)
+        return FALSE;
+    if (ObjectAttributes->RootDirectory && xbox_path[0] != '\\'
+            && !(xbox_path[0] && xbox_path[1] == ':')) {
+        const char *dir = w32_handle_path(ObjectAttributes->RootDirectory);
+        size_t n, i;
+        if (!dir)
+            return FALSE;
+        n = (size_t)snprintf(host_path, cap, "%s", dir);
+        if (n + 2 >= cap)
+            return FALSE;
+        if (n && host_path[n - 1] != '/')
+            host_path[n++] = '/';
+        for (i = 0; xbox_path[i] && n + 1 < cap; i++)
+            host_path[n++] = xbox_path[i] == '\\' ? '/' : xbox_path[i];
+        host_path[n] = 0;
+        XBOX_TRACE(XBOX_LOG_FILE, "relative open: %s", host_path);
+        return !xbox_path[i];
+    }
+    return xbox_translate_path(xbox_path, host_path, cap);
+}
+
 NTSTATUS __stdcall xbox_NtCreateFile(
     PHANDLE FileHandle, ACCESS_MASK DesiredAccess,
     PXBOX_OBJECT_ATTRIBUTES ObjectAttributes, PXBOX_IO_STATUS_BLOCK IoStatusBlock,
@@ -883,8 +914,7 @@ NTSTATUS __stdcall xbox_NtCreateFile(
     if (!FileHandle || !ObjectAttributes)
         return STATUS_INVALID_PARAMETER;
 
-    const char* xbox_path = get_xbox_path(ObjectAttributes);
-    if (!xbox_path || !xbox_translate_path(xbox_path, host_path, MAX_PATH)) {
+    if (!posix_obj_path(ObjectAttributes, host_path, MAX_PATH)) {
         xbox_log(XBOX_LOG_ERROR, XBOX_LOG_FILE, "NtCreateFile: path translation failed");
         return STATUS_OBJECT_PATH_NOT_FOUND;
     }
@@ -1045,12 +1075,86 @@ NTSTATUS __stdcall xbox_NtWriteFile(
 
 void xbox_dir_forget(HANDLE h);
 
+/* ── Delete on close (FileDispositionInformation) ──
+ *
+ * NT deletes a file or directory marked for deletion when its last handle
+ * closes. This unlinked at once instead: unlink cannot remove a directory,
+ * and on the Switch a directory handle has no descriptor (XBOX_DIR_FD), so
+ * the call failed before that -- and Horizon will not delete a file that is
+ * still open. XAPI's XDeleteSaveGame marks the save's files and then its
+ * folder this way; the folder stayed, and MC3 listed a deleted profile
+ * again (2026-10-18). Now the mark is kept per handle and carried out at
+ * NtClose: unlink, else rmdir. */
+#define MAX_PENDING_DELETES 64
+static struct { HANDLE h; char path[MAX_PATH]; } s_pending_delete[MAX_PENDING_DELETES];
+static CRITICAL_SECTION s_pending_cs;
+static volatile LONG s_pending_cs_init;
+
+static void pending_lock(void)
+{
+    if (InterlockedCompareExchange(&s_pending_cs_init, 1, 0) == 0) {
+        InitializeCriticalSection(&s_pending_cs);
+        InterlockedExchange(&s_pending_cs_init, 2);
+    }
+    while (s_pending_cs_init != 2)
+        SwitchToThread();
+    EnterCriticalSection(&s_pending_cs);
+}
+
+/* Mark (on = 1) or unmark the file behind h for deletion at its close. */
+static int pending_delete_set(HANDLE h, const char *path, int on)
+{
+    int i, free_slot = -1, ok = 1;
+    pending_lock();
+    for (i = 0; i < MAX_PENDING_DELETES; i++) {
+        if (s_pending_delete[i].h == h) {
+            if (!on) s_pending_delete[i].h = NULL;
+            LeaveCriticalSection(&s_pending_cs);
+            return 1;
+        }
+        if (!s_pending_delete[i].h && free_slot < 0)
+            free_slot = i;
+    }
+    if (on) {
+        if (free_slot >= 0 && path) {
+            s_pending_delete[free_slot].h = h;
+            snprintf(s_pending_delete[free_slot].path, MAX_PATH, "%s", path);
+        } else {
+            ok = 0;
+        }
+    }
+    LeaveCriticalSection(&s_pending_cs);
+    return ok;
+}
+
+/* The path h was marked with, taken off the list; 0 if it was not. */
+static int pending_delete_take(HANDLE h, char *path)
+{
+    int i, found = 0;
+    if (!s_pending_cs_init)
+        return 0;
+    pending_lock();
+    for (i = 0; i < MAX_PENDING_DELETES; i++)
+        if (s_pending_delete[i].h == h) {
+            memcpy(path, s_pending_delete[i].path, MAX_PATH);
+            s_pending_delete[i].h = NULL;
+            found = 1;
+            break;
+        }
+    LeaveCriticalSection(&s_pending_cs);
+    return found;
+}
+
 NTSTATUS __stdcall xbox_NtClose(HANDLE Handle)
 {
+    char del[MAX_PATH];
     XBOX_TRACE(XBOX_LOG_FILE, "NtClose(handle=%p)", Handle);
     if (Handle && Handle != INVALID_HANDLE_VALUE) {
+        int pending = pending_delete_take(Handle, del);
         xbox_dir_forget(Handle);
         CloseHandle(Handle);
+        if (pending && unlink(del) != 0 && rmdir(del) != 0)
+            fprintf(stderr, "  [FILE] delete on close failed: %s (errno %d)\n", del, errno);
         return STATUS_SUCCESS;
     }
     return STATUS_INVALID_HANDLE;
@@ -1059,8 +1163,7 @@ NTSTATUS __stdcall xbox_NtClose(HANDLE Handle)
 NTSTATUS __stdcall xbox_NtDeleteFile(PXBOX_OBJECT_ATTRIBUTES ObjectAttributes)
 {
     char host_path[MAX_PATH];
-    const char* xbox_path = get_xbox_path(ObjectAttributes);
-    if (!xbox_path || !xbox_translate_path(xbox_path, host_path, MAX_PATH))
+    if (!posix_obj_path(ObjectAttributes, host_path, MAX_PATH))
         return STATUS_OBJECT_PATH_NOT_FOUND;
     XBOX_TRACE(XBOX_LOG_FILE, "NtDeleteFile: %s", host_path);
     if (unlink(host_path) == 0) return STATUS_SUCCESS;
@@ -1147,6 +1250,19 @@ NTSTATUS __stdcall xbox_NtSetInformationFile(
         return STATUS_INVALID_PARAMETER;
 
     int fd = w32_handle_fd(FileHandle);
+    if (FileInformationClass == XboxFileDispositionInformation) {
+        /* Directories too (XBOX_DIR_FD on the Switch): see xbox_NtClose. */
+        PXBOX_FILE_DISPOSITION_INFORMATION info = (PXBOX_FILE_DISPOSITION_INFORMATION)FileInformation;
+        const char *p = w32_handle_path(FileHandle);
+        if (fd < 0 && fd != XBOX_DIR_FD)
+            return STATUS_INVALID_HANDLE;
+        if (!pending_delete_set(FileHandle, p, info->DeleteFile ? 1 : 0))
+            return STATUS_INSUFFICIENT_RESOURCES;
+        XBOX_TRACE(XBOX_LOG_FILE, "delete on close %s: %s", info->DeleteFile ? "set" : "cleared",
+                   p ? p : "?");
+        IoStatusBlock->Status = STATUS_SUCCESS;
+        return STATUS_SUCCESS;
+    }
     if (fd < 0)
         return STATUS_INVALID_HANDLE;
 
@@ -1165,17 +1281,7 @@ NTSTATUS __stdcall xbox_NtSetInformationFile(
             IoStatusBlock->Status = STATUS_SUCCESS;
             return STATUS_SUCCESS;
         }
-        case XboxFileDispositionInformation: {
-            PXBOX_FILE_DISPOSITION_INFORMATION info = (PXBOX_FILE_DISPOSITION_INFORMATION)FileInformation;
-            /* POSIX: unlinking an open file removes it on last close -- this
-             * matches NT "delete on close" semantics exactly. */
-            if (info->DeleteFile) {
-                const char* p = w32_handle_path(FileHandle);
-                if (p) unlink(p);
-            }
-            IoStatusBlock->Status = STATUS_SUCCESS;
-            return STATUS_SUCCESS;
-        }
+
         case XboxFileBasicInformation:
             /* Setting file times is non-essential for the game; accept it. */
             IoStatusBlock->Status = STATUS_SUCCESS;
@@ -1256,8 +1362,7 @@ NTSTATUS __stdcall xbox_NtQueryFullAttributesFile(
 
     if (!FileInformation)
         return STATUS_INVALID_PARAMETER;
-    const char* xbox_path = get_xbox_path(ObjectAttributes);
-    if (!xbox_path || !xbox_translate_path(xbox_path, host_path, MAX_PATH))
+    if (!posix_obj_path(ObjectAttributes, host_path, MAX_PATH))
         return STATUS_OBJECT_PATH_NOT_FOUND;
     if (stat(host_path, &st) != 0)
         return STATUS_OBJECT_NAME_NOT_FOUND;
