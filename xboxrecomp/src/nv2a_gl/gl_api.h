@@ -191,9 +191,20 @@ X(GLboolean, glUnmapBuffer, (GLenum)) \
     X(void, glDrawElements, (GLenum, GLsizei, GLenum, const void *)) \
     X(void, glDrawArrays, (GLenum, GLint, GLsizei))
 
+/* Optional: resolved when the driver has them, NULL otherwise (program
+ * binaries, GL 4.1 / ARB_get_program_binary: the shader cache). */
+#define NV2A_GL_OPT_FUNCS(X) \
+    X(void, glGetProgramBinary, (GLuint, GLsizei, GLsizei *, GLenum *, void *)) \
+    X(void, glProgramBinary, (GLuint, GLenum, const void *, GLsizei)) \
+    X(void, glProgramParameteri, (GLuint, GLenum, GLint))
+#define GL_PROGRAM_BINARY_RETRIEVABLE_HINT 0x8257
+#define GL_PROGRAM_BINARY_LENGTH          0x8741
+#define GL_NUM_PROGRAM_BINARY_FORMATS     0x87FE
+
 #define NV2A_GL_DECLARE(ret, name, args) \
     typedef ret (GLAPIENTRY *PFN_##name) args; extern PFN_##name p_##name;
 NV2A_GL_FUNCS(NV2A_GL_DECLARE)
+NV2A_GL_OPT_FUNCS(NV2A_GL_DECLARE)
 #undef NV2A_GL_DECLARE
 
 /* Resolve every entry point. Returns the number that could not be found
@@ -283,5 +294,8 @@ int nv2a_gl_load(void *(*getproc)(const char *name));
 #define glVertexAttrib4f         p_glVertexAttrib4f
 #define glDrawElements           p_glDrawElements
 #define glDrawArrays             p_glDrawArrays
+#define glGetProgramBinary       p_glGetProgramBinary
+#define glProgramBinary          p_glProgramBinary
+#define glProgramParameteri      p_glProgramParameteri
 
 #endif /* NV2A_GL_API_H */

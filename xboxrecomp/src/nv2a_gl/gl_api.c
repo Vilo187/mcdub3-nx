@@ -5,6 +5,7 @@
 
 #define NV2A_GL_DEFINE(ret, name, args) PFN_##name p_##name;
 NV2A_GL_FUNCS(NV2A_GL_DEFINE)
+NV2A_GL_OPT_FUNCS(NV2A_GL_DEFINE)
 #undef NV2A_GL_DEFINE
 
 int nv2a_gl_load(void *(*getproc)(const char *name))
@@ -19,5 +20,8 @@ int nv2a_gl_load(void *(*getproc)(const char *name))
     }
     NV2A_GL_FUNCS(NV2A_GL_RESOLVE)
 #undef NV2A_GL_RESOLVE
+#define NV2A_GL_RESOLVE_OPT(ret, name, args) p_##name = (PFN_##name)getproc(#name);
+    NV2A_GL_OPT_FUNCS(NV2A_GL_RESOLVE_OPT)
+#undef NV2A_GL_RESOLVE_OPT
     return missing;
 }
