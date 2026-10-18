@@ -242,11 +242,14 @@ int nv2a_gl_vsh_program(const uint32_t (*prog)[4], uint32_t slots,
  * pixels, and the first real centre of title pixel i sits at i + 0.5/k, not
  * i + 0.5: an edge snapped to 0.5 still missed real row/column 0. u_surf.w =
  * 0.5 - 0.5/k moves positions so that real centre lands on i + 0.5 (0 at
- * k = 1). */
-#define NV2A_SNAP_GLSL \
+ * k = 1).
+ * With square pixels (nv2a_gl RECOMP_GL_SQUARE) the two axes scale apart,
+ * so the GL path takes the y offset from u_snapy; Vulkan keeps one. */
+#define NV2A_SNAP_GLSL_OFF(off) \
     "vec2 nv2a_snap(vec2 sw, float w) {\n" \
-    "    return w > 0.0 ? (trunc(sw / w * 16.0) / 16.0 - u_surf.w) * w : sw;\n" \
+    "    return w > 0.0 ? (trunc(sw / w * 16.0) / 16.0 - " off ") * w : sw;\n" \
     "}\n"
+#define NV2A_SNAP_GLSL NV2A_SNAP_GLSL_OFF("vec2(u_surf.w)")
 
 /* Everything around the program body: inputs, the register file, the ILU
  * helpers (same constants as the interpreter), and the three position
@@ -362,6 +365,7 @@ const char *nv2a_gl_vsh_prelude(void)
         "layout(location = 15) in vec4 v15;\n"
         "uniform vec4 c[192];\n"
         "uniform vec4 u_surf;      /* 2/W, 2/H, 1/zmax, scale offset */\n"
+        "uniform float u_snapy;    /* scale offset, y (square pixels) */\n"
         "uniform vec2 u_aa;        /* logical -> real pixels */\n"
         "uniform vec4 u_m[4];      /* fixed-function composite rows */\n"
         "uniform vec4 u_vpoff;     /* fixed-function viewport offset */\n"
@@ -398,7 +402,7 @@ const char *nv2a_gl_vsh_prelude(void)
          * clipping at the near and far planes, and GL_DEPTH_CLAMP alone did
          * not reach every driver -- on Eden NFSU2's loading screen, drawn at
          * z = 1.0, still vanished. */
-        NV2A_SNAP_GLSL
+        NV2A_SNAP_GLSL_OFF("vec2(u_surf.w, u_snapy)")
         "vec4 nv2a_clip(vec3 sw, float w) {\n"
         "    float z = sw.z * u_surf.z * 2.0 - w;\n"
         "    sw.xy = nv2a_snap(sw.xy, w);\n"

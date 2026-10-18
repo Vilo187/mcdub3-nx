@@ -186,6 +186,17 @@ static int     s_shared_z = -1;         /* RECOMP_GL_SHARED_Z=0: old behaviour *
  * present blit scale and nothing else does. Capped per surface by the
  * driver's size limit. */
 static double s_scale = 1.0;
+
+/* RECOMP_GL_SQUARE (on by default in 16:9): square pixels. A title told the
+ * TV is widescreen still renders 640 or 720 x 480 and the TV stretches it,
+ * so every pixel is wider than tall and stretching it to 16:9 throws away
+ * horizontal detail -- at 1.5x MC3's race was 1080 stored columns shown
+ * 1280 wide. Screen-sized surfaces without horizontal anti-aliasing get
+ * their stored columns widened by the pixel aspect (32/27 for 720 wide,
+ * 4/3 for 640), so the picture is 1280 x 720 at 1.5x. The title sees its
+ * own size as before; only the pixels behind it change. From nfsu2-sw's
+ * Vulkan renderer (the idea, "Square Pixels"). =0 turns it off. */
+static int s_square = -1;
 static GLint  s_max_size = 4096;
 
 /* v title pixels of a surface l wide, in the p stored pixels behind it. */
@@ -256,10 +267,16 @@ static GlSurf *surf_get(uint32_t va, uint32_t w, uint32_t h,
     s->va = va; s->w = w; s->h = h; s->used = s_frame;
     s->aa_sx = aa_sx; s->aa_sy = aa_sy;
     {
-        double k = s_scale, m = (double)(w > h ? w : h);
-        if (m * k > (double)s_max_size)
-            k = (double)s_max_size / m;
-        s->pw = (uint32_t)(w * k + 0.5); s->ph = (uint32_t)(h * k + 0.5);
+        double kx = s_scale, ky = s_scale;
+        if (s_square < 0) {
+            const char *e = getenv("RECOMP_GL_SQUARE");
+            s_square = !(e && *e == '0') && xbox_video_widescreen();
+        }
+        if (s_square && aa_sx <= 1 && w >= 512 && h >= 400 && h <= 576)
+            kx *= w > 640 ? 32.0 / 27.0 : 4.0 / 3.0;
+        if (w * kx > (double)s_max_size) kx = (double)s_max_size / w;
+        if (h * ky > (double)s_max_size) ky = (double)s_max_size / h;
+        s->pw = (uint32_t)(w * kx + 0.5); s->ph = (uint32_t)(h * ky + 0.5);
         if (!s->pw) s->pw = 1;
         if (!s->ph) s->ph = 1;
     }
@@ -1014,7 +1031,7 @@ typedef struct {
     uint64_t   vkey;            /* 0: fixed-function; else program hash */
     Nv2aPshKey pkey;
     GLuint     prog;
-    GLint      u_c, u_surf, u_aa, u_m, u_vpoff, u_xform;
+    GLint      u_c, u_surf, u_snapy, u_aa, u_m, u_vpoff, u_xform;
     GLint      u_mv, u_fogplane, u_fog0, u_fog1;   /* fixed-function fog */
     GLint      u_t[4], u_tscale, u_c0, u_c1, u_fc0, u_fc1, u_fogcolor, u_afunc, u_aref;
     uint32_t   used;
@@ -1028,7 +1045,7 @@ typedef struct {
     struct GlUni {
         float surf[4], aa[2], m[16], vpoff[4], tscale[4][2];
         float c0[8][4], c1[8][4], fog[4], fc[2][4], aref;
-        float mv[16], fogplane[4], fog0[4], fog1[4];
+        float mv[16], fogplane[4], fog0[4], fog1[4], snapy;
         int   xform, afunc;
     } uni;
 } GlProg;
@@ -1231,6 +1248,16 @@ static int prog_bin_init(void)
     for (k = 0; k < 3; k++)
         if (str[k])
             s_bin_driver = fnv64(s_bin_driver, str[k], strlen(str[k]));
+    {   /* and the shader source around each program: a binary from older
+         * source must not load (the key holds only what is translated) */
+        const char *src[3];
+        src[0] = nv2a_gl_vsh_prelude();
+        src[1] = nv2a_gl_vsh_main_program();
+        src[2] = nv2a_gl_vsh_fixed();
+        for (k = 0; k < 3; k++)
+            if (src[k])
+                s_bin_driver = fnv64(s_bin_driver, src[k], strlen(src[k]));
+    }
     n = strlen(path);
     if (n > 4 && !strcmp(path + n - 4, ".bin"))
         n -= 4;
@@ -1506,6 +1533,7 @@ linked:
     p->u_c = glGetUniformLocation(p->prog, "c");
     p->vpc_rows = p->u_c >= 0 && glGetUniformLocation(p->prog, "c[191]") == p->u_c + 191;
     p->u_surf = glGetUniformLocation(p->prog, "u_surf");
+    p->u_snapy = glGetUniformLocation(p->prog, "u_snapy");
     p->u_aa = glGetUniformLocation(p->prog, "u_aa");
     p->u_m = glGetUniformLocation(p->prog, "u_m");
     p->u_vpoff = glGetUniformLocation(p->prog, "u_vpoff");
@@ -2058,7 +2086,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
     uint32_t n, a, i;
     GLintptr idx_at;
     GLenum mode, idx_type = GL_UNSIGNED_INT;
-    float tscale[4][2], c0[8][4], c1[8][4], fog[4], surf[4], aa[2], m[16];
+    float tscale[4][2], c0[8][4], c1[8][4], fog[4], surf[4], aa[2], m[16], snapy;
 
     if (!ready())
         return;
@@ -2131,6 +2159,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
     surf[1] = 2.0f / (float)s->h;
     surf[2] = 1.0f / (float)zmax_of(r);
     surf[3] = 0.5f - 0.5f * (float)s->w / (float)s->pw;   /* see nv2a_snap */
+    snapy = 0.5f - 0.5f * (float)s->h / (float)s->ph;     /* differs: square pixels */
     aa[0] = b->aa_sx > 0 ? b->aa_sx : 1.0f;
     aa[1] = b->aa_sy > 0 ? b->aa_sy : 1.0f;
     memcpy(m, b->composite, sizeof m);
@@ -2165,6 +2194,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
         struct GlUni u;
         memset(&u, 0, sizeof u);
         memcpy(u.surf, surf, sizeof u.surf);
+        u.snapy = snapy;
         memcpy(u.aa, aa, sizeof u.aa);
         memcpy(u.m, m, sizeof u.m);
         memcpy(u.vpoff, b->vp_offset, sizeof u.vpoff);
@@ -2183,6 +2213,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
             p->uni = u;
             p->uni_valid = 1;
             if (p->u_surf >= 0) glUniform4fv(p->u_surf, 1, u.surf);
+            if (p->u_snapy >= 0) glUniform1f(p->u_snapy, u.snapy);
             if (p->u_aa >= 0) glUniform2fv(p->u_aa, 1, u.aa);
             if (p->u_m >= 0) glUniform4fv(p->u_m, 4, u.m);
             if (p->u_vpoff >= 0) glUniform4fv(p->u_vpoff, 1, u.vpoff);
