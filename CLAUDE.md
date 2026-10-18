@@ -149,11 +149,12 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   logos cannot, mc3intro can (Enter). The keyboard is pad 1 by default
   (src/main.c; RECOMP_KEYBOARD=0 off). `make run WATCH=1`: F12 writes every
   draw of the frame on screen to the log (a diagnostic; nothing visible).
-  Keyboard (Linux since 2026-10-16,
-  input/sdl_keyboard.c; before that only a real pad worked): arrows = d-pad,
-  Enter = Start, Backspace = Back, keys A/B/X/Y = buttons A/B/X/Y (A = OK,
-  B = back, Y = delete profile), Q/E = White/Black, 1/3 = triggers,
-  numpad 8426 = left stick, IJKL = right stick. Unattended runs only:
+  Keyboard (Linux since 2026-10-16, input/sdl_keyboard.c; laid out for
+  racing 2026-10-17): W/S = gas/brake (right/left trigger), A/D = steer
+  (left stick), J/K/U/I = buttons A/B/X/Y (A = OK, B = back), Space = X,
+  arrows = d-pad (menus; in a race left/right change the song), Enter =
+  Start, Backspace = Back, Shift/Ctrl = White/Black, Q/E = stick clicks,
+  numpad 4/6/8/2 or F/H/T/G = right stick. Unattended runs only:
   `MC3_SKIP_MOVIES=1` pulses A+Start on the pad while intro movies play.
 - Measuring speed in the VM: headless runs (`make record`, `make profile`)
   render with llvmpipe (software) and run slower; windowed runs use virgl
