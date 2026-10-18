@@ -2857,6 +2857,168 @@ static void watch_shot(const GlSurf *s)
     }
 }
 
+/* ── FXAA in the present pass ─────────────────────────────────────────
+ *
+ * Present was a scaled blit, so every jagged edge of the title went to the
+ * screen as it was. Now (unless RECOMP_GL_FXAA=0) it is a full-screen pass
+ * that does FXAA 3.11 (Lottes): find the local luma contrast, decide
+ * whether the edge runs horizontally or vertically, walk along it to both
+ * ends, and blend across it by how far this pixel is from the nearer end
+ * (plus a sub-pixel term for single-pixel detail) -- while scaling to the
+ * screen in the same step. Written from the published algorithm; nfsu2-sw's
+ * Vulkan renderer does the same in its present pass (the idea). */
+static GLuint s_fx_prog, s_fx_vao;
+static GLint  s_fx_rcp, s_fx_uv, s_fx_max;
+static int    s_fx_on = -1;
+
+static int fxaa_init(void)
+{
+    static const char *vs[1] = {
+        "#version 330 core\n"
+        "uniform vec2 u_uv;            /* the drawn part of the texture */\n"
+        "out vec2 vUV;\n"
+        "void main() {\n"
+        "    vec2 t = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+        "    vUV = vec2(t.x * u_uv.x, (1.0 - t.y) * u_uv.y);   /* rows top-first */\n"
+        "    gl_Position = vec4(t * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n" };
+    static const char *fs[1] = {
+        "#version 330 core\n"
+        "uniform sampler2D u_tex;\n"
+        "uniform vec2 u_rcp;           /* one texel */\n"
+        "uniform vec2 u_max;           /* last drawn texel centre */\n"
+        "in vec2 vUV;\n"
+        "out vec4 o;\n"
+        "vec3 S(vec2 p) { return texture(u_tex, clamp(p, 0.5 * u_rcp, u_max)).rgb; }\n"
+        "float L(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
+        "float LA(vec2 p) { return L(S(p)); }\n"
+        "void main() {\n"
+        "    vec2 uv = vUV, r = u_rcp;\n"
+        "    vec3 cM = S(uv);\n"
+        "    float m = L(cM);\n"
+        "    float n = LA(uv + vec2(0.0, -r.y)), s = LA(uv + vec2(0.0, r.y));\n"
+        "    float e = LA(uv + vec2(r.x, 0.0)), w = LA(uv + vec2(-r.x, 0.0));\n"
+        "    float lo = min(m, min(min(n, s), min(e, w)));\n"
+        "    float hi = max(m, max(max(n, s), max(e, w)));\n"
+        "    float range = hi - lo;\n"
+        "    if (range < max(0.0312, hi * 0.125)) { o = vec4(cM, 1.0); return; }\n"
+        "    float nw = LA(uv + vec2(-r.x, -r.y)), ne = LA(uv + vec2(r.x, -r.y));\n"
+        "    float sw = LA(uv + vec2(-r.x, r.y)), se = LA(uv + vec2(r.x, r.y));\n"
+        "    /* edge direction: second differences across rows vs columns */\n"
+        "    float eh = abs(nw + sw - 2.0 * w) + 2.0 * abs(n + s - 2.0 * m) + abs(ne + se - 2.0 * e);\n"
+        "    float ev = abs(nw + ne - 2.0 * n) + 2.0 * abs(w + e - 2.0 * m) + abs(sw + se - 2.0 * s);\n"
+        "    bool horz = eh >= ev;\n"
+        "    float a = horz ? n : w, b = horz ? s : e;          /* the two sides */\n"
+        "    float ga = a - m, gb = b - m;\n"
+        "    bool sideA = abs(ga) >= abs(gb);\n"
+        "    float grad = 0.25 * max(abs(ga), abs(gb));\n"
+        "    float stp = horz ? r.y : r.x;\n"
+        "    float side = sideA ? a : b;\n"
+        "    if (sideA) stp = -stp;\n"
+        "    float mid = 0.5 * (m + side);                     /* luma on the edge */\n"
+        "    vec2 p0 = uv, dir = horz ? vec2(r.x, 0.0) : vec2(0.0, r.y);\n"
+        "    if (horz) p0.y += 0.5 * stp; else p0.x += 0.5 * stp;\n"
+        "    vec2 pn = p0 - dir, pp = p0 + dir;\n"
+        "    float en = LA(pn) - mid, ep = LA(pp) - mid;\n"
+        "    bool dn = abs(en) >= grad, dp = abs(ep) >= grad;\n"
+        "    const float Q[11] = float[](1.0, 1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0, 4.0, 8.0);\n"
+        "    for (int i = 0; i < 11 && !(dn && dp); i++) {\n"
+        "        if (!dn) { pn -= dir * Q[i]; en = LA(pn) - mid; dn = abs(en) >= grad; }\n"
+        "        if (!dp) { pp += dir * Q[i]; ep = LA(pp) - mid; dp = abs(ep) >= grad; }\n"
+        "    }\n"
+        "    float distN = horz ? uv.x - pn.x : uv.y - pn.y;\n"
+        "    float distP = horz ? pp.x - uv.x : pp.y - uv.y;\n"
+        "    bool nearN = distN < distP;\n"
+        "    float dist = min(distN, distP), span = distN + distP;\n"
+        "    bool good = ((nearN ? en : ep) < 0.0) != (m - mid < 0.0);\n"
+        "    float off = good ? 0.5 - dist / span : 0.0;\n"
+        "    /* sub-pixel: how much this pixel differs from its neighbourhood */\n"
+        "    float avg = (2.0 * (n + s + e + w) + nw + ne + sw + se) / 12.0;\n"
+        "    float sp = clamp(abs(avg - m) / range, 0.0, 1.0);\n"
+        "    sp = (-2.0 * sp + 3.0) * sp * sp;\n"
+        "    off = max(off, sp * sp * 0.75);\n"
+        "    vec2 f = uv;\n"
+        "    if (horz) f.y += off * stp; else f.x += off * stp;\n"
+        "    o = vec4(S(f), 1.0);\n"
+        "}\n" };
+    GLuint v, f;
+    GLint ok = 0;
+    if (s_fx_prog)
+        return 1;
+    if (s_fx_on < 0) {
+        const char *e = getenv("RECOMP_GL_FXAA");
+        s_fx_on = !(e && *e == '0');
+        fprintf(stderr, "  [GL] FXAA %s (RECOMP_GL_FXAA)\n", s_fx_on ? "on" : "off");
+    }
+    if (!s_fx_on)
+        return 0;
+    v = compile(GL_VERTEX_SHADER, vs, 1);
+    f = compile(GL_FRAGMENT_SHADER, fs, 1);
+    if (!v || !f) {
+        s_fx_on = 0;
+        return 0;
+    }
+    s_fx_prog = glCreateProgram();
+    glAttachShader(s_fx_prog, v);
+    glAttachShader(s_fx_prog, f);
+    glLinkProgram(s_fx_prog);
+    glDeleteShader(v);
+    glDeleteShader(f);
+    glGetProgramiv(s_fx_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        fprintf(stderr, "  [GL] FXAA link failed: plain present\n");
+        glDeleteProgram(s_fx_prog);
+        s_fx_prog = 0;
+        s_fx_on = 0;
+        return 0;
+    }
+    s_fx_rcp = glGetUniformLocation(s_fx_prog, "u_rcp");
+    s_fx_uv = glGetUniformLocation(s_fx_prog, "u_uv");
+    s_fx_max = glGetUniformLocation(s_fx_prog, "u_max");
+    glUseProgram(s_fx_prog);
+    glUniform1i(glGetUniformLocation(s_fx_prog, "u_tex"), 0);
+    s_cur_prog = s_fx_prog;
+    glGenVertexArrays(1, &s_fx_vao);
+    return 1;
+}
+
+/* Present s (sw stored columns drawn) into the window rectangle through
+ * FXAA; 0 when it is off (the caller blits). Default framebuffer bound. */
+static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
+{
+    float rcp[2], uv[2], mx[2];
+    if (!fxaa_init())
+        return 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(dx, dy, dw, dh);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+    glColorMask(1, 1, 1, 1);
+    glUseProgram(s_fx_prog);
+    s_cur_prog = s_fx_prog;
+    rcp[0] = 1.0f / (float)s->pw;            rcp[1] = 1.0f / (float)s->ph;
+    uv[0] = (float)sw / (float)s->pw;        uv[1] = 1.0f;
+    mx[0] = ((float)sw - 0.5f) / (float)s->pw;
+    mx[1] = ((float)s->ph - 0.5f) / (float)s->ph;
+    glUniform2fv(s_fx_rcp, 1, rcp);
+    glUniform2fv(s_fx_uv, 1, uv);
+    glUniform2fv(s_fx_max, 1, mx);
+    active_unit(0);
+    bind_tex(s->tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    tex_param_forget(s->tex);                /* bind_stage sets its own again */
+    glBindVertexArray(s_fx_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(s_vao);
+    state_dirty();
+    return 1;
+}
+
 static void gl_flip(void)
 {
     state_dirty();
@@ -2995,8 +3157,9 @@ static void gl_flip(void)
          * sideways. Blits obey the scissor test, so the bars stay cleared. */
         glEnable(GL_SCISSOR_TEST);
         glScissor(dx, dy, dw, dh);
-        glBlitFramebuffer(0, 0, sw, (GLint)s->ph,
-                          dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+        if (!present_fxaa(s, sw, dx, dy, dw, dh))
+            glBlitFramebuffer(0, 0, sw, (GLint)s->ph,
+                              dx, dy + dh, dx + dw, dy, GL_COLOR_BUFFER_BIT, GL_LINEAR);
         glDisable(GL_SCISSOR_TEST);
     }
 swap:
