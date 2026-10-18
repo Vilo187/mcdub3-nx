@@ -144,6 +144,12 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   175x451) rebuilt the surface (black race screen). Find such bugs with
   `make run WATCH=1 RECOMP_GL_WATCH_N=1500 RECOMP_GL_WATCH_SHOTS=<prefix>`:
   F12 dumps every draw and clear of the frame, images every 50 draws.
+- Motion blur (fixed 2026-10-18): MC3 reads the depth buffer (0x80A24000)
+  as a colour texture (LIN_A8R8G8B8 / LIN_A8B8G8R8) to weight its blur.
+  Depth only existed in GL, so the mask was garbage and races smeared at
+  speed; nv2a_gl now packs GL depth into those formats
+  (RECOMP_GL_DEPTH_TEX=0 to compare). A race frame is ~1800 draws: use
+  RECOMP_GL_WATCH_N=4000 for a whole one.
 - Input must reach the game as native controls do (the emulated pad), so
   the game decides what can be skipped: the Rockstar and Rockstar San Diego
   logos cannot, mc3intro can (Enter). The keyboard is pad 1 by default
