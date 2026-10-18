@@ -940,6 +940,22 @@ void sub_003E52D0(void)
                 MEM32(dev + 0x1C4), vb, dev);
 }
 
+/* ── The loading screen starts: compile the remembered shaders now ──
+ *
+ * sub_0001B740 starts the loading-screen thread (0x0001B720, priority 14):
+ * first behind the legal screen, while the game loads for seconds. Without
+ * program binaries (the Switch's Mesa 20.1) the renderer compiled its whole
+ * program list before the first logo: 4.8 s of black (2026-10-18). Now it
+ * waits for this and compiles a program a frame behind a static screen
+ * (nv2a_gl_prewarm_start; RECOMP_PROG_PREWARM=boot for the old way). */
+extern void nv2a_gl_prewarm_start(void);
+extern void sub_0001B740_gen(void);
+void sub_0001B740(void)
+{
+    nv2a_gl_prewarm_start();
+    sub_0001B740_gen();
+}
+
 /* ── Manual function overrides ─────────────────────────────── */
 
 /*
