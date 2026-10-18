@@ -314,10 +314,47 @@ KIRQL __stdcall xbox_KeRaiseIrqlToDpcLevel(void)
 
 volatile ULONG xbox_KeTickCount = 0;
 
+/* RECOMP_CLOCK_RATE=<f> [RECOMP_CLOCK_ONLY=tsc|qpc|tick|sys]: a diagnostic.
+ * The guest-visible clocks (rdtsc, KeQueryPerformanceCounter, KeTickCount,
+ * KeQuerySystemTime) run at f times real time, each from its value when
+ * first read, so they stay continuous. Asks "is this animation timed by a
+ * clock, and which one" by experiment: MC3's fast intro flythrough did not
+ * change with it, which pointed at frame pacing instead (2026-10-18).
+ * Audio and the display keep real time. Unset: 1, no change. */
+double xbox_clock_rate(const char *which)
+{
+    static double rate = -1;
+    static char only[16];
+    if (rate < 0) {
+        const char *e = getenv("RECOMP_CLOCK_RATE"), *o = getenv("RECOMP_CLOCK_ONLY");
+        rate = e ? atof(e) : 1.0;
+        if (rate <= 0) rate = 1.0;
+        snprintf(only, sizeof only, "%s", o ? o : "");
+        if (rate != 1.0)
+            fprintf(stderr, "  [CLOCK] guest clocks (%s) at %g x real time (RECOMP_CLOCK_RATE)\n",
+                    only[0] ? only : "all", rate);
+    }
+    if (rate == 1.0 || (only[0] && strcmp(only, which)))
+        return 1.0;
+    return rate;
+}
+
+/* KeTickCount's value now: host milliseconds, scaled by xbox_clock_rate. */
+ULONG xbox_guest_tick_count(void)
+{
+    static DWORD origin;
+    DWORD now = GetTickCount();
+    double r = xbox_clock_rate("tick");
+    if (!origin) origin = now ? now : 1;
+    if (r == 1.0)
+        return now;
+    return origin + (ULONG)((double)(now - origin) * r);
+}
+
 /* Call this periodically or on-demand to update KeTickCount */
 static void xbox_update_tick_count(void)
 {
-    xbox_KeTickCount = GetTickCount();
+    xbox_KeTickCount = xbox_guest_tick_count();
 }
 
 /* ============================================================================
@@ -329,8 +366,13 @@ static void xbox_update_tick_count(void)
 
 LARGE_INTEGER __stdcall xbox_KeQueryPerformanceCounter(void)
 {
+    static LONGLONG origin;
     LARGE_INTEGER counter;
+    double r = xbox_clock_rate("qpc");
     QueryPerformanceCounter(&counter);
+    if (!origin) origin = counter.QuadPart;
+    if (r != 1.0)
+        counter.QuadPart = origin + (LONGLONG)((double)(counter.QuadPart - origin) * r);
     return counter;
 }
 
@@ -395,6 +437,11 @@ VOID __stdcall xbox_KeQuerySystemTime(PLARGE_INTEGER CurrentTime)
     InitOnceExecuteOnce(&s_time_once, anchor_system_time, NULL, NULL);
     QueryPerformanceCounter(&now);
     delta = now.QuadPart - s_time_anchor_counts;
+    {
+        double r = xbox_clock_rate("sys");
+        if (r != 1.0)
+            delta = (LONGLONG)((double)delta * r);
+    }
     CurrentTime->QuadPart = s_time_anchor_100ns
         + (delta / s_time_freq_counts) * 10000000LL
         + (delta % s_time_freq_counts) * 10000000LL / s_time_freq_counts;
@@ -1048,6 +1095,9 @@ uint64_t xbox_ReadTimeStampCounter(void)
 
     {
         uint64_t ticks = (uint64_t)(now.QuadPart - origin.QuadPart);
+        double r = xbox_clock_rate("tsc");
+        if (r != 1.0)
+            ticks = (uint64_t)((double)ticks * r);
         /* Split the scaling so a long run cannot overflow: whole seconds
          * first, then the remainder. */
         uint64_t secs = ticks / (uint64_t)freq.QuadPart;

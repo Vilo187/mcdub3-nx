@@ -1379,7 +1379,7 @@ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
          * hardware whether or not anyone is asleep. GetTickCount() shares the
          * millisecond unit, so the rate matches. */
         *(volatile uint32_t *)((uintptr_t)(XBOX_KERNEL_DATA_BASE + KDATA_TICK_COUNT)
-                               + g_memory_offset) = GetTickCount();
+                               + g_memory_offset) = xbox_guest_tick_count();
 
         {
             /* Busy while the pushbuffer moves or has unread commands. */
@@ -1403,7 +1403,7 @@ static DWORD WINAPI tick_count_thread(LPVOID unused)
     (void)unused;
     while (!InterlockedCompareExchange(&g_nv2a_ack_stop, 0, 0)) {
         *(volatile uint32_t *)((uintptr_t)(XBOX_KERNEL_DATA_BASE + KDATA_TICK_COUNT)
-                               + g_memory_offset) = GetTickCount();
+                               + g_memory_offset) = xbox_guest_tick_count();
         Sleep(1);
     }
     return 0;

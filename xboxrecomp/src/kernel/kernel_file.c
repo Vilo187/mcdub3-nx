@@ -21,6 +21,7 @@
 
 #if !defined(_WIN32)
 #include <fcntl.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <errno.h>
 #include <sys/stat.h>
@@ -934,6 +935,38 @@ NTSTATUS __stdcall xbox_NtCreateFile(
 
 void (*xbox_file_read_hook)(void *buf, size_t len, int64_t offset);
 
+/* RECOMP_IO_MBPS=<n> [RECOMP_IO_SEEK_MS=<m>]: a diagnostic. Reads take as
+ * long as they would at n MB/s, plus m ms whenever a read does not continue
+ * where the previous one on that descriptor ended -- a DVD-like drive
+ * instead of a host disk (or SD card) that answers at once. For bugs that
+ * hide behind fast loads: a title that paces something by load progress,
+ * or streams and assumes a read is not done yet (MC3 streams a city). */
+static void io_throttle(int fd, int64_t pos, size_t n)
+{
+    static double mbps = -1;
+    static int seek_ms;
+    static int64_t next_pos[256];
+    long us;
+    if (mbps < 0) {
+        const char *e = getenv("RECOMP_IO_MBPS"), *s = getenv("RECOMP_IO_SEEK_MS");
+        mbps = e ? atof(e) : 0;
+        seek_ms = s ? atoi(s) : 0;
+        if (mbps > 0)
+            fprintf(stderr, "  [IO] reads throttled to %g MB/s, %d ms per seek (RECOMP_IO_MBPS)\n",
+                    mbps, seek_ms);
+    }
+    if (mbps <= 0)
+        return;
+    us = (long)((double)n / (mbps * 1048576.0) * 1e6);
+    if (fd >= 0 && fd < 256) {
+        if (pos >= 0 && pos != next_pos[fd])
+            us += seek_ms * 1000L;
+        next_pos[fd] = (pos >= 0 ? pos : next_pos[fd]) + (int64_t)n;
+    }
+    if (us > 0)
+        usleep((useconds_t)us);
+}
+
 NTSTATUS __stdcall xbox_NtReadFile(
     HANDLE FileHandle, HANDLE Event, PIO_APC_ROUTINE ApcRoutine, PVOID ApcContext,
     PXBOX_IO_STATUS_BLOCK IoStatusBlock, PVOID Buffer, ULONG Length,
@@ -972,6 +1005,7 @@ NTSTATUS __stdcall xbox_NtReadFile(
     }
     if (xbox_file_read_hook && n > 0)
         xbox_file_read_hook(Buffer, (size_t)n, pos);
+    io_throttle(fd, pos, (size_t)n);
     IoStatusBlock->Status = STATUS_SUCCESS;
     if (Event) SetEvent(Event);
     return STATUS_SUCCESS;

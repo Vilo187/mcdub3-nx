@@ -828,6 +828,9 @@ BOOLEAN __stdcall xbox_KeConnectInterrupt(PXBOX_KINTERRUPT Interrupt);
 
 /* KeTickCount - exported as a data pointer, not a function */
 extern volatile ULONG xbox_KeTickCount;
+/* KeTickCount's value now (RECOMP_CLOCK_RATE-aware), kernel_hal.c. */
+ULONG xbox_guest_tick_count(void);
+double xbox_clock_rate(const char *which);
 
 /* ============================================================================
  * Xbox Identity & Stubs (kernel_xbox.c)
