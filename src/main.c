@@ -206,6 +206,81 @@ extern int mcpx_apu_pacing_stats(char *buf, int cap);
 extern void xbox_nx_thread_report(double interval_s);
 #endif
 
+/* Who holds the guest lock, sampled ~1000 times a second: the holder's
+ * thread and the first two return addresses into game code on its guest
+ * stack (map them with work/analysis/disasm/functions.json, as
+ * tools/stackwalk.py does). For a stall made of hand-overs -- MC3's legal
+ * screen on the console, where the main thread waits 66-75% of the time in
+ * short waits while a loader thread runs -- this names the code that keeps
+ * taking the lock. Printed with the MC3_PERF report, then reset. */
+extern int xbox_gil_sample(uint32_t *tid, uint32_t *esp, int *is_main);
+extern ptrdiff_t g_xbox_mem_offset;            /* xbox_memory_layout.c */
+#define GIL_SAMPLE_SLOTS 64
+static struct { uint32_t tid, r1, r2; long n; int main; } s_gs[GIL_SAMPLE_SLOTS];
+static long s_gs_total, s_gs_held, s_gs_main;
+static pthread_mutex_t s_gs_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int code_addr(uint32_t v)
+{
+    return v >= 0x00011000u && v < 0x00411000u;  /* .text .. last code section */
+}
+
+static void *gil_sampler(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint32_t tid, esp, r[2] = { 0, 0 };
+        int is_main, k = 0, i;
+        usleep(1000);
+        pthread_mutex_lock(&s_gs_lock);
+        s_gs_total++;
+        if (xbox_gil_sample(&tid, &esp, &is_main)) {
+            s_gs_held++;
+            if (is_main) s_gs_main++;
+            for (i = 0; i < 96 && k < 2 && esp; i++) {
+                uint32_t v = *(volatile uint32_t *)((uintptr_t)(esp + 4u * i) + g_xbox_mem_offset);
+                if (code_addr(v)) r[k++] = v;
+            }
+            for (i = 0; i < GIL_SAMPLE_SLOTS; i++)
+                if (s_gs[i].n && s_gs[i].tid == tid && s_gs[i].r1 == r[0] && s_gs[i].r2 == r[1])
+                    break;
+            if (i == GIL_SAMPLE_SLOTS)
+                for (i = 0; i < GIL_SAMPLE_SLOTS && s_gs[i].n; i++) { }
+            if (i < GIL_SAMPLE_SLOTS) {
+                s_gs[i].tid = tid; s_gs[i].r1 = r[0]; s_gs[i].r2 = r[1];
+                s_gs[i].main = is_main;
+                s_gs[i].n++;
+            }
+        }
+        pthread_mutex_unlock(&s_gs_lock);
+    }
+    return NULL;
+}
+
+static void gil_sample_report(void)
+{
+    int k, i;
+    pthread_mutex_lock(&s_gs_lock);
+    if (s_gs_total) {
+        fprintf(stderr, "[perf] guest lock held %ld%% of %ld samples (main thread %ld%%, others %ld%%); top holders:\n",
+                100 * s_gs_held / s_gs_total, s_gs_total, 100 * s_gs_main / s_gs_total,
+                100 * (s_gs_held - s_gs_main) / s_gs_total);
+        for (k = 0; k < 8; k++) {
+            int best = -1;
+            for (i = 0; i < GIL_SAMPLE_SLOTS; i++)
+                if (s_gs[i].n > 0 && (best < 0 || s_gs[i].n > s_gs[best].n)) best = i;
+            if (best < 0) break;
+            fprintf(stderr, "[perf]   %3ld%% thread %u%s at %08X from %08X\n",
+                    100 * s_gs[best].n / s_gs_total, s_gs[best].tid,
+                    s_gs[best].main ? " (main)" : "", s_gs[best].r1, s_gs[best].r2);
+            s_gs[best].n = -s_gs[best].n;
+        }
+    }
+    memset(s_gs, 0, sizeof s_gs);
+    s_gs_total = s_gs_held = s_gs_main = 0;
+    pthread_mutex_unlock(&s_gs_lock);
+}
+
 static void *perf_thread(void *arg)
 {
     double secs = *(double *)arg;
@@ -214,6 +289,7 @@ static void *perf_thread(void *arg)
         char pace[320];
         usleep((useconds_t)(secs * 1e6));
         xbox_gil_main_wait(&wait_us, &long_waits);
+        gil_sample_report();
         {   /* the game's frame time (sub_001EDBE0: rdtsc delta, snapped to
              * 1/60..1/15 and clamped to 0.0001..0.1 s). The intro flythrough
              * steps by it; if nothing refreshes it during a load, it stays
@@ -223,6 +299,32 @@ static void *perf_thread(void *arg)
             float dt;
             memcpy(&dt, &raw, sizeof dt);
             fprintf(stderr, "[perf] game frame time (0x47C404): %.4f s\n", dt);
+        }
+        {   /* main-loop passes against frames presented, per second */
+            extern volatile long g_mc3_loop_passes;
+            extern uint32_t nv2a_gl_frame_count(void);   /* nv2a_gl.c */
+            static long last_p;
+            static uint32_t last_f;
+            long p = g_mc3_loop_passes;
+            uint32_t fr = nv2a_gl_frame_count();
+            fprintf(stderr, "[perf] main loop: %.1f passes/s, %.1f frames presented/s\n",
+                    (p - last_p) / secs, (fr - last_f) / secs);
+            last_p = p;
+            last_f = fr;
+        }
+        {   /* D3D's flip queue (sub_003E4EF0 retires entry i when the vblank
+             * count +0x1C0 reaches its target +0x178+12i): target - count is
+             * the presentation interval the title asked for. Our executor
+             * shows a frame every vblank whatever the interval. */
+            extern volatile uint32_t g_mc3_d3d_device;
+            uint32_t dev = g_mc3_d3d_device;
+            if (dev) {
+#define D3DMEM(o) (*(volatile uint32_t *)((uintptr_t)(dev + (o)) + g_xbox_mem_offset))
+                fprintf(stderr, "[perf] D3D flips: vblank %u, queue [%u] pending %u target %u | [%u] pending %u target %u,"
+                        " read index %u\n", D3DMEM(0x1C0),
+                        0u, D3DMEM(0x174), D3DMEM(0x178), 1u, D3DMEM(0x180), D3DMEM(0x184), D3DMEM(0x1BC));
+#undef D3DMEM
+            }
         }
         {   /* D3D's vblank work per second (60 = right): recomp_manual.c */
             extern volatile long g_mc3_d3d_vblanks;
@@ -251,6 +353,8 @@ static void perf_report_start(void)
     pthread_t th;
     if (!e || (secs = atof(e)) <= 0)
         return;
+    if (pthread_create(&th, NULL, gil_sampler, NULL) == 0)
+        pthread_detach(th);
     if (pthread_create(&th, NULL, perf_thread, &secs) == 0) {
         pthread_detach(th);
         fprintf(stderr, "[perf] report every %.1f s (MC3_PERF)\n", secs);
