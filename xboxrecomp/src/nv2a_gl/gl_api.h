@@ -196,7 +196,14 @@ X(GLboolean, glUnmapBuffer, (GLenum)) \
 #define NV2A_GL_OPT_FUNCS(X) \
     X(void, glGetProgramBinary, (GLuint, GLsizei, GLsizei *, GLenum *, void *)) \
     X(void, glProgramBinary, (GLuint, GLenum, const void *, GLsizei)) \
-    X(void, glProgramParameteri, (GLuint, GLenum, GLint))
+    X(void, glProgramParameteri, (GLuint, GLenum, GLint)) \
+    X(void, glTexParameterf, (GLenum, GLenum, GLfloat)) \
+    X(void, glGenerateMipmap, (GLenum))
+#define GL_TEXTURE_BASE_LEVEL             0x813C
+#define GL_TEXTURE_MAX_LEVEL              0x813D
+#define GL_TEXTURE_LOD_BIAS               0x8501
+#define GL_TEXTURE_MAX_ANISOTROPY         0x84FE
+#define GL_MAX_TEXTURE_MAX_ANISOTROPY     0x84FF
 #define GL_PROGRAM_BINARY_RETRIEVABLE_HINT 0x8257
 #define GL_PROGRAM_BINARY_LENGTH          0x8741
 #define GL_NUM_PROGRAM_BINARY_FORMATS     0x87FE
@@ -297,5 +304,7 @@ int nv2a_gl_load(void *(*getproc)(const char *name));
 #define glGetProgramBinary       p_glGetProgramBinary
 #define glProgramBinary          p_glProgramBinary
 #define glProgramParameteri      p_glProgramParameteri
+#define glTexParameterf          p_glTexParameterf
+#define glGenerateMipmap         p_glGenerateMipmap
 
 #endif /* NV2A_GL_API_H */
