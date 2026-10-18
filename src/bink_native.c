@@ -35,6 +35,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 
 int  mc3_bink_native_enabled(void);
 void mc3_bink_native_open(uint32_t hbink, const char *xbox_name);
@@ -66,7 +67,37 @@ typedef struct {
     int              next;      /* frame index FFmpeg will produce next, -1 unknown */
     long             served, fallbacks;
     struct MovieAudio *audio;   /* NULL: Bink plays its own sound */
+    int              nofill;    /* holds the renderer's 4:3 fill off (fill_skip) */
 } Movie;
+
+/* ── Movies shown as they are, not filled to 16:9 ──
+ *
+ * The renderer fills screens the game pillarboxed to 4:3 out to the width
+ * (nv2a_gl RECOMP_GL_FILL). For the boot movies -- the Rockstar and Rockstar
+ * San Diego logos and the intro -- the original framing looked better
+ * (2026-10-18), so while one of them plays the fill is held off.
+ * MC3_FILL_SKIP: comma-separated name stems (default
+ * "rockstar,sdlogo,mc3intro"; empty: fill everything). Weak, so a build
+ * without the GL renderer still links. */
+extern void nv2a_gl_fill_hold(int delta) __attribute__((weak));
+
+static int fill_skip(const char *xbox_name)
+{
+    const char *e = getenv("MC3_FILL_SKIP"), *list = e ? e : "rockstar,sdlogo,mc3intro";
+    const char *base = xbox_name, *p;
+    size_t n;
+    for (p = xbox_name; *p; p++)
+        if (*p == '\\' || *p == '/' || *p == ':')
+            base = p + 1;
+    while (*list) {
+        const char *end = strchr(list, ',');
+        n = end ? (size_t)(end - list) : strlen(list);
+        if (n && strncasecmp(base, list, n) == 0 && (base[n] == '.' || !base[n]))
+            return 1;
+        list += n + (end ? 1 : 0);
+    }
+    return 0;
+}
 
 static Movie s_movies[MAX_MOVIES];
 
@@ -358,6 +389,8 @@ static Movie *find(uint32_t hbink)
 
 static void release(Movie *m)
 {
+    if (m->nofill && nv2a_gl_fill_hold)
+        nv2a_gl_fill_hold(-1);
     audio_free(m->audio);
     if (m->frame) av_frame_free(&m->frame);
     if (m->pkt) av_packet_free(&m->pkt);
@@ -442,6 +475,10 @@ void mc3_bink_native_open(uint32_t hbink, const char *xbox_name)
     m->frame = av_frame_alloc();
     m->hbink = hbink;
     m->next = 0;
+    if (fill_skip(xbox_name) && nv2a_gl_fill_hold) {
+        m->nofill = 1;
+        nv2a_gl_fill_hold(1);
+    }
     if (audio_enabled()) {
         AVRational fr = m->fmt->streams[m->stream]->avg_frame_rate;
         m->audio = audio_open(path, fr.den ? av_q2d(fr) : 0);
