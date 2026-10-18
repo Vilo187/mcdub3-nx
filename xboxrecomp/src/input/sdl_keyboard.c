@@ -8,15 +8,20 @@
  * passed with a real controller (Midnight Club 3, 2026-10-16). Now the
  * renderers hand key events here and xbox_InputGetState reads them as pad 1.
  *
- * Keys named after the Xbox buttons, so a prompt on screen says which key
- * ("A OK", "B Back", "Y Delete profile"); the Windows build keeps its
- * Z X A S scheme (xinput_device.c):
+ * Laid out for a racing game (Midnight Club 3, 2026-10-17): driving on the
+ * left hand, the face buttons on the right, the d-pad on the arrows -- it
+ * changes the song in a race and moves through menus. Letters named after
+ * the buttons put the brake and the steering on the same keys, and the
+ * left stick on the numpad, which a laptop keyboard does not have. The
+ * Windows build keeps its Z X A S scheme (xinput_device.c):
  *
- *   arrows        d-pad             Enter      START
- *   A B X Y       A B X Y           Backspace  BACK
- *   Q E           white black       1 3        triggers
- *   numpad 8/2/4/6 left thumb       I/K/J/L    right thumb
- *   Shift / Ctrl  left / right thumb click
+ *   W / S         right / left trigger (gas / brake)
+ *   A / D         left stick left / right (steer)
+ *   J K U I       A B X Y            Space      X (MC3: e-brake?)
+ *   arrows        d-pad              Enter      START
+ *   Shift / Ctrl  white / black      Backspace  BACK
+ *   Q / E         left / right thumb click
+ *   numpad 4/6/8/2 or F/H/T/G       right stick (camera)
  *
  * Keys arrive only while the game window has the focus; losing it releases
  * everything, so a key held while switching away does not stay down.
@@ -83,6 +88,13 @@ static SHORT axis(int negative, int positive)
     return (SHORT)v;
 }
 
+/* One axis from two key pairs (numpad or letters), clamped to the stick. */
+static SHORT axis2(int neg1, int pos1, int neg2, int pos2)
+{
+    int v = axis(neg1, pos1) + axis(neg2, pos2);
+    return (SHORT)(v > 32767 ? 32767 : v < -32767 ? -32767 : v);
+}
+
 /* Merge the keyboard into a state (a real pad's, or an empty one): buttons
  * OR'ed, analog buttons at full pressure, sticks where a key is held. */
 void xbox_sdl_keyboard_state(XBOX_INPUT_STATE *s)
@@ -98,25 +110,24 @@ void xbox_sdl_keyboard_state(XBOX_INPUT_STATE *s)
     if (s_down[SDL_SCANCODE_RETURN] || s_down[SDL_SCANCODE_KP_ENTER])
                                         b |= XBOX_GAMEPAD_START;
     if (s_down[SDL_SCANCODE_BACKSPACE]) b |= XBOX_GAMEPAD_BACK;
-    if (s_down[SDL_SCANCODE_LSHIFT] || s_down[SDL_SCANCODE_RSHIFT])
-                                        b |= XBOX_GAMEPAD_LEFT_THUMB;
-    if (s_down[SDL_SCANCODE_LCTRL] || s_down[SDL_SCANCODE_RCTRL])
-                                        b |= XBOX_GAMEPAD_RIGHT_THUMB;
+    if (s_down[SDL_SCANCODE_Q])         b |= XBOX_GAMEPAD_LEFT_THUMB;
+    if (s_down[SDL_SCANCODE_E])         b |= XBOX_GAMEPAD_RIGHT_THUMB;
     s->Gamepad.wButtons |= b;
 
-    if (s_down[SDL_SCANCODE_A]) an[XBOX_BUTTON_A] = 255;
-    if (s_down[SDL_SCANCODE_B]) an[XBOX_BUTTON_B] = 255;
-    if (s_down[SDL_SCANCODE_X]) an[XBOX_BUTTON_X] = 255;
-    if (s_down[SDL_SCANCODE_Y]) an[XBOX_BUTTON_Y] = 255;
-    if (s_down[SDL_SCANCODE_Q]) an[XBOX_BUTTON_WHITE] = 255;
-    if (s_down[SDL_SCANCODE_E]) an[XBOX_BUTTON_BLACK] = 255;
-    if (s_down[SDL_SCANCODE_1]) an[XBOX_BUTTON_LTRIGGER] = 255;
-    if (s_down[SDL_SCANCODE_3]) an[XBOX_BUTTON_RTRIGGER] = 255;
+    if (s_down[SDL_SCANCODE_J]) an[XBOX_BUTTON_A] = 255;
+    if (s_down[SDL_SCANCODE_K]) an[XBOX_BUTTON_B] = 255;
+    if (s_down[SDL_SCANCODE_U] || s_down[SDL_SCANCODE_SPACE]) an[XBOX_BUTTON_X] = 255;
+    if (s_down[SDL_SCANCODE_I]) an[XBOX_BUTTON_Y] = 255;
+    if (s_down[SDL_SCANCODE_LSHIFT] || s_down[SDL_SCANCODE_RSHIFT]) an[XBOX_BUTTON_WHITE] = 255;
+    if (s_down[SDL_SCANCODE_LCTRL] || s_down[SDL_SCANCODE_RCTRL])   an[XBOX_BUTTON_BLACK] = 255;
+    if (s_down[SDL_SCANCODE_S]) an[XBOX_BUTTON_LTRIGGER] = 255;
+    if (s_down[SDL_SCANCODE_W]) an[XBOX_BUTTON_RTRIGGER] = 255;
 
-    if ((x = axis(SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6)) != 0) s->Gamepad.sThumbLX = x;
-    if ((x = axis(SDL_SCANCODE_KP_2, SDL_SCANCODE_KP_8)) != 0) s->Gamepad.sThumbLY = x;
-    if ((x = axis(SDL_SCANCODE_J, SDL_SCANCODE_L)) != 0)       s->Gamepad.sThumbRX = x;
-    if ((x = axis(SDL_SCANCODE_K, SDL_SCANCODE_I)) != 0)       s->Gamepad.sThumbRY = x;
+    if ((x = axis(SDL_SCANCODE_A, SDL_SCANCODE_D)) != 0) s->Gamepad.sThumbLX = x;
+    if ((x = axis2(SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6, SDL_SCANCODE_F, SDL_SCANCODE_H)) != 0)
+        s->Gamepad.sThumbRX = x;
+    if ((x = axis2(SDL_SCANCODE_KP_2, SDL_SCANCODE_KP_8, SDL_SCANCODE_G, SDL_SCANCODE_T)) != 0)
+        s->Gamepad.sThumbRY = x;
 }
 
 #endif
