@@ -10,4 +10,9 @@
 
 void nv2a_gl_install(void);
 
+/* A static screen is up (the title is loading behind it): compile the
+ * remembered shader programs now, a few a frame, when they were not
+ * compiled at start-up (no program binaries). Any thread. */
+void nv2a_gl_prewarm_start(void);
+
 #endif

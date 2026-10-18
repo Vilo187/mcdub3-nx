@@ -924,6 +924,19 @@ static const char *prog_cache_path(void)
 #endif
 }
 
+static void prog_rec_build(const Nv2aRawBatch *b, const Nv2aPshKey *pk, ProgRec *rec)
+{
+    memset(rec, 0, sizeof *rec);
+    rec->magic = PROG_REC_MAGIC;
+    rec->xform = b->xform == 2 ? 2 : 1;
+    rec->pk = *pk;
+    if (rec->xform == 2 && b->vp_program && b->vp_slots <= 136) {
+        rec->vp_start = b->vp_start;
+        rec->slots = b->vp_slots;
+        memcpy(rec->prog, b->vp_program, (size_t)b->vp_slots * 16);
+    }
+}
+
 static void prog_cache_append(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
 {
     const char *path = prog_cache_path();
@@ -931,15 +944,7 @@ static void prog_cache_append(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
     FILE *f;
     if (s_prewarming || !path)
         return;
-    memset(&rec, 0, sizeof rec);
-    rec.magic = PROG_REC_MAGIC;
-    rec.xform = b->xform == 2 ? 2 : 1;
-    rec.pk = *pk;
-    if (rec.xform == 2 && b->vp_program && b->vp_slots <= 136) {
-        rec.vp_start = b->vp_start;
-        rec.slots = b->vp_slots;
-        memcpy(rec.prog, b->vp_program, (size_t)b->vp_slots * 16);
-    }
+    prog_rec_build(b, pk, &rec);
     f = fopen(path, "ab");
     if (f) {
         fwrite(&rec, sizeof rec, 1, f);
@@ -947,23 +952,202 @@ static void prog_cache_append(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
     }
 }
 
+/* ── Compiled programs remembered across runs (program binaries) ──────
+ *
+ * The list above still compiles every program at start-up: 113 programs
+ * took 4.8 s on the Switch (2026-10-18), all of it black screen before the
+ * first logo, and the list grows with every place the title draws. So each
+ * program linked is also kept as the driver's binary (glGetProgramBinary)
+ * in <cache>-gpu.bin, keyed by its record and the driver, and loaded with
+ * glProgramBinary next time; a binary the driver refuses is compiled from
+ * source as before. Needs GL_NUM_PROGRAM_BINARY_FORMATS > 0 (reported at
+ * start-up). RECOMP_PROG_BINARY=0 turns it off. */
+#define PROG_BIN_MAGIC 0x4250564Eu          /* "NVPB" */
+typedef struct { uint32_t magic, format; uint64_t key; uint32_t len, pad; } ProgBinHdr;
+typedef struct { uint64_t key; uint32_t format, len; unsigned char *data; } ProgBin;
+static ProgBin  *s_bins;
+static unsigned  s_nbins, s_capbins, s_bin_hits;
+static int       s_bin_on = -1;
+static uint64_t  s_bin_driver;               /* hash of vendor, renderer, version */
+static char      s_bin_path[512];
+
+static uint64_t fnv64(uint64_t h, const void *p, size_t n)
+{
+    const unsigned char *c = p;
+    while (n--)
+        h = (h ^ *c++) * 1099511628211ull;
+    return h;
+}
+
+static void prog_bin_add(uint64_t key, uint32_t format, uint32_t len, unsigned char *data)
+{
+    if (s_nbins == s_capbins) {
+        unsigned cap = s_capbins ? s_capbins * 2 : 256;
+        ProgBin *nb = realloc(s_bins, cap * sizeof *nb);
+        if (!nb) { free(data); return; }
+        s_bins = nb;
+        s_capbins = cap;
+    }
+    s_bins[s_nbins].key = key;
+    s_bins[s_nbins].format = format;
+    s_bins[s_nbins].len = len;
+    s_bins[s_nbins].data = data;
+    s_nbins++;
+}
+
+static ProgBin *prog_bin_find(uint64_t key)
+{
+    unsigned i;
+    for (i = s_nbins; i-- > 0; )             /* the newest wins */
+        if (s_bins[i].key == key)
+            return &s_bins[i];
+    return NULL;
+}
+
+/* Once, with the context current: is it on, and what is already stored. */
+static int prog_bin_init(void)
+{
+    const char *path = prog_cache_path(), *e = getenv("RECOMP_PROG_BINARY");
+    const char *str[3];
+    GLint formats = 0;
+    FILE *f;
+    size_t n;
+    int k;
+    if (s_bin_on >= 0)
+        return s_bin_on;
+    s_bin_on = 0;
+    if ((e && *e == '0') || !path || !glGetProgramBinary || !glProgramBinary)
+        return 0;
+    glGetIntegerv(GL_NUM_PROGRAM_BINARY_FORMATS, &formats);
+    fprintf(stderr, "  [GL] program binaries: %d format(s)%s\n", formats,
+            formats > 0 ? "" : " -- programs compile from source at every start");
+    if (formats <= 0)
+        return 0;
+    s_bin_driver = 1469598103934665603ull;
+    str[0] = (const char *)glGetString(GL_VENDOR);
+    str[1] = (const char *)glGetString(GL_RENDERER);
+    str[2] = (const char *)glGetString(GL_VERSION);
+    for (k = 0; k < 3; k++)
+        if (str[k])
+            s_bin_driver = fnv64(s_bin_driver, str[k], strlen(str[k]));
+    n = strlen(path);
+    if (n > 4 && !strcmp(path + n - 4, ".bin"))
+        n -= 4;
+    snprintf(s_bin_path, sizeof s_bin_path, "%.*s-gpu.bin", (int)n, path);
+    if ((f = fopen(s_bin_path, "rb"))) {
+        ProgBinHdr h;
+        while (fread(&h, sizeof h, 1, f) == 1 && h.magic == PROG_BIN_MAGIC
+               && h.len && h.len < (64u << 20)) {
+            unsigned char *d = malloc(h.len);
+            if (!d || fread(d, 1, h.len, f) != h.len) { free(d); break; }
+            prog_bin_add(h.key, h.format, h.len, d);
+        }
+        fclose(f);
+    }
+    s_bin_on = 1;
+    return 1;
+}
+
+static uint64_t prog_bin_key(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
+{
+    ProgRec rec;
+    prog_rec_build(b, pk, &rec);
+    return fnv64(s_bin_driver, &rec, sizeof rec);
+}
+
+/* A program from its stored binary, or 0. */
+static GLuint prog_bin_load(uint64_t key)
+{
+    ProgBin *pb = prog_bin_find(key);
+    GLuint prog;
+    GLint ok = 0;
+    if (!pb)
+        return 0;
+    prog = glCreateProgram();
+    glProgramBinary(prog, pb->format, pb->data, (GLsizei)pb->len);
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        glDeleteProgram(prog);
+        pb->key = 0;                         /* refused: compile, store anew */
+        return 0;
+    }
+    s_bin_hits++;
+    return prog;
+}
+
+static void prog_bin_store(uint64_t key, GLuint prog)
+{
+    ProgBinHdr h;
+    GLint len = 0;
+    GLsizei got = 0;
+    GLenum format = 0;
+    unsigned char *d;
+    FILE *f;
+    if (prog_bin_find(key))
+        return;
+    glGetProgramiv(prog, GL_PROGRAM_BINARY_LENGTH, &len);
+    if (len <= 0 || !(d = malloc((size_t)len)))
+        return;
+    glGetProgramBinary(prog, len, &got, &format, d);
+    if (got <= 0) { free(d); return; }
+    memset(&h, 0, sizeof h);
+    h.magic = PROG_BIN_MAGIC;
+    h.format = format;
+    h.key = key;
+    h.len = (uint32_t)got;
+    if ((f = fopen(s_bin_path, "ab"))) {
+        fwrite(&h, sizeof h, 1, f);
+        fwrite(d, 1, (size_t)got, f);
+        fclose(f);
+    }
+    prog_bin_add(key, format, (uint32_t)got, d);
+}
+
 static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk);
 
-static void prog_cache_prewarm(void)
+/* When the list is compiled. With program binaries (Linux: 104 programs in
+ * 137 ms) all of it at start-up, as before. Without them (the Switch's Mesa
+ * 20.1 has no binary format: 113 programs, 4.8 s of black screen before the
+ * first logo, 2026-10-18) it waits for the title to say a static screen is
+ * up (nv2a_gl_prewarm_start: MC3's legal screen, which shows while the game
+ * loads) and then compiles a program per presented frame; anything drawn
+ * before that compiles at first use. RECOMP_PROG_PREWARM=boot or =defer
+ * forces one, =0 compiles nothing ahead; RECOMP_PROG_PREWARM_PER_FRAME sets
+ * the pace (default 1, ~40 ms a program on the Switch). */
+static FILE         *s_pw_file;
+static unsigned      s_pw_done, s_pw_bad, s_pw_per_frame = 1;
+static double        s_pw_ms;
+static volatile int  s_pw_go;
+
+void nv2a_gl_prewarm_start(void)
 {
-    const char *path = prog_cache_path();
+    if (!s_pw_go)
+        s_pw_go = 1;
+}
+
+/* Up to `max` programs compiled (0: the rest); closes the list at its end. */
+static void prog_cache_prewarm_step(unsigned max)
+{
     struct timespec t0, t1;
     ProgRec rec;
-    unsigned n = 0, bad = 0;
-    FILE *f;
-    if (!path || !(f = fopen(path, "rb")))
+    unsigned made0 = s_prog_made;
+    if (!s_pw_file)
         return;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     s_prewarming = 1;
-    while (fread(&rec, sizeof rec, 1, f) == 1) {
+    for (;;) {
         Nv2aRawBatch bb;
+        if (max && s_prog_made - made0 >= max)
+            break;
+        if (fread(&rec, sizeof rec, 1, s_pw_file) != 1) {
+            fclose(s_pw_file);
+            s_pw_file = NULL;
+            break;
+        }
         if (rec.magic != PROG_REC_MAGIC || rec.slots > 136) {
-            bad++;
+            s_pw_bad++;
+            fclose(s_pw_file);
+            s_pw_file = NULL;
             break;
         }
         memset(&bb, 0, sizeof bb);
@@ -971,16 +1155,36 @@ static void prog_cache_prewarm(void)
         bb.vp_program = (const uint32_t (*)[4])rec.prog;
         bb.vp_slots = rec.slots ? rec.slots : 136;
         bb.vp_start = rec.vp_start;
-        bb.vp_prog_gen = 0x80000000u + n;    /* hash it: not an executor version */
+        bb.vp_prog_gen = 0x80000000u + s_pw_done;   /* hash it: not an executor version */
         if (prog_get(&bb, &rec.pk))
-            n++;
+            s_pw_done++;
     }
     s_prewarming = 0;
-    fclose(f);
     clock_gettime(CLOCK_MONOTONIC, &t1);
-    fprintf(stderr, "  [GL] %u shader programs precompiled from %s in %.0f ms%s\n", n, path,
-            (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6,
-            bad ? " (file ends in a bad record)" : "");
+    s_pw_ms += (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
+    if (!s_pw_file)
+        fprintf(stderr, "  [GL] %u shader programs precompiled from %s in %.0f ms (%u from binaries)%s\n",
+                s_pw_done, prog_cache_path(), s_pw_ms, s_bin_hits,
+                s_pw_bad ? " (file ends in a bad record)" : "");
+}
+
+static void prog_cache_prewarm(void)
+{
+    const char *path = prog_cache_path(), *e = getenv("RECOMP_PROG_PREWARM");
+    const char *n = getenv("RECOMP_PROG_PREWARM_PER_FRAME");
+    int boot;
+    if ((e && *e == '0') || !path || !(s_pw_file = fopen(path, "rb")))
+        return;
+    if (n && atoi(n) > 0)
+        s_pw_per_frame = (unsigned)atoi(n);
+    boot = prog_bin_init();
+    if (e && !strcmp(e, "boot")) boot = 1;
+    if (e && !strcmp(e, "defer")) boot = 0;
+    if (boot)
+        prog_cache_prewarm_step(0);
+    else
+        fprintf(stderr, "  [GL] shader programs from %s compile later, %u a frame,"
+                " once the title starts it (nv2a_gl_prewarm_start)\n", path, s_pw_per_frame);
 }
 
 static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
@@ -996,6 +1200,7 @@ static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
     int nvs = 0, i;
     GLuint v, fr;
     GLint ok = 0;
+    uint64_t bkey = 0;
 
     if (b->xform == 2) {
         /* The program's hash walks up to 136 slots: redo it only when the
@@ -1043,6 +1248,11 @@ static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
         fprintf(stderr, "  [GL] %u shader programs compiled (%u live)\n",
                 s_prog_made, s_prog_live + 1);
 
+    if (prog_bin_init()) {
+        bkey = prog_bin_key(b, pk);
+        if ((p->prog = prog_bin_load(bkey)) != 0)
+            goto linked;
+    }
     vs[nvs++] = nv2a_gl_vsh_prelude();
     if (vkey) {
         if (nv2a_gl_vsh_program(b->vp_program, b->vp_slots, b->vp_start,
@@ -1065,6 +1275,8 @@ static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
     p->prog = glCreateProgram();
     glAttachShader(p->prog, v);
     glAttachShader(p->prog, fr);
+    if (bkey && glProgramParameteri)
+        glProgramParameteri(p->prog, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
     glLinkProgram(p->prog);
     glDeleteShader(v);
     glDeleteShader(fr);
@@ -1077,6 +1289,9 @@ static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
         p->prog = 0;
         return NULL;
     }
+    if (bkey)
+        prog_bin_store(bkey, p->prog);
+linked:
     s_prog_live++;
     s_new_obj = 1;
     prog_cache_append(b, pk);
@@ -2287,6 +2502,8 @@ static void gl_flip(void)
         s_hz_progs = s_hz_texs = s_hz_draws = 0;
         s_hz_prog_ns = s_hz_tex_ns = s_hz_tex_bytes = 0;
     }
+    if (s_pw_go && s_pw_file)
+        prog_cache_prewarm_step(s_pw_per_frame);   /* the deferred list, a little a frame */
     {
         /* RECOMP_FPS_LOG=1: presented frames per 10 s on stderr (the Switch
          * build has its own [perf] report). */
