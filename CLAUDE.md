@@ -204,6 +204,14 @@ TODO.md.
   `-Wnonnull` on `XBOX_TO_NATIVE`, comments, unused code). Next: first run.
 - 2026-10-17: music and sound in menus, garage and races; cars drawn; race view
   and HUD drawn (racing itself not yet: open); garage reachable; movies native on the console; boot
-  black screen gone (RECOMP_NET_LINK=0). Open: legal-screen stall (console), 1.5x scale glitches, NSP forwarder.
+  black screen gone (RECOMP_NET_LINK=0). Open: 1.5x scale glitches, NSP forwarder.
 - 2026-10-18: frame pacing fixed (flythrough, menus, garage at hardware
   speed on Linux; boot black screen short again).
+- 2026-10-18 (Switch): legal-screen stall fixed -- MC3's heartbeat thread
+  (sub_00196230) polls with Sleep(0) and took the guest lock back at every
+  main-thread kernel call; a guest yield now gives way for a quantum
+  (RECOMP_YIELD_QUANTUM_MS). Boot black screen fixed -- Mesa 20.1 on the
+  Switch has no program binaries (Linux does: progcache-gpu.bin), so the
+  shader list (4.8 s) compiles a program a frame behind the legal screen
+  (sub_0001B740 -> nv2a_gl_prewarm_start; RECOMP_PROG_PREWARM=boot for the
+  old way).
