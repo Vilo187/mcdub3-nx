@@ -167,7 +167,14 @@ typedef struct {
     uint32_t va, pw, ph;
     GLuint   rb;
     uint32_t used;
+    /* Sampled as a colour texture (depth_as_color): the surface it was last
+     * used with (logical size, anti-aliasing), when it was last bound for
+     * drawing or clearing, and the converted copy as of then. */
+    uint32_t lw, lh, ax, ay, wseq, cseq, cfmt;
+    GLuint   dtex, rgba, fbo_a, fbo_b;
 } GlDepth;
+static GlDepth *s_depth_cur;            /* what depth_get returned last */
+static uint32_t s_zseq;
 
 #define GL_MAX_DEPTH 16
 static GlDepth s_depth[GL_MAX_DEPTH];
@@ -299,6 +306,7 @@ static GLuint depth_get(uint32_t va, uint32_t pw, uint32_t ph, int *fresh)
         if (s_depth[i].rb && s_depth[i].va == va
             && s_depth[i].pw == pw && s_depth[i].ph == ph) {
             s_depth[i].used = s_frame;
+            s_depth_cur = &s_depth[i];
             return s_depth[i].rb;
         }
         if (!victim || (victim->rb && (!s_depth[i].rb || s_depth[i].used < victim->used)))
@@ -311,9 +319,17 @@ static GLuint depth_get(uint32_t va, uint32_t pw, uint32_t ph, int *fresh)
             if (s_surf[i].ds_on == d->rb)
                 s_surf[i].ds_on = 0;
         glDeleteRenderbuffers(1, &d->rb);
+        if (d->rgba) {
+            glDeleteFramebuffers(1, &d->fbo_a);
+            glDeleteFramebuffers(1, &d->fbo_b);
+            glDeleteTextures(1, &d->dtex);
+            glDeleteTextures(1, &d->rgba);
+        }
     }
     s_new_obj = 1;
     *fresh = 1;
+    memset(d, 0, sizeof *d);
+    s_depth_cur = d;
     d->va = va; d->pw = pw; d->ph = ph; d->used = s_frame;
     glGenRenderbuffers(1, &d->rb);
     glBindRenderbuffer(GL_RENDERBUFFER, d->rb);
@@ -350,6 +366,11 @@ static GlSurf *surf_bind(const Nv2aSurface *sf, uint32_t zeta_va)
         s_shared_z = !(e && e[0] == '0');
     }
     ds = zeta_va && s_shared_z ? depth_get(zeta_va, s->pw, s->ph, &fresh) : s->ds;
+    if (zeta_va && s_shared_z) {        /* drawn or cleared from here: see depth_as_color */
+        GlDepth *d = s_depth_cur;
+        d->lw = s->w; d->lh = s->h; d->ax = s->aa_sx; d->ay = s->aa_sy;
+        d->wseq = ++s_zseq;
+    }
     if (s->ds_on != ds) {
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT,
                                   GL_RENDERBUFFER, ds);
@@ -726,6 +747,163 @@ static GLint wrap_mode(uint32_t m)
     }
 }
 
+/* ── A depth buffer sampled as a colour texture ──────────────────────
+ *
+ * Titles read the depth buffer back through a texture of a 32-bit colour
+ * format whose address is the zeta buffer: the D24S8 dword (depth in the
+ * top 24 bits, stencil in the bottom 8) seen as A8R8G8B8 or A8B8G8R8. MC3's
+ * motion blur builds its per-pixel strength that way (2026-10-18: a copy
+ * as LIN_A8R8G8B8 into a 256x256 target, then 8 combiner stages over the
+ * scene and LIN_A8B8G8R8 depth into an alpha-only mask): near things sharp,
+ * the distance streaked. Depth lives in GL renderbuffers here, never in
+ * guest memory, so the texture decoded stale bytes -- a constant mask, the
+ * whole scene smeared. Now the depth is blitted to a depth texture and
+ * packed into an RGBA8 texture in the title's byte order (GL depth is z /
+ * zmax, so z = depth * 0xFFFFFF; stencil reads 0). Converted again only
+ * after the depth was drawn to. RECOMP_GL_DEPTH_TEX=0 turns it off. */
+static GLuint s_zprog, s_zvao;
+static GLint  s_zprog_abgr;
+static int    s_ztex_on = -1;
+static GLuint compile(GLenum type, const char *const *src, int n);
+static void state_dirty(void);
+
+static int zconv_init(void)
+{
+    static const char *vs[1] = {
+        "#version 330 core\n"
+        "void main() {\n"
+        "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n" };
+    static const char *fs[1] = {
+        "#version 330 core\n"
+        "uniform sampler2D u_depth;\n"
+        "uniform int u_abgr;\n"
+        "out vec4 o;\n"
+        "void main() {\n"
+        "    float z = texelFetch(u_depth, ivec2(gl_FragCoord.xy), 0).r;\n"
+        "    uint v = uint(clamp(z, 0.0, 1.0) * 16777215.0 + 0.5);\n"
+        "    float hi = float(v >> 16u) / 255.0, mid = float((v >> 8u) & 255u) / 255.0,\n"
+        "          lo = float(v & 255u) / 255.0;\n"
+        "    /* the texel the decoder would make of the dword (ARGB, uploaded BGRA) */\n"
+        "    o = u_abgr != 0 ? vec4(0.0, lo, mid, hi) : vec4(mid, lo, 0.0, hi);\n"
+        "}\n" };
+    GLuint v, f;
+    GLint ok = 0;
+    if (s_zprog)
+        return 1;
+    if (s_ztex_on < 0) {
+        const char *e = getenv("RECOMP_GL_DEPTH_TEX");
+        s_ztex_on = !(e && *e == '0');
+    }
+    if (!s_ztex_on)
+        return 0;
+    v = compile(GL_VERTEX_SHADER, vs, 1);
+    f = compile(GL_FRAGMENT_SHADER, fs, 1);
+    if (!v || !f) {
+        s_ztex_on = 0;
+        return 0;
+    }
+    s_zprog = glCreateProgram();
+    glAttachShader(s_zprog, v);
+    glAttachShader(s_zprog, f);
+    glLinkProgram(s_zprog);
+    glDeleteShader(v);
+    glDeleteShader(f);
+    glGetProgramiv(s_zprog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        glDeleteProgram(s_zprog);
+        s_zprog = 0;
+        s_ztex_on = 0;
+        return 0;
+    }
+    s_zprog_abgr = glGetUniformLocation(s_zprog, "u_abgr");
+    glGenVertexArrays(1, &s_zvao);
+    return 1;
+}
+
+/* The zeta buffer at `va` as a texture of colour format `color`, or 0.
+ * convert = 0 only looks up what was converted (inside a draw, whose state
+ * a conversion would trample); the draw path converts before it binds. */
+static GLuint depth_as_color(uint32_t va, uint32_t color, int convert, const GlDepth **out)
+{
+    GlDepth *d = NULL;
+    uint32_t fmt;
+    int i;
+    if (color == 0x12 || color == 0x06)      fmt = 1;   /* A8R8G8B8 */
+    else if (color == 0x3F || color == 0x3A) fmt = 2;   /* A8B8G8R8 */
+    else return 0;
+    if (s_ztex_on == 0 || s_shared_z <= 0)
+        return 0;
+    for (i = 0; i < GL_MAX_DEPTH; i++)       /* the largest: the scene's */
+        if (s_depth[i].rb && s_depth[i].va == va
+            && (!d || s_depth[i].pw * s_depth[i].ph > d->pw * d->ph))
+            d = &s_depth[i];
+    if (!d)
+        return 0;
+    *out = d;
+    if (d->rgba && d->cseq == d->wseq && d->cfmt == fmt)
+        return d->rgba;
+    if (!convert)
+        return d->rgba;                      /* stale or 0: better than guest bytes */
+    if (!zconv_init())
+        return 0;
+    if (!d->rgba) {
+        glGenTextures(1, &d->dtex);
+        glBindTexture(GL_TEXTURE_2D, d->dtex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH24_STENCIL8, (GLsizei)d->pw, (GLsizei)d->ph, 0,
+                     GL_DEPTH_STENCIL, 0x84FA /* UNSIGNED_INT_24_8 */, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glGenTextures(1, &d->rgba);
+        tex_param_forget(d->dtex);
+        tex_param_forget(d->rgba);
+        glBindTexture(GL_TEXTURE_2D, d->rgba);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)d->pw, (GLsizei)d->ph, 0,
+                     GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        /* a: the copy as colour, with the live depth (blit source);
+         * b: the depth texture (blit target). Both complete with a colour. */
+        glGenFramebuffers(1, &d->fbo_a);
+        glBindFramebuffer(GL_FRAMEBUFFER, d->fbo_a);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, d->rgba, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, d->rb);
+        glGenFramebuffers(1, &d->fbo_b);
+        glBindFramebuffer(GL_FRAMEBUFFER, d->fbo_b);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, d->rgba, 0);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_TEXTURE_2D, d->dtex, 0);
+        tex_bind_forget();
+        s_new_obj = 1;
+        fprintf(stderr, "  [GL] depth 0x%08X (%ux%u) sampled as colour format 0x%02X\n",
+                va, d->pw, d->ph, color);
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, d->fbo_a);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, d->fbo_b);
+    glBlitFramebuffer(0, 0, (GLint)d->pw, (GLint)d->ph, 0, 0, (GLint)d->pw, (GLint)d->ph,
+                      GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, d->fbo_a);
+    glViewport(0, 0, (GLsizei)d->pw, (GLsizei)d->ph);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(1, 1, 1, 1);
+    glUseProgram(s_zprog);
+    s_cur_prog = s_zprog;
+    glUniform1i(s_zprog_abgr, fmt == 2);
+    active_unit(0);
+    bind_tex(d->dtex);
+    glBindVertexArray(s_zvao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(s_vao);
+    state_dirty();
+    d->cseq = d->wseq;
+    d->cfmt = fmt;
+    return d->rgba;
+}
+
 /* A surface kept taller than its clip (surf_get) and sampled as a texture
  * of the clip's size: texcoords cover the w x h texels at the top left, not
  * the whole surface. A texture of the surface's logical or real size keeps
@@ -737,6 +915,25 @@ static void rt_scale(uint32_t w, uint32_t h, uint32_t sw, uint32_t sh,
 
     if (w < lw) scale[0] *= (float)w / (float)lw;
     if (h < lh) scale[1] *= (float)h / (float)lh;
+}
+
+static const GlDepth *s_depth_tex[4];     /* this draw's stages that sample a zeta buffer */
+
+/* Before a draw binds its surface: convert the zeta buffers its stages
+ * sample (depth_as_color), which uses its own framebuffer and program. */
+static void depth_tex_prepare(const uint32_t *regs, const Nv2aRawBatch *b)
+{
+    int i;
+    for (i = 0; i < 4; i++) {
+        uint32_t base = (0x1B00u + (uint32_t)i * 0x40u) / 4;
+        const GlDepth *d = NULL;
+        s_depth_tex[i] = NULL;
+        if (!(regs[base + 3] & 0x40000000u) || !regs[base] || !b->tex_va[i]
+            || surf_find(b->tex_va[i]))
+            continue;
+        if (depth_as_color(b->tex_va[i], (regs[base + 1] >> 8) & 0xFF, 1, &d) && d)
+            s_depth_tex[i] = d;
+    }
 }
 
 /* Bind stage `i` from the method shadow; returns the texcoord scale. */
@@ -780,6 +977,10 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
         /* The image the title samples is the logical one; the FBO holds it
          * at the anti-aliased size. Normalised coordinates cover both. */
         rt_scale(w, h, rt->w, rt->h, rt->aa_sx, rt->aa_sy, scale);
+    } else if (s_depth_tex[i]) {          /* a zeta buffer (depth_as_color) */
+        const GlDepth *zd = s_depth_tex[i];
+        tex = zd->rgba;
+        rt_scale(w, h, zd->lw, zd->lh, zd->ax ? zd->ax : 1, zd->ay ? zd->ay : 1, scale);
     } else {
         tex = tex_get(va, color, w, h, pitch);
     }
@@ -1863,6 +2064,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
         return;
     s_regs = r;
     s_batch = b;
+    depth_tex_prepare(r, b);
     s = surf_bind(&b->surface, b->zeta_va);
     if (!s)
         return;
