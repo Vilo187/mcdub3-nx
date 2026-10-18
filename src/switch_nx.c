@@ -99,10 +99,9 @@ static void log_writer(void *arg)
     }
 }
 
-static ssize_t log_write_r(struct _reent *r, void *fd, const char *ptr, size_t len)
+static void ring_put(const char *ptr, size_t len)
 {
     size_t done = 0;
-    (void)r; (void)fd;
     while (done < len) {
         size_t n;
         mutexLock(&s_ring_lock);
@@ -124,6 +123,42 @@ static ssize_t log_write_r(struct _reent *r, void *fd, const char *ptr, size_t l
             condvarWakeOne(&s_ring_cv);
         mutexUnlock(&s_ring_lock);
         done += n;
+    }
+}
+
+/* Each line starts with the seconds since start-up, "[  4.512] ", so a log
+ * says where boot time goes (MC3's black screen before the first logo,
+ * 2026-10-18). MC3_LOG_TIME=0 leaves lines bare. Line starts are tracked
+ * across threads; a line two threads interleave gets one stamp. */
+static u64          s_t0;
+static volatile int s_bol = 1;
+
+static ssize_t log_write_r(struct _reent *r, void *fd, const char *ptr, size_t len)
+{
+    static int on = -1;
+    size_t i = 0;
+    (void)r; (void)fd;
+    if (on < 0) {
+        const char *e = getenv("MC3_LOG_TIME");
+        on = !(e && e[0] == '0');
+    }
+    if (!on) {
+        ring_put(ptr, len);
+        return (ssize_t)len;
+    }
+    while (i < len) {
+        const char *nl = memchr(ptr + i, '\n', len - i);
+        size_t n = nl ? (size_t)(nl - (ptr + i)) + 1 : len - i;
+        if (s_bol) {
+            char stamp[24];
+            u64 ns = armTicksToNs(armGetSystemTick() - s_t0);
+            int k = snprintf(stamp, sizeof stamp, "[%3u.%03u] ",
+                             (unsigned)(ns / 1000000000ull), (unsigned)(ns / 1000000ull % 1000));
+            ring_put(stamp, (size_t)k);
+        }
+        ring_put(ptr + i, n);
+        s_bol = nl != NULL;
+        i += n;
     }
     return (ssize_t)len;
 }
@@ -157,6 +192,7 @@ static void log_open(void)
     if (s_nxlink_fd >= 0)
         return;
 
+    s_t0 = armGetSystemTick();
     mkdir(APP_DIR, 0777);
     s_log_fd = open(APP_DIR "/" MC3_APP "_log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (s_log_fd < 0)
