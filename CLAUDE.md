@@ -156,6 +156,10 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   Start, Backspace = Back, Shift/Ctrl = White/Black, Q/E = stick clicks,
   numpad 4/6/8/2 or F/H/T/G = right stick. Unattended runs only:
   `MC3_SKIP_MOVIES=1` pulses A+Start on the pad while intro movies play.
+- Debug switches (toolkit): `RECOMP_CLOCK_RATE=<f>` (+ `RECOMP_CLOCK_ONLY=
+  tsc|qpc|tick|sys`) runs the guest clocks at f x real time -- tells clock-
+  timed from frame-paced; `RECOMP_IO_MBPS=<n>` (+ `RECOMP_IO_SEEK_MS=<m>`)
+  slows reads to a DVD's pace -- for streaming bugs hidden by fast storage.
 - Measuring speed in the VM: headless runs (`make record`, `make profile`)
   render with llvmpipe (software) and run slower; windowed runs use virgl
   (the Mac's GPU). Judge frame rate windowed; use headless for relative
