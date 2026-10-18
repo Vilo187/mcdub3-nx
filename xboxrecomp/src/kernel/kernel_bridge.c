@@ -583,6 +583,10 @@ static CONDITION_VARIABLE s_gil_cv;
 static volatile uint64_t  s_gil_next, s_gil_serving;
 static volatile int       s_gil_on = -1;
 static RECOMP_TLS int     t_gil_depth;
+/* The lock's holder, for xbox_gil_sample (below gil_unlock). */
+static volatile DWORD     s_gil_holder_tid;
+static uint32_t *volatile s_gil_holder_esp;
+static volatile DWORD     s_gil_main_tid;
 /* This kernel call kept the guest lock (kernel_call_tries_first); a bridge
  * that has to block releases it around the wait (bridge_block_begin/end). */
 static RECOMP_TLS int     t_kernel_gil_kept;
@@ -630,7 +634,7 @@ int xbox_thread_holds_dispatch(void);     /* kernel_hal.c */
  *     work is not audible.
  * ISRs and DPCs are never pre-empted (t_gil_nopreempt), as before. */
 static RECOMP_TLS int t_gil_main;
-void xbox_gil_mark_main(void) { t_gil_main = 1; }
+void xbox_gil_mark_main(void) { t_gil_main = 1; s_gil_main_tid = GetCurrentThreadId(); }
 
 static int gil_eager(void)
 {
@@ -717,6 +721,8 @@ static void gil_lock(void)
         g_gil_contended = 0;               /* nobody behind us */
     }
     LeaveCriticalSection(&s_gil_cs);
+    s_gil_holder_esp = (uint32_t *)&g_esp;
+    s_gil_holder_tid = GetCurrentThreadId();
     if (t_gil_main) {
         int64_t us;
         QueryPerformanceCounter(&t1);
@@ -728,8 +734,29 @@ static void gil_lock(void)
     }
 }
 
+/* Who holds the lock now, for a sampler (xbox_gil_sample): the thread and
+ * where its guest stack pointer lives, so another thread can read the
+ * holder's stack and say which code is keeping the lock -- the question
+ * behind a stall made of hand-overs (MC3's legal screen on the console). */
+
+/* 1 and the holder's thread id, guest esp and whether it is the main
+ * thread, or 0 when nobody holds the lock. A racy snapshot: the holder may
+ * change while it is read, which a sampler can live with. */
+int xbox_gil_sample(uint32_t *tid, uint32_t *esp, int *is_main)
+{
+    DWORD t = s_gil_holder_tid;
+    uint32_t *e = s_gil_holder_esp;
+    if (!t || !e)
+        return 0;
+    *tid = (uint32_t)t;
+    *esp = *e;
+    *is_main = t == s_gil_main_tid;
+    return 1;
+}
+
 static void gil_unlock(void)
 {
+    s_gil_holder_tid = 0;
     EnterCriticalSection(&s_gil_cs);
     s_gil_serving++;
     WakeAllConditionVariable(&s_gil_cv);
