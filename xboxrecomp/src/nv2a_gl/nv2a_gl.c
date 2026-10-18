@@ -2868,7 +2868,16 @@ static void watch_shot(const GlSurf *s)
  * screen in the same step. Written from the published algorithm; nfsu2-sw's
  * Vulkan renderer does the same in its present pass (the idea). */
 static GLuint s_fx_prog, s_fx_vao;
-static GLint  s_fx_rcp, s_fx_uv, s_fx_max, s_fx_sharp;
+static volatile int s_fill_hold;             /* nv2a_gl_fill_hold */
+
+/* While > 0, 4:3 screens are shown as the title framed them (RECOMP_GL_FILL
+ * off): a host keeps chosen movies in their original format. Any thread. */
+void nv2a_gl_fill_hold(int delta)
+{
+    __atomic_add_fetch(&s_fill_hold, delta, __ATOMIC_RELAXED);
+}
+
+static GLint  s_fx_rcp, s_fx_max, s_fx_sharp, s_fx_full, s_fx_crop, s_fx_band, s_fx_fill;
 static float  s_fx_sharpness = -1.0f;
 static int    s_fx_on = -1;
 
@@ -2876,11 +2885,10 @@ static int fxaa_init(void)
 {
     static const char *vs[1] = {
         "#version 330 core\n"
-        "uniform vec2 u_uv;            /* the drawn part of the texture */\n"
-        "out vec2 vUV;\n"
+        "out vec2 vT;\n"
         "void main() {\n"
         "    vec2 t = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
-        "    vUV = vec2(t.x * u_uv.x, (1.0 - t.y) * u_uv.y);   /* rows top-first */\n"
+        "    vT = vec2(t.x, 1.0 - t.y);                        /* rows top-first */\n"
         "    gl_Position = vec4(t * 2.0 - 1.0, 0.0, 1.0);\n"
         "}\n" };
     static const char *fs[1] = {
@@ -2889,13 +2897,28 @@ static int fxaa_init(void)
         "uniform vec2 u_rcp;           /* one texel */\n"
         "uniform vec2 u_max;           /* last drawn texel centre */\n"
         "uniform float u_sharp;        /* CAS weight: 0 = off */\n"
-        "in vec2 vUV;\n"
+        "uniform vec4 u_full;          /* u0 u1 v0 v1: the drawn picture */\n"
+        "uniform vec4 u_crop;          /* ... its 4:3 middle, filled to 16:9 */\n"
+        "uniform vec2 u_band;          /* u of the left and right side bands */\n"
+        "uniform int u_fill;\n"
+        "in vec2 vT;\n"
         "out vec4 o;\n"
         "vec3 S(vec2 p) { return texture(u_tex, clamp(p, 0.5 * u_rcp, u_max)).rgb; }\n"
         "float L(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }\n"
         "float LA(vec2 p) { return L(S(p)); }\n"
+        "/* Both side bands black from top to bottom: a 4:3 screen the title\n"
+        " * pillarboxed itself. Same texels for every pixel: cache hits. */\n"
+        "bool bars() {\n"
+        "    for (int k = 0; k < 8; k++) {\n"
+        "        float v = mix(u_full.z, u_full.w, (float(k) + 0.5) / 8.0);\n"
+        "        vec3 a = texture(u_tex, vec2(u_band.x, v)).rgb, b = texture(u_tex, vec2(u_band.y, v)).rgb;\n"
+        "        if (max(max(a.r, a.g), max(a.b, max(b.r, max(b.g, b.b)))) > 0.008) return false;\n"
+        "    }\n"
+        "    return true;\n"
+        "}\n"
         "void main() {\n"
-        "    vec2 uv = vUV, r = u_rcp;\n"
+        "    vec4 R = (u_fill != 0 && bars()) ? u_crop : u_full;\n"
+        "    vec2 uv = vec2(mix(R.x, R.y, vT.x), mix(R.z, R.w, vT.y)), r = u_rcp;\n"
         "    vec3 cM = S(uv);\n"
         "    float m = L(cM);\n"
         "    float n = LA(uv + vec2(0.0, -r.y)), s = LA(uv + vec2(0.0, r.y));\n"
@@ -2987,7 +3010,10 @@ static int fxaa_init(void)
         return 0;
     }
     s_fx_rcp = glGetUniformLocation(s_fx_prog, "u_rcp");
-    s_fx_uv = glGetUniformLocation(s_fx_prog, "u_uv");
+    s_fx_full = glGetUniformLocation(s_fx_prog, "u_full");
+    s_fx_crop = glGetUniformLocation(s_fx_prog, "u_crop");
+    s_fx_band = glGetUniformLocation(s_fx_prog, "u_band");
+    s_fx_fill = glGetUniformLocation(s_fx_prog, "u_fill");
     s_fx_max = glGetUniformLocation(s_fx_prog, "u_max");
     s_fx_sharp = glGetUniformLocation(s_fx_prog, "u_sharp");
     {
@@ -3010,7 +3036,9 @@ static int fxaa_init(void)
  * FXAA; 0 when it is off (the caller blits). Default framebuffer bound. */
 static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
 {
-    float rcp[2], uv[2], mx[2];
+    float rcp[2], mx[2], full[4], crop[4], band[2];
+    uint32_t vw = s->vw ? s->vw : s->w;
+    int fill = 0;
     if (!fxaa_init())
         return 0;
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -3023,11 +3051,44 @@ static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
     glUseProgram(s_fx_prog);
     s_cur_prog = s_fx_prog;
     rcp[0] = 1.0f / (float)s->pw;            rcp[1] = 1.0f / (float)s->ph;
-    uv[0] = (float)sw / (float)s->pw;        uv[1] = 1.0f;
+    /* texture u of title column c is c / w (stored columns scale alike) */
+    full[0] = 0.0f; full[1] = (float)vw / (float)s->w; full[2] = 0.0f; full[3] = 1.0f;
+    {
+        /* RECOMP_GL_FILL (default on in 16:9): a widescreen frame wider
+         * than 640 whose side bands are black -- MC3 lays its menus and
+         * videos out in the middle 640 of 720 columns and clears the rest
+         * -- shows the middle filled to the screen's width, trimming top
+         * and bottom to keep the shape (27 of 480 lines each). */
+        static int on = -1;
+        if (on < 0) {
+            const char *e = getenv("RECOMP_GL_FILL");
+            on = !(e && *e == '0') && xbox_video_widescreen();
+            fprintf(stderr, "  [GL] 4:3 screens filled to 16:9 %s (RECOMP_GL_FILL)\n", on ? "on" : "off");
+        }
+        if (on && s_fill_hold <= 0 && s->aa_sx <= 1 && vw > 640 && s->h >= 400) {
+            float bandw = (float)(vw - 640) * 0.5f;                  /* title columns */
+            float pa = (16.0f / 9.0f) / ((float)vw / (float)s->h);   /* pixel aspect */
+            float keep = 640.0f * pa * 9.0f / 16.0f;                 /* lines kept */
+            float cy = ((float)s->h - keep) * 0.5f;
+            if (cy < 0.0f) cy = 0.0f;
+            crop[0] = bandw / (float)s->w;
+            crop[1] = ((float)vw - bandw) / (float)s->w;
+            crop[2] = cy / (float)s->h;
+            crop[3] = 1.0f - cy / (float)s->h;
+            band[0] = bandw * 0.5f / (float)s->w;
+            band[1] = ((float)vw - bandw * 0.5f) / (float)s->w;
+            fill = 1;
+        }
+    }
     mx[0] = ((float)sw - 0.5f) / (float)s->pw;
     mx[1] = ((float)s->ph - 0.5f) / (float)s->ph;
     glUniform2fv(s_fx_rcp, 1, rcp);
-    glUniform2fv(s_fx_uv, 1, uv);
+    glUniform4fv(s_fx_full, 1, full);
+    glUniform1i(s_fx_fill, fill);
+    if (fill) {
+        glUniform4fv(s_fx_crop, 1, crop);
+        glUniform2fv(s_fx_band, 1, band);
+    }
     glUniform2fv(s_fx_max, 1, mx);
     glUniform1f(s_fx_sharp, -s_fx_sharpness);   /* 1 / mix(8, 5, k); 0 = off */
     active_unit(0);
