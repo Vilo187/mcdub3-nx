@@ -2868,7 +2868,8 @@ static void watch_shot(const GlSurf *s)
  * screen in the same step. Written from the published algorithm; nfsu2-sw's
  * Vulkan renderer does the same in its present pass (the idea). */
 static GLuint s_fx_prog, s_fx_vao;
-static GLint  s_fx_rcp, s_fx_uv, s_fx_max;
+static GLint  s_fx_rcp, s_fx_uv, s_fx_max, s_fx_sharp;
+static float  s_fx_sharpness = -1.0f;
 static int    s_fx_on = -1;
 
 static int fxaa_init(void)
@@ -2887,6 +2888,7 @@ static int fxaa_init(void)
         "uniform sampler2D u_tex;\n"
         "uniform vec2 u_rcp;           /* one texel */\n"
         "uniform vec2 u_max;           /* last drawn texel centre */\n"
+        "uniform float u_sharp;        /* CAS weight: 0 = off */\n"
         "in vec2 vUV;\n"
         "out vec4 o;\n"
         "vec3 S(vec2 p) { return texture(u_tex, clamp(p, 0.5 * u_rcp, u_max)).rgb; }\n"
@@ -2901,7 +2903,19 @@ static int fxaa_init(void)
         "    float lo = min(m, min(min(n, s), min(e, w)));\n"
         "    float hi = max(m, max(max(n, s), max(e, w)));\n"
         "    float range = hi - lo;\n"
-        "    if (range < max(0.0312, hi * 0.125)) { o = vec4(cM, 1.0); return; }\n"
+        "    if (range < max(0.0312, hi * 0.125)) {\n"
+        "        /* no edge: contrast-adaptive sharpening (the cross around it) */\n"
+        "        if (u_sharp > 0.0) {\n"
+        "            vec3 cn = S(uv + vec2(0.0, -r.y)), cs = S(uv + vec2(0.0, r.y));\n"
+        "            vec3 ce = S(uv + vec2(r.x, 0.0)), cw = S(uv + vec2(-r.x, 0.0));\n"
+        "            vec3 mn = min(cM, min(min(cn, cs), min(ce, cw)));\n"
+        "            vec3 mx = max(cM, max(max(cn, cs), max(ce, cw)));\n"
+        "            vec3 amp = sqrt(clamp(min(mn, 1.0 - mx) / max(mx, vec3(1e-4)), 0.0, 1.0));\n"
+        "            vec3 wt = -amp * u_sharp;         /* the negative lobe */\n"
+        "            cM = clamp((cM + wt * (cn + cs + ce + cw)) / (1.0 + 4.0 * wt), 0.0, 1.0);\n"
+        "        }\n"
+        "        o = vec4(cM, 1.0); return;\n"
+        "    }\n"
         "    float nw = LA(uv + vec2(-r.x, -r.y)), ne = LA(uv + vec2(r.x, -r.y));\n"
         "    float sw = LA(uv + vec2(-r.x, r.y)), se = LA(uv + vec2(r.x, r.y));\n"
         "    /* edge direction: second differences across rows vs columns */\n"
@@ -2975,6 +2989,16 @@ static int fxaa_init(void)
     s_fx_rcp = glGetUniformLocation(s_fx_prog, "u_rcp");
     s_fx_uv = glGetUniformLocation(s_fx_prog, "u_uv");
     s_fx_max = glGetUniformLocation(s_fx_prog, "u_max");
+    s_fx_sharp = glGetUniformLocation(s_fx_prog, "u_sharp");
+    {
+        /* RECOMP_GL_SHARPEN: 0..1 (default 0.5, 0 = off), AMD CAS's
+         * "sharpness": the negative lobe -1/mix(8, 5, k). */
+        const char *e = getenv("RECOMP_GL_SHARPEN");
+        float k = e ? (float)atof(e) : 0.5f;
+        k = k < 0.0f ? 0.0f : k > 1.0f ? 1.0f : k;
+        s_fx_sharpness = k > 0.0f ? -1.0f / (8.0f + (5.0f - 8.0f) * k) : 0.0f;
+        fprintf(stderr, "  [GL] sharpening %g (RECOMP_GL_SHARPEN)\n", k);
+    }
     glUseProgram(s_fx_prog);
     glUniform1i(glGetUniformLocation(s_fx_prog, "u_tex"), 0);
     s_cur_prog = s_fx_prog;
@@ -3005,6 +3029,7 @@ static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
     glUniform2fv(s_fx_rcp, 1, rcp);
     glUniform2fv(s_fx_uv, 1, uv);
     glUniform2fv(s_fx_max, 1, mx);
+    glUniform1f(s_fx_sharp, -s_fx_sharpness);   /* 1 / mix(8, 5, k); 0 = off */
     active_unit(0);
     bind_tex(s->tex);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
