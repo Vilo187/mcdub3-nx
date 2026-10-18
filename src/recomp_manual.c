@@ -824,11 +824,120 @@ void sub_001EF3D0(void)
  * second; the report prints the real rate (2026-10-17: the intro flythrough
  * runs fast on Linux and reads no clock, so its time base is suspect). */
 volatile long g_mc3_d3d_vblanks;
+volatile uint32_t g_mc3_d3d_device;       /* ecx of the vblank handler: D3D's device */
 extern void sub_003E4FD0_gen(void);
 void sub_003E4FD0(void)
 {
     g_mc3_d3d_vblanks++;
+    g_mc3_d3d_device = g_ecx;
     sub_003E4FD0_gen();
+}
+
+/* ── The main loop's passes, counted (MC3_PERF reports them) ──
+ *
+ * sub_0001F2C1 is the game's main loop; it calls sub_002A58D0 once per
+ * pass, before the update. On the console a pass is paced by the display
+ * (60 a second); the intro flythrough runs ~10x fast on Linux while the
+ * presented frame rate, the frame time and every clock read are right
+ * (2026-10-18) -- so: passes per second against frames presented. */
+volatile long g_mc3_loop_passes;
+extern void sub_002A58D0_gen(void);
+void sub_002A58D0(void)
+{
+    g_mc3_loop_passes++;
+    sub_002A58D0_gen();
+}
+
+/* ── D3D's PGRAPH handler: the trap protocol with an acknowledgement ──
+ *
+ * sub_003E5540 is D3D's PGRAPH interrupt handler: it reads PGRAPH_INTR and
+ * NSOURCE (0xFD400100/0108), and for a software method (NOP) hands the
+ * trapped parameter to the pushbuffer callback sub_003E52D0. It acknowledges
+ * by writing the status back -- write-one-to-clear on the chip, a no-op on
+ * the plain memory here -- so the trap stayed visible, and D3D's interrupt
+ * routine ran the handler again and again on it before the executor saw it
+ * taken: 412,082 flips queued in one run (2026-10-18), D3D's flip targets
+ * millions of vblanks ahead and its frame bookkeeping far ahead of the
+ * screen. The toolkit's documented cure for that (NFSU2 hit the same): wrap
+ * the handler under the executor's trap lock and report a trap it found as
+ * taken, which clears what the hardware would (nv2a_pb_exec.c). */
+extern void nv2a_pb_trap_lock(void);
+extern void nv2a_pb_trap_unlock(void);
+extern void nv2a_pb_trap_taken(void);
+extern void sub_003E5540_gen(void);
+void sub_003E5540(void)
+{
+    static int on = -1;
+    uint32_t nsource;
+    if (on < 0) {                      /* MC3_TRAP_HOOK=0: the old protocol, to compare */
+        const char *e = getenv("MC3_TRAP_HOOK");
+        on = !(e && e[0] == '0');
+    }
+    if (!on) {
+        sub_003E5540_gen();
+        return;
+    }
+    nv2a_pb_trap_lock();
+    nsource = MEM32(0xFD400108u);
+    sub_003E5540_gen();
+    if (nsource)
+        nv2a_pb_trap_taken();
+    nv2a_pb_trap_unlock();
+}
+
+/* ── Frame pacing: D3D's flip retirement (vblank) ──
+ *
+ * D3D queues each flip with a target vblank: previous target + the
+ * presentation interval the title asked for (the low bits of the callback's
+ * parameter; MC3's menus use 2, i.e. 30 fps). sub_003E4EF0, called from the
+ * vblank handler, retires the flips whose target has come and returns how
+ * many. The executor's FLIP_STALL waits for those retirements once the
+ * project reports them (nv2a_pb_flip_retired); unreported, it waited one
+ * vblank whatever the interval, and the 30 fps menus, flythrough and garage
+ * played at 60 -- the game advances them per frame. A first attempt
+ * (2026-10-17) stuck at 4 fps: the trap storm above had wrecked D3D's flip
+ * queue (targets millions of vblanks ahead). With the trap acknowledged,
+ * the queue is sane and retirement can pace the flips. MC3_FLIP_PACE=0
+ * falls back to one flip per vblank. */
+extern void nv2a_pb_flip_retired(unsigned n);
+extern void sub_003E4EF0_gen(void);
+void sub_003E4EF0(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_FLIP_PACE");
+        on = !(e && e[0] == '0');
+    }
+    sub_003E4EF0_gen();
+    if (on)
+        nv2a_pb_flip_retired(g_eax);
+}
+
+/* ── D3D's pushbuffer callback, logged (MC3_FLIP_TRACE=1) ──
+ *
+ * sub_003E52D0(param) runs when the GPU reaches one of D3D's software
+ * methods (the executor's NOP trap). param & 0x1F is the command; for a
+ * flip, (param >> 5) & 7 is the presentation interval and the frame's
+ * target vblank becomes max(previous target +0x1C8 + interval, vblank
+ * count +0x1C0). It showed the trap storm (targets millions of vblanks
+ * ahead) and the menus' interval 2 (2026-10-18). First 40 calls, then
+ * every 120th. */
+extern void sub_003E52D0_gen(void);
+void sub_003E52D0(void)
+{
+    static int on = -1;
+    static long n;
+    uint32_t dev = g_ecx, param = MEM32(g_esp + 4), t_before = 0, vb = 0;
+    if (on < 0) {
+        const char *e = getenv("MC3_FLIP_TRACE");
+        on = e && e[0] == '1';
+    }
+    if (on && dev) { t_before = MEM32(dev + 0x1C8); vb = MEM32(dev + 0x1C0); }
+    sub_003E52D0_gen();
+    if (on && dev && (++n <= 40 || n % 120 == 0))
+        fprintf(stderr, "[FLIP] #%ld param %08X cmd %u data %X | target %u -> %u, next %u, vblank %u (dev %08X)\n",
+                n, param, param & 0x1F, param >> 5, t_before, MEM32(dev + 0x1C8),
+                MEM32(dev + 0x1C4), vb, dev);
 }
 
 /* ── Manual function overrides ─────────────────────────────── */
