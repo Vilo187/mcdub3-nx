@@ -798,6 +798,41 @@ void xbox_gil_resume(int depth)
     }
 }
 
+/* A guest thread's yield (Sleep(0), NtYieldExecution): give way for a
+ * quantum. On the Xbox a yield hands the CPU to a ready thread of the same
+ * priority, which then runs its quantum (tens of ms); kernel calls do not
+ * switch threads. Here every kernel call releases the lock, so a thread
+ * polling with Sleep(0) queued again at once and took the lock back at the
+ * other thread's next kernel call. MC3's heartbeat thread (sub_00196230:
+ * enter a section, read the clock, leave, Sleep(0), up to 580k times a
+ * second) did that against the main thread loading behind the legal
+ * screen: on the Switch each hand-over is a scheduler round trip, and the
+ * main thread waited 69% of the time for a lock that was held 14% of it
+ * (2026-10-18). So a yield, made with the lock released, waits until nobody
+ * holds or wants the lock, or a quantum has passed. RECOMP_YIELD_QUANTUM_MS
+ * sets it (default 10, 0 = return at once as before). */
+static void gil_yield_wait(void)
+{
+    static int q = -1;
+    DWORD t0;
+    if (q < 0) {
+        const char *e = getenv("RECOMP_YIELD_QUANTUM_MS");
+        q = e && *e ? atoi(e) : 10;
+        if (q < 0) q = 0;
+    }
+    if (!q || !gil_enabled() || t_gil_depth > 0)
+        return;
+    t0 = GetTickCount();
+    EnterCriticalSection(&s_gil_cs);
+    while (s_gil_next != s_gil_serving) {
+        DWORD el = GetTickCount() - t0;
+        if (el >= (DWORD)q)
+            break;
+        SleepConditionVariableCS(&s_gil_cv, &s_gil_cs, (DWORD)q - el);
+    }
+    LeaveCriticalSection(&s_gil_cs);
+}
+
 /* RECOMP_SPIN_HINT's periodic yield: a poll loop waits for another thread,
  * an interrupt or a DPC -- all of which need the lock. */
 void recomp_spin_yield(void)
@@ -2493,6 +2528,8 @@ static void bridge_KeDelayExecutionThread(void)
     uint32_t interval_ptr = STACK_ARG(2);
 
 
+    if (interval_ptr && ((PLARGE_INTEGER)XBOX_TO_NATIVE(interval_ptr))->QuadPart == 0)
+        gil_yield_wait();                      /* Sleep(0): see gil_yield_wait */
     g_eax = (uint32_t)xbox_KeDelayExecutionThread(
         (KPROCESSOR_MODE)wait_mode, (BOOLEAN)alertable,
         XBOX_TO_NATIVE(interval_ptr));
@@ -2526,6 +2563,7 @@ static void bridge_KeBugCheckEx(void)
 /* ── NtYieldExecution (ordinal 238) ──────────────────────── */
 static void bridge_NtYieldExecution(void)
 {
+    gil_yield_wait();
     g_eax = (uint32_t)xbox_NtYieldExecution();
 }
 
