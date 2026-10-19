@@ -150,6 +150,22 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   speed; nv2a_gl now packs GL depth into those formats
   (RECOMP_GL_DEPTH_TEX=0 to compare). A race frame is ~1800 draws: use
   RECOMP_GL_WATCH_N=4000 for a whole one.
+- Picture quality (GL, 2026-10-18; ideas from nfsu2-sw's Vulkan renderer):
+  square pixels in 16:9 (RECOMP_GL_SQUARE; 1280x720 at RECOMP_GL_SCALE=1.5,
+  the sweet spot for a 720p screen), the title's mip levels + trilinear +
+  16x anisotropic + -0.25 LOD bias (RECOMP_GL_MIPS/_ANISO/_LOD_BIAS), FXAA
+  and CAS sharpening in the present pass (RECOMP_GL_FXAA, RECOMP_GL_SHARPEN),
+  and the 4:3-to-16:9 fill: MC3 lays menus and videos out in the middle 640
+  of 720 columns and clears the rest; black side bands -> the middle is
+  shown full width (RECOMP_GL_FILL), except the boot movies
+  (MC3_FILL_SKIP=rockstar,sdlogo,mc3intro). MC3 has no 720p mode (no
+  1280x720 in its code). Movies upscaled 2x on the GPU (MC3_MOVIE_HD,
+  RECOMP_GL_MOVIE_SCALE; first test pending). HD video packs made from the
+  game's videos can't be shipped.
+- NSP forwarder (works since 2026-10-18): `make nsp` follows NTON's recipe
+  (its Forwarder-Mod forwarder reading romfs:/nextNroPath, its NACP
+  settings, icon re-encoded bare); start-up logo from assets/logo/ or NTON's.
+  The VM's Docker has no DNS: `nsp.sh prepare` fetches on the host.
 - Input must reach the game as native controls do (the emulated pad), so
   the game decides what can be skipped: the Rockstar and Rockstar San Diego
   logos cannot, mc3intro can (Enter). The keyboard is pad 1 by default
@@ -214,7 +230,7 @@ TODO.md.
   `-Wnonnull` on `XBOX_TO_NATIVE`, comments, unused code). Next: first run.
 - 2026-10-17: music and sound in menus, garage and races; cars drawn; race view
   and HUD drawn (racing itself not yet: open); garage reachable; movies native on the console; boot
-  black screen gone (RECOMP_NET_LINK=0). Open: NSP forwarder.
+  black screen gone (RECOMP_NET_LINK=0).
 - 2026-10-18: frame pacing fixed (flythrough, menus, garage at hardware
   speed on Linux; boot black screen short again). The Switch "1.5x scale
   glitches" (menu, RECOMP_GL_SCALE=1.5) were the slow menu navigation fixed
