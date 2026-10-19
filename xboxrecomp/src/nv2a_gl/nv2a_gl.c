@@ -46,6 +46,7 @@
 void xbox_sdl_keyboard_handle(const SDL_Event *e);   /* input/sdl_keyboard.c */
 int  xbox_sdl_keyboard_down(int scancode);
 #endif
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1035,7 +1036,268 @@ static void rt_scale(uint32_t w, uint32_t h, uint32_t sw, uint32_t sh,
     if (h < lh) scale[1] *= (float)h / (float)lh;
 }
 
+/* ── Movie frames, upscaled on the GPU ───────────────────────────────
+ *
+ * A movie reached the screen as the title's own 640x480 A8R8G8B8 texture,
+ * converted from YUV on the CPU by the title's player and then stretched
+ * bilinearly. A host that decodes the movie itself (MC3's bink_native.c)
+ * hands each frame's Y, U and V planes here, tagged with the address of
+ * the texture the title will draw (nv2a_gl_movie_frame). When a draw
+ * samples that texture, the planes are uploaded and one pass converts and
+ * upscales them -- bicubic (Catmull-Rom) luma, bilinear chroma -- into a
+ * texture RECOMP_GL_MOVIE_SCALE times larger (default 2), drawn instead.
+ * The colour matrix comes from the host (fitted to the title's own
+ * conversion), so colours match. RECOMP_GL_MOVIE_HD=0 turns it off. */
+typedef struct {
+    uint32_t va, w, h, seq, done_seq;
+    uint8_t *pl[3];
+    size_t   cap[3];
+    float    m[12];
+    int      active;
+    uint32_t shown;                          /* s_frame it was last drawn */
+    GLuint   tp[3], out, fbo;
+    uint32_t ow, oh, tw, th;
+} MovieSlot;
+static MovieSlot       s_mv;
+static pthread_mutex_t s_mv_lock = PTHREAD_MUTEX_INITIALIZER;
+static GLuint          s_mv_prog, s_mv_vao;
+static GLint           s_mv_um, s_mv_usz;
+static int             s_mv_on = -1;
+static float           s_mv_scale = 2.0f;
+
+static int movie_hd_on(void)
+{
+    if (s_mv_on < 0) {
+        const char *e = getenv("RECOMP_GL_MOVIE_HD"), *k = getenv("RECOMP_GL_MOVIE_SCALE");
+        s_mv_on = !(e && *e == '0');
+        if (k && atof(k) >= 1.0) s_mv_scale = (float)atof(k);
+        if (s_mv_scale > 4.0f) s_mv_scale = 4.0f;
+    }
+    return s_mv_on;
+}
+
+/* Any thread (the title's): the planes of the frame the title is about to
+ * copy into its texture at va (w x h, 4:2:0). m: R, G, B rows of a 3x4
+ * matrix applied to (Y, U, V, 1), all 0..1. */
+void nv2a_gl_movie_frame(uint32_t va, uint32_t w, uint32_t h,
+                         const uint8_t *y, int ys, const uint8_t *u, int us,
+                         const uint8_t *v, int vs, const float m[12])
+{
+    const uint8_t *src[3];
+    int str[3], k;
+    uint32_t pw[3], ph[3];
+    if (!movie_hd_on() || !w || !h || w > 2048 || h > 2048)
+        return;
+    src[0] = y; src[1] = u; src[2] = v;
+    str[0] = ys; str[1] = us; str[2] = vs;
+    pw[0] = w; ph[0] = h;
+    pw[1] = pw[2] = (w + 1) / 2;
+    ph[1] = ph[2] = (h + 1) / 2;
+    pthread_mutex_lock(&s_mv_lock);
+    for (k = 0; k < 3; k++) {
+        size_t need = (size_t)pw[k] * ph[k];
+        uint32_t r;
+        if (s_mv.cap[k] < need) {
+            uint8_t *n = realloc(s_mv.pl[k], need);
+            if (!n) { s_mv.active = 0; pthread_mutex_unlock(&s_mv_lock); return; }
+            s_mv.pl[k] = n;
+            s_mv.cap[k] = need;
+        }
+        for (r = 0; r < ph[k]; r++)
+            memcpy(s_mv.pl[k] + (size_t)r * pw[k], src[k] + (size_t)r * str[k], pw[k]);
+    }
+    memcpy(s_mv.m, m, sizeof s_mv.m);
+    s_mv.va = va; s_mv.w = w; s_mv.h = h;
+    s_mv.seq++;
+    s_mv.active = 1;
+    pthread_mutex_unlock(&s_mv_lock);
+}
+
+/* The movie at va ended: draw the title's texture again. */
+void nv2a_gl_movie_end(uint32_t va)
+{
+    pthread_mutex_lock(&s_mv_lock);
+    if (s_mv.va == va)
+        s_mv.active = 0;
+    pthread_mutex_unlock(&s_mv_lock);
+}
+
+/* Was the upscaled frame for va drawn lately? The host may then skip its
+ * own YUV -> RGB copy, which nothing else sees. */
+int nv2a_gl_movie_shown(uint32_t va)
+{
+    int r;
+    pthread_mutex_lock(&s_mv_lock);
+    r = s_mv.active && s_mv.va == va && s_mv.shown && s_frame - s_mv.shown <= 2;
+    pthread_mutex_unlock(&s_mv_lock);
+    return r;
+}
+
+static int movie_prog_init(void)
+{
+    static const char *vs[1] = {
+        "#version 330 core\n"
+        "void main() {\n"
+        "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n" };
+    static const char *fs[1] = {
+        "#version 330 core\n"
+        "uniform sampler2D u_y, u_u, u_v;\n"
+        "uniform vec4 u_m[3];\n"
+        "uniform vec4 u_sz;            /* out w, h; luma w, h */\n"
+        "out vec4 o;\n"
+        "/* Catmull-Rom weights for the 4 taps around fraction t */\n"
+        "vec4 cr(float t) {\n"
+        "    float t2 = t * t, t3 = t2 * t;\n"
+        "    return vec4(-0.5 * t3 + t2 - 0.5 * t, 1.5 * t3 - 2.5 * t2 + 1.0,\n"
+        "                -1.5 * t3 + 2.0 * t2 + 0.5 * t, 0.5 * t3 - 0.5 * t2);\n"
+        "}\n"
+        "void main() {\n"
+        "    vec2 uv = gl_FragCoord.xy / u_sz.xy;              /* row 0 = top, as the planes */\n"
+        "    vec2 p = uv * u_sz.zw - 0.5, f = fract(p);\n"
+        "    ivec2 b = ivec2(floor(p)) - 1, mx = ivec2(u_sz.zw) - 1;\n"
+        "    vec4 wx = cr(f.x), wy = cr(f.y);\n"
+        "    float yv = 0.0;\n"
+        "    for (int j = 0; j < 4; j++) {\n"
+        "        float row = 0.0;\n"
+        "        for (int i = 0; i < 4; i++)\n"
+        "            row += wx[i] * texelFetch(u_y, clamp(b + ivec2(i, j), ivec2(0), mx), 0).r;\n"
+        "        yv += wy[j] * row;\n"
+        "    }\n"
+        "    vec4 c = vec4(clamp(yv, 0.0, 1.0), texture(u_u, uv).r, texture(u_v, uv).r, 1.0);\n"
+        "    o = vec4(clamp(vec3(dot(u_m[0], c), dot(u_m[1], c), dot(u_m[2], c)), 0.0, 1.0), 1.0);\n"
+        "}\n" };
+    GLuint v, f;
+    GLint ok = 0;
+    if (s_mv_prog)
+        return 1;
+    v = compile(GL_VERTEX_SHADER, vs, 1);
+    f = compile(GL_FRAGMENT_SHADER, fs, 1);
+    if (!v || !f) {
+        s_mv_on = 0;
+        return 0;
+    }
+    s_mv_prog = glCreateProgram();
+    glAttachShader(s_mv_prog, v);
+    glAttachShader(s_mv_prog, f);
+    glLinkProgram(s_mv_prog);
+    glDeleteShader(v);
+    glDeleteShader(f);
+    glGetProgramiv(s_mv_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        fprintf(stderr, "  [GL] movie upscale link failed: movies as the title draws them\n");
+        glDeleteProgram(s_mv_prog);
+        s_mv_prog = 0;
+        s_mv_on = 0;
+        return 0;
+    }
+    glUseProgram(s_mv_prog);
+    s_cur_prog = s_mv_prog;
+    glUniform1i(glGetUniformLocation(s_mv_prog, "u_y"), 0);
+    glUniform1i(glGetUniformLocation(s_mv_prog, "u_u"), 1);
+    glUniform1i(glGetUniformLocation(s_mv_prog, "u_v"), 2);
+    s_mv_um = glGetUniformLocation(s_mv_prog, "u_m");
+    s_mv_usz = glGetUniformLocation(s_mv_prog, "u_sz");
+    glGenVertexArrays(1, &s_mv_vao);
+    fprintf(stderr, "  [GL] movies upscaled %gx on the GPU (RECOMP_GL_MOVIE_HD)\n", s_mv_scale);
+    return 1;
+}
+
+/* Before a draw binds its surface: the upscaled frame for a stage sampling
+ * the movie texture va (A8R8G8B8 linear), converted if a new frame came. */
+static GLuint movie_prepare(uint32_t va, uint32_t color)
+{
+    int k, fresh;
+    uint32_t pw[3], ph[3];
+    float sz[4];
+    if (color != 0x12 || !s_mv_on || !s_mv.active || s_mv.va != va)
+        return 0;
+    pthread_mutex_lock(&s_mv_lock);
+    if (!s_mv.active || s_mv.va != va) {
+        pthread_mutex_unlock(&s_mv_lock);
+        return 0;
+    }
+    s_mv.shown = s_frame;
+    if (s_mv.done_seq == s_mv.seq && s_mv.out) {
+        pthread_mutex_unlock(&s_mv_lock);
+        return s_mv.out;
+    }
+    if (!movie_prog_init()) {
+        pthread_mutex_unlock(&s_mv_lock);
+        return 0;
+    }
+    pw[0] = s_mv.w; ph[0] = s_mv.h;
+    pw[1] = pw[2] = (s_mv.w + 1) / 2;
+    ph[1] = ph[2] = (s_mv.h + 1) / 2;
+    fresh = !s_mv.out || s_mv.tw != s_mv.w || s_mv.th != s_mv.h;
+    if (fresh) {
+        if (s_mv.out) {
+            glDeleteTextures(3, s_mv.tp);
+            glDeleteTextures(1, &s_mv.out);
+            glDeleteFramebuffers(1, &s_mv.fbo);
+        }
+        s_mv.tw = s_mv.w; s_mv.th = s_mv.h;
+        s_mv.ow = (uint32_t)(s_mv.w * s_mv_scale + 0.5f);
+        s_mv.oh = (uint32_t)(s_mv.h * s_mv_scale + 0.5f);
+        if (s_mv.ow > (uint32_t)s_max_size) s_mv.ow = (uint32_t)s_max_size;
+        if (s_mv.oh > (uint32_t)s_max_size) s_mv.oh = (uint32_t)s_max_size;
+        glGenTextures(3, s_mv.tp);
+        for (k = 0; k < 3; k++) {
+            glBindTexture(GL_TEXTURE_2D, s_mv.tp[k]);
+            glTexImage2D(GL_TEXTURE_2D, 0, 0x8229 /* R8 */, (GLsizei)pw[k], (GLsizei)ph[k], 0,
+                         0x1903 /* RED */, GL_UNSIGNED_BYTE, NULL);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            tex_param_forget(s_mv.tp[k]);
+        }
+        glGenTextures(1, &s_mv.out);
+        tex_param_forget(s_mv.out);
+        glBindTexture(GL_TEXTURE_2D, s_mv.out);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)s_mv.ow, (GLsizei)s_mv.oh, 0,
+                     GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glGenFramebuffers(1, &s_mv.fbo);
+        glBindFramebuffer(GL_FRAMEBUFFER, s_mv.fbo);
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, s_mv.out, 0);
+        s_new_obj = 1;
+        tex_bind_forget();
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    for (k = 0; k < 3; k++) {
+        active_unit(k);
+        bind_tex(s_mv.tp[k]);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)pw[k], (GLsizei)ph[k],
+                        0x1903 /* RED */, GL_UNSIGNED_BYTE, s_mv.pl[k]);
+    }
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    glBindFramebuffer(GL_FRAMEBUFFER, s_mv.fbo);
+    glViewport(0, 0, (GLsizei)s_mv.ow, (GLsizei)s_mv.oh);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(1, 1, 1, 1);
+    glUseProgram(s_mv_prog);
+    s_cur_prog = s_mv_prog;
+    glUniform4fv(s_mv_um, 3, s_mv.m);
+    sz[0] = (float)s_mv.ow; sz[1] = (float)s_mv.oh; sz[2] = (float)s_mv.w; sz[3] = (float)s_mv.h;
+    glUniform4fv(s_mv_usz, 1, sz);
+    glBindVertexArray(s_mv_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(s_vao);
+    state_dirty();
+    s_mv.done_seq = s_mv.seq;
+    pthread_mutex_unlock(&s_mv_lock);
+    return s_mv.out;
+}
+
 static const GlDepth *s_depth_tex[4];     /* this draw's stages that sample a zeta buffer */
+static GLuint s_movie_tex[4];              /* ... that sample an upscaled movie frame */
 
 /* Before a draw binds its surface: convert the zeta buffers its stages
  * sample (depth_as_color), which uses its own framebuffer and program. */
@@ -1046,8 +1308,12 @@ static void depth_tex_prepare(const uint32_t *regs, const Nv2aRawBatch *b)
         uint32_t base = (0x1B00u + (uint32_t)i * 0x40u) / 4;
         const GlDepth *d = NULL;
         s_depth_tex[i] = NULL;
+        s_movie_tex[i] = 0;
         if (!(regs[base + 3] & 0x40000000u) || !regs[base] || !b->tex_va[i]
             || surf_find(b->tex_va[i]))
+            continue;
+        if (s_mv.active
+            && (s_movie_tex[i] = movie_prepare(b->tex_va[i], (regs[base + 1] >> 8) & 0xFF)) != 0)
             continue;
         if (depth_as_color(b->tex_va[i], (regs[base + 1] >> 8) & 0xFF, 1, &d) && d)
             s_depth_tex[i] = d;
@@ -1134,6 +1400,8 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
         /* The image the title samples is the logical one; the FBO holds it
          * at the anti-aliased size. Normalised coordinates cover both. */
         rt_scale(w, h, rt->w, rt->h, rt->aa_sx, rt->aa_sy, scale);
+    } else if (s_movie_tex[i]) {          /* an upscaled movie frame (movie_prepare) */
+        tex = s_movie_tex[i];
     } else if (s_depth_tex[i]) {          /* a zeta buffer (depth_as_color) */
         const GlDepth *zd = s_depth_tex[i];
         tex = zd->rgba;
