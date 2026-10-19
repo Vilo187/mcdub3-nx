@@ -492,15 +492,30 @@ void sub_00377020(void)
     s_bt_sum[BT_DO] += s_bt_mark[BT_LOCK] - t0;
 }
 
-/* BinkCopyToBuffer, 0x00376FE0: the YUV -> RGB copy into the locked texture. */
+/* BinkCopyToBuffer, 0x00376FE0: the YUV -> RGB copy into the locked texture.
+ * stdcall (hbink, dest, pitch, height, x, y, flags), returns 0 when copied.
+ * With the renderer upscaling the frame (bink_native.c mc3_bink_native_copy)
+ * the copy is skipped: nothing but the drawn texture reads it. */
+extern int mc3_bink_native_copy(uint32_t hbink, uint32_t dest_va, const uint8_t *dest,
+                                uint32_t pitch, uint32_t height, uint32_t x, uint32_t y, int after);
 extern void sub_00376FE0_gen(void);
 void sub_00376FE0(void)
 {
+    uint32_t hbink = MEM32(g_esp + 4), dest = MEM32(g_esp + 8), pitch = MEM32(g_esp + 12);
+    uint32_t height = MEM32(g_esp + 16), x = MEM32(g_esp + 20), y = MEM32(g_esp + 24);
     if (bt_on() && s_bt_mark[BT_LOCK]) {
         s_bt_sum[BT_LOCK] += bt_now() - s_bt_mark[BT_LOCK];
         s_bt_mark[BT_LOCK] = 0;
     }
+    if (dest && mc3_bink_native_copy(hbink, dest, (const uint8_t *)XBOX_PTR(dest),
+                                     pitch, height, x, y, 0)) {
+        g_eax = 0;
+        g_esp += 4 + 28;                     /* return address + 7 arguments */
+        return;
+    }
     bt_time(BT_COPY, sub_00376FE0_gen);
+    if (dest)
+        mc3_bink_native_copy(hbink, dest, (const uint8_t *)XBOX_PTR(dest), pitch, height, x, y, 1);
 }
 
 /* BinkNextFrame, 0x00377630. */

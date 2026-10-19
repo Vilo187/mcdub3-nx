@@ -31,6 +31,7 @@
  * stubs at the bottom keep the lifted decoder in charge. MC3_NATIVE_BINK=0 at
  * run time does the same.
  */
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,6 +69,10 @@ typedef struct {
     long             served, fallbacks;
     struct MovieAudio *audio;   /* NULL: Bink plays its own sound */
     int              nofill;    /* holds the renderer's 4:3 fill off (fill_skip) */
+    int              frame_ok;  /* m->frame is the frame Bink is showing */
+    int              cal;       /* colour matrix: 0 not yet, 1 fitted, -1 unusable */
+    float            mat[12];   /* R, G, B rows over (Y, U, V, 1), all 0..1 */
+    uint32_t         dest;      /* the title's texture (BinkCopyToBuffer) */
 } Movie;
 
 /* ── Movies shown as they are, not filled to 16:9 ──
@@ -80,6 +85,11 @@ typedef struct {
  * "rockstar,sdlogo,mc3intro"; empty: fill everything). Weak, so a build
  * without the GL renderer still links. */
 extern void nv2a_gl_fill_hold(int delta) __attribute__((weak));
+extern void nv2a_gl_movie_frame(uint32_t va, uint32_t w, uint32_t h,
+                                const uint8_t *y, int ys, const uint8_t *u, int us,
+                                const uint8_t *v, int vs, const float m[12]) __attribute__((weak));
+extern void nv2a_gl_movie_end(uint32_t va) __attribute__((weak));
+extern int  nv2a_gl_movie_shown(uint32_t va) __attribute__((weak));
 
 static int fill_skip(const char *xbox_name)
 {
@@ -391,6 +401,8 @@ static void release(Movie *m)
 {
     if (m->nofill && nv2a_gl_fill_hold)
         nv2a_gl_fill_hold(-1);
+    if (m->dest && nv2a_gl_movie_end)
+        nv2a_gl_movie_end(m->dest);
     audio_free(m->audio);
     if (m->frame) av_frame_free(&m->frame);
     if (m->pkt) av_packet_free(&m->pkt);
@@ -546,11 +558,13 @@ int mc3_bink_native_frame(uint32_t hbink, int want, uint8_t *dest, int w, int h)
 
     if (!m)
         return 0;
+    m->frame_ok = 0;
     if (m->dec->width != w || m->dec->height != h || m->dec->pix_fmt != AV_PIX_FMT_YUV420P
             || !decode_to(m, want)) {
         m->fallbacks++;
         return 0;
     }
+    m->frame_ok = 1;
     /* Bink's frame buffer: Y (w x h), then V, then U (each cw x ch), packed. */
     for (y = 0; y < h; y++)
         memcpy(dest + (size_t)y * w, m->frame->data[0] + (size_t)y * m->frame->linesize[0], (size_t)w);
@@ -564,6 +578,155 @@ int mc3_bink_native_frame(uint32_t hbink, int want, uint8_t *dest, int w, int h)
     return 1;
 }
 
+/* ── Movie frames upscaled by the renderer ──
+ *
+ * The title's player converts each frame to RGB on the CPU
+ * (BinkCopyToBuffer, 4-7 ms) into a 640x480 texture that is then stretched.
+ * Instead the frame's planes go to the renderer (nv2a_gl_movie_frame), which
+ * converts and upscales them on the GPU when the texture is drawn. The
+ * colour matrix is fitted, on a movie's first frame, to what the player's
+ * own conversion wrote (least squares over a grid of pixels), so colours
+ * match whatever matrix and range Bink uses. Once the renderer draws the
+ * upscaled frame, the player's copy is skipped. MC3_MOVIE_HD=0 off;
+ * MC3_MOVIE_SKIP_COPY=0 keeps the player's copy. */
+static int movie_hd(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_MOVIE_HD");
+        on = !(e && *e == '0') && nv2a_gl_movie_frame != NULL;
+    }
+    return on;
+}
+
+/* Solve the 4x4 system a x = b (Gaussian elimination); 0 if singular. */
+static int solve4(double a[4][4], double b[4], double x[4])
+{
+    int i, j, k;
+    for (i = 0; i < 4; i++) {
+        int p = i;
+        for (k = i + 1; k < 4; k++)
+            if (fabs(a[k][i]) > fabs(a[p][i])) p = k;
+        if (fabs(a[p][i]) < 1e-12) return 0;
+        if (p != i) {
+            double t;
+            for (j = 0; j < 4; j++) { t = a[i][j]; a[i][j] = a[p][j]; a[p][j] = t; }
+            t = b[i]; b[i] = b[p]; b[p] = t;
+        }
+        for (k = i + 1; k < 4; k++) {
+            double f = a[k][i] / a[i][i];
+            for (j = i; j < 4; j++) a[k][j] -= f * a[i][j];
+            b[k] -= f * b[i];
+        }
+    }
+    for (i = 3; i >= 0; i--) {
+        double t = b[i];
+        for (j = i + 1; j < 4; j++) t -= a[i][j] * x[j];
+        x[i] = t / a[i][i];
+    }
+    return 1;
+}
+
+/* Fit m->mat to the player's output in dest (A8R8G8B8, pitch). */
+static void movie_fit(Movie *m, const uint8_t *dest, uint32_t pitch)
+{
+    double ata[3][4][4], atb[3][4], x[4], err = 0.0;
+    int c, gx, gy, n = 0, i, j, w = m->dec->width, h = m->dec->height, bad_alpha = 0;
+    memset(ata, 0, sizeof ata);
+    memset(atb, 0, sizeof atb);
+    for (gy = 0; gy < 60; gy++)
+        for (gx = 0; gx < 80; gx++) {
+            int px = (gx * w) / 80 + w / 160, py = (gy * h) / 60 + h / 120;
+            const uint8_t *d = dest + (size_t)py * pitch + (size_t)px * 4;   /* B G R A */
+            double in[4], out[3];
+            in[0] = m->frame->data[0][(size_t)py * m->frame->linesize[0] + px] / 255.0;
+            in[1] = m->frame->data[1][(size_t)(py / 2) * m->frame->linesize[1] + px / 2] / 255.0;
+            in[2] = m->frame->data[2][(size_t)(py / 2) * m->frame->linesize[2] + px / 2] / 255.0;
+            in[3] = 1.0;
+            if (d[3] != 0xFF) bad_alpha++;
+            out[0] = d[2] / 255.0; out[1] = d[1] / 255.0; out[2] = d[0] / 255.0;
+            for (c = 0; c < 3; c++) {
+                if (d[2 - c] == 0 || d[2 - c] == 255)   /* clipped: says nothing */
+                    continue;
+                for (i = 0; i < 4; i++) {
+                    for (j = 0; j < 4; j++) ata[c][i][j] += in[i] * in[j];
+                    atb[c][i] += in[i] * out[c];
+                }
+            }
+            n++;
+        }
+    for (c = 0; c < 3; c++) {
+        if (!solve4(ata[c], atb[c], x)) { m->cal = -1; break; }
+        for (i = 0; i < 4; i++) m->mat[c * 4 + i] = (float)x[i];
+    }
+    if (m->cal != -1) {
+        /* how well it reproduces the player's pixels */
+        for (gy = 0; gy < 60; gy++)
+            for (gx = 0; gx < 80; gx++) {
+                int px = (gx * w) / 80 + w / 160, py = (gy * h) / 60 + h / 120;
+                const uint8_t *d = dest + (size_t)py * pitch + (size_t)px * 4;
+                double yv = m->frame->data[0][(size_t)py * m->frame->linesize[0] + px] / 255.0;
+                double uv = m->frame->data[1][(size_t)(py / 2) * m->frame->linesize[1] + px / 2] / 255.0;
+                double vv = m->frame->data[2][(size_t)(py / 2) * m->frame->linesize[2] + px / 2] / 255.0;
+                for (c = 0; c < 3; c++) {
+                    double v = m->mat[c * 4] * yv + m->mat[c * 4 + 1] * uv + m->mat[c * 4 + 2] * vv
+                             + m->mat[c * 4 + 3];
+                    double o = d[2 - c] / 255.0, e;
+                    v = v < 0 ? 0 : v > 1 ? 1 : v;
+                    e = (v - o) * 255.0;
+                    err += e * e;
+                }
+            }
+        err = sqrt(err / (n * 3.0));
+        m->cal = (err < 4.0 && bad_alpha < n / 20) ? 1 : -1;
+    }
+    fprintf(stderr, "[BINK] movie colours fitted: rms %.2f/255, alpha %s -> %s\n"
+            "       R %.3f %.3f %.3f %+.3f | G %.3f %.3f %.3f %+.3f | B %.3f %.3f %.3f %+.3f\n",
+            err, bad_alpha ? "varies" : "opaque",
+            m->cal == 1 ? "upscaled by the renderer" : "player's own copy kept",
+            m->mat[0], m->mat[1], m->mat[2], m->mat[3], m->mat[4], m->mat[5], m->mat[6], m->mat[7],
+            m->mat[8], m->mat[9], m->mat[10], m->mat[11]);
+}
+
+/* Around BinkCopyToBuffer(hbink, dest, pitch, height, x, y, flags).
+ * after = 0, before the player's copy: 1 = skip it (the renderer shows the
+ * upscaled frame). after = 1, once it ran: fit the colours on the first. */
+int mc3_bink_native_copy(uint32_t hbink, uint32_t dest_va, const uint8_t *dest,
+                         uint32_t pitch, uint32_t height, uint32_t x, uint32_t y, int after)
+{
+    Movie *m = find(hbink);
+    int w, h;
+    if (!m || !movie_hd() || !m->frame_ok || m->cal < 0)
+        return 0;
+    w = m->dec->width; h = m->dec->height;
+    if (x || y || pitch < (uint32_t)w * 4 || height < (uint32_t)h) {
+        m->cal = -1;                             /* not a plain 32-bit full-frame copy */
+        return 0;
+    }
+    if (after) {
+        if (m->cal == 0)
+            movie_fit(m, dest, pitch);
+        if (m->cal != 1)
+            return 0;
+    } else if (m->cal != 1) {
+        return 0;
+    }
+    m->dest = dest_va;
+    nv2a_gl_movie_frame(dest_va, (uint32_t)w, (uint32_t)h,
+                        m->frame->data[0], m->frame->linesize[0],
+                        m->frame->data[1], m->frame->linesize[1],
+                        m->frame->data[2], m->frame->linesize[2], m->mat);
+    if (!after) {
+        static int skip = -1;
+        if (skip < 0) {
+            const char *e = getenv("MC3_MOVIE_SKIP_COPY");
+            skip = !(e && *e == '0');
+        }
+        return skip && nv2a_gl_movie_shown && nv2a_gl_movie_shown(dest_va);
+    }
+    return 0;
+}
+
 #else  /* built without FFmpeg: the lifted decoder stays in charge */
 
 int  mc3_bink_native_enabled(void) { return 0; }
@@ -571,6 +734,9 @@ void mc3_bink_native_open(uint32_t hbink, const char *xbox_name) { (void)hbink; 
 int  mc3_bink_native_frame(uint32_t hbink, int frame, uint8_t *dest, int w, int h)
 { (void)hbink; (void)frame; (void)dest; (void)w; (void)h; return 0; }
 void mc3_bink_native_close(uint32_t hbink) { (void)hbink; }
+int  mc3_bink_native_copy(uint32_t hbink, uint32_t dest_va, const uint8_t *dest,
+                          uint32_t pitch, uint32_t height, uint32_t x, uint32_t y, int after)
+{ (void)hbink; (void)dest_va; (void)dest; (void)pitch; (void)height; (void)x; (void)y; (void)after; return 0; }
 void mc3_bink_native_audio(uint32_t hbink, int frame) { (void)hbink; (void)frame; }
 int  mc3_bink_native_audio_active(void) { return 0; }
 
