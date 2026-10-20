@@ -13,7 +13,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 SECS="${1:-${SECS:-45}}"
-BIN="${BIN:-$MC3_WORK/build-linux/mc3_recomp}"
+BIN="${BIN:-$MC3_WORK/build-linux/mcdub3}"
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (make build)"
 mc3_need_game
 command -v gdb >/dev/null || mc3_fail "gdb not installed (sudo apt install gdb)"

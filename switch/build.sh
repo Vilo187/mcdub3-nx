@@ -59,12 +59,12 @@ ninja -C "$BUILD" -j"$JOBS"
 
 DEST="$SD/switch/$MC3_SD_DIR"
 mkdir -p "$DEST"
-cp "$BUILD/mc3_recomp.nro" "$DEST/$NRO_NAME.nro"
+cp "$BUILD/mcdub3.nro" "$DEST/$NRO_NAME.nro"
 # Keep the ELF of every staged NRO, by hash: crash offsets in a console log
 # only resolve against the exact build that wrote it.
 mkdir -p "$MC3_WORK/elf"
 ELF_KEEP="$MC3_WORK/elf/$NRO_NAME-$(md5sum "$DEST/$NRO_NAME.nro" | cut -c1-8).elf"
-cp "$BUILD/mc3_recomp.elf" "$ELF_KEEP"
+cp "$BUILD/mcdub3.elf" "$ELF_KEEP"
 if [ "${NO_GAME:-0}" != "1" ]; then
     mc3_need_game
     # The disc is gigabytes: hard-link it from $MC3_GAME_DIR instead of

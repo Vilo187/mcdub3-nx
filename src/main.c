@@ -150,7 +150,7 @@ static void crash_signal(int sig, siginfo_t *si, void *uc)
     raise(sig);
 }
 
-/* `pkill -USR1 mc3_recomp` from another terminal: the watchdog's snapshot of
+/* `pkill -USR1 mcdub3` from another terminal: the watchdog's snapshot of
  * the main guest thread (registers, indirect-call trail, stack for
  * tools/stackwalk.py) while the game keeps running. For a hang: freeze it,
  * then ask where it is. A diagnostic, so stdio in a handler is accepted. */
