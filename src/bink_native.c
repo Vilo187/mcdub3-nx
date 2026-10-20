@@ -72,7 +72,12 @@ typedef struct {
     int              frame_ok;  /* m->frame is the frame Bink is showing */
     int              cal;       /* colour matrix: 0 not yet, 1 fitted, -1 unusable */
     float            mat[12];   /* R, G, B rows over (Y, U, V, 1), all 0..1 */
+    float            alpha;     /* the constant alpha the player writes, 0..1 */
     uint32_t         dest;      /* the title's texture (BinkCopyToBuffer) */
+    uint8_t         *dest_host; /* ... in host memory, and its pitch */
+    uint32_t         dest_pitch;
+    int              skipped;   /* the player's copy was skipped since it last ran */
+    int              fit_tries; /* frames looked at for the colour fit */
 } Movie;
 
 /* ── Movies shown as they are, not filled to 16:9 ──
@@ -81,19 +86,22 @@ typedef struct {
  * (nv2a_gl RECOMP_GL_FILL). For the boot movies -- the Rockstar and Rockstar
  * San Diego logos and the intro -- the original framing looked better
  * (2026-10-18), so while one of them plays the fill is held off.
- * MC3_FILL_SKIP: comma-separated name stems (default
- * "rockstar,sdlogo,mc3intro"; empty: fill everything). Weak, so a build
+ * MC3_FILL_SKIP: comma-separated name stems, e.g. "rockstar,sdlogo,mc3intro"
+ * (default empty: everything filled to 16:9, as preferred 2026-10-20);
+ * "legal" holds the legal screen too, recomp_manual.c sub_0001B500, not
+ * reliable (other loading screens switch shape halfway). Weak, so a build
  * without the GL renderer still links. */
 extern void nv2a_gl_fill_hold(int delta) __attribute__((weak));
 extern void nv2a_gl_movie_frame(uint32_t va, uint32_t w, uint32_t h,
                                 const uint8_t *y, int ys, const uint8_t *u, int us,
-                                const uint8_t *v, int vs, const float m[12]) __attribute__((weak));
+                                const uint8_t *v, int vs, const float m[12],
+                                float alpha) __attribute__((weak));
 extern void nv2a_gl_movie_end(uint32_t va) __attribute__((weak));
 extern int  nv2a_gl_movie_shown(uint32_t va) __attribute__((weak));
 
 static int fill_skip(const char *xbox_name)
 {
-    const char *e = getenv("MC3_FILL_SKIP"), *list = e ? e : "rockstar,sdlogo,mc3intro";
+    const char *e = getenv("MC3_FILL_SKIP"), *list = e ? e : "";
     const char *base = xbox_name, *p;
     size_t n;
     for (p = xbox_name; *p; p++)
@@ -397,8 +405,12 @@ static Movie *find(uint32_t hbink)
     return NULL;
 }
 
+static void movie_flush(Movie *m);
+
 static void release(Movie *m)
 {
+    if (m->skipped)
+        movie_flush(m);
     if (m->nofill && nv2a_gl_fill_hold)
         nv2a_gl_fill_hold(-1);
     if (m->dest && nv2a_gl_movie_end)
@@ -631,7 +643,7 @@ static int solve4(double a[4][4], double b[4], double x[4])
 static void movie_fit(Movie *m, const uint8_t *dest, uint32_t pitch)
 {
     double ata[3][4][4], atb[3][4], x[4], err = 0.0;
-    int c, gx, gy, n = 0, i, j, w = m->dec->width, h = m->dec->height, bad_alpha = 0;
+    int c, gx, gy, n = 0, i, j, w = m->dec->width, h = m->dec->height, bad_alpha = 0, a0 = -1;
     memset(ata, 0, sizeof ata);
     memset(atb, 0, sizeof atb);
     for (gy = 0; gy < 60; gy++)
@@ -643,7 +655,8 @@ static void movie_fit(Movie *m, const uint8_t *dest, uint32_t pitch)
             in[1] = m->frame->data[1][(size_t)(py / 2) * m->frame->linesize[1] + px / 2] / 255.0;
             in[2] = m->frame->data[2][(size_t)(py / 2) * m->frame->linesize[2] + px / 2] / 255.0;
             in[3] = 1.0;
-            if (d[3] != 0xFF) bad_alpha++;
+            if (a0 < 0) a0 = d[3];             /* alpha must be one value throughout */
+            else if (d[3] != a0) bad_alpha++;
             out[0] = d[2] / 255.0; out[1] = d[1] / 255.0; out[2] = d[0] / 255.0;
             for (c = 0; c < 3; c++) {
                 if (d[2 - c] == 0 || d[2 - c] == 255)   /* clipped: says nothing */
@@ -655,6 +668,21 @@ static void movie_fit(Movie *m, const uint8_t *dest, uint32_t pitch)
             }
             n++;
         }
+    /* A frame with too little in it (movies open on black) says nothing
+     * about the matrix: stay unfitted and try the next frame, for up to
+     * ~10 s of movie; Bink keeps copying meanwhile. */
+    for (c = 0; c < 3; c++) {
+        double cnt = ata[c][3][3], my = cnt > 0 ? ata[c][0][3] / cnt : 0.0;
+        double vy = cnt > 0 ? ata[c][0][0] / cnt - my * my : 0.0;   /* luma variance */
+        if (cnt >= 800.0 && vy >= (12.0 / 255.0) * (12.0 / 255.0))
+            continue;
+        if (++m->fit_tries >= 300) {
+            m->cal = -1;
+            fprintf(stderr, "[BINK] movie colours: no frame to fit in %d tries -> player's own copy kept\n",
+                    m->fit_tries);
+        }
+        return;
+    }
     for (c = 0; c < 3; c++) {
         if (!solve4(ata[c], atb[c], x)) { m->cal = -1; break; }
         for (i = 0; i < 4; i++) m->mat[c * 4 + i] = (float)x[i];
@@ -678,14 +706,46 @@ static void movie_fit(Movie *m, const uint8_t *dest, uint32_t pitch)
                 }
             }
         err = sqrt(err / (n * 3.0));
-        m->cal = (err < 4.0 && bad_alpha < n / 20) ? 1 : -1;
+        m->cal = (err < 4.0 && bad_alpha == 0) ? 1 : -1;
+        m->alpha = (a0 < 0 ? 255 : a0) / 255.0f;
     }
-    fprintf(stderr, "[BINK] movie colours fitted: rms %.2f/255, alpha %s -> %s\n"
+    fprintf(stderr, "[BINK] movie colours fitted: rms %.2f/255, alpha %s%d -> %s\n"
             "       R %.3f %.3f %.3f %+.3f | G %.3f %.3f %.3f %+.3f | B %.3f %.3f %.3f %+.3f\n",
-            err, bad_alpha ? "varies" : "opaque",
+            err, bad_alpha ? "varies, first " : "constant ", a0,
             m->cal == 1 ? "upscaled by the renderer" : "player's own copy kept",
             m->mat[0], m->mat[1], m->mat[2], m->mat[3], m->mat[4], m->mat[5], m->mat[6], m->mat[7],
             m->mat[8], m->mat[9], m->mat[10], m->mat[11]);
+}
+
+/* The movie closes with the player's copy skipped: the title's texture
+ * still holds an old frame, and the title may draw it after the movie --
+ * MC3's legal screen shows the intro's last frame (the MC3 logo) under its
+ * text, and showed a stale one, dim and behind the text (2026-10-19). Write
+ * the last frame there once, as the player would have, with the fitted
+ * matrix and alpha. */
+static void movie_flush(Movie *m)
+{
+    int w, h, x, y, c;
+    if (!m->dest_host || m->cal != 1 || !m->frame || !m->frame->data[0])
+        return;
+    w = m->dec->width; h = m->dec->height;
+    for (y = 0; y < h; y++) {
+        const uint8_t *py = m->frame->data[0] + (size_t)y * m->frame->linesize[0];
+        const uint8_t *pu = m->frame->data[1] + (size_t)(y / 2) * m->frame->linesize[1];
+        const uint8_t *pv = m->frame->data[2] + (size_t)(y / 2) * m->frame->linesize[2];
+        uint8_t *d = m->dest_host + (size_t)y * m->dest_pitch;
+        for (x = 0; x < w; x++) {
+            float in[3] = { py[x] / 255.0f, pu[x / 2] / 255.0f, pv[x / 2] / 255.0f };
+            for (c = 0; c < 3; c++) {
+                const float *r = &m->mat[c * 4];
+                float v = r[0] * in[0] + r[1] * in[1] + r[2] * in[2] + r[3];
+                int b = (int)(v * 255.0f + 0.5f);
+                d[x * 4 + 2 - c] = (uint8_t)(b < 0 ? 0 : b > 255 ? 255 : b);   /* B G R */
+            }
+            d[x * 4 + 3] = (uint8_t)(m->alpha * 255.0f + 0.5f);
+        }
+    }
+    m->skipped = 0;
 }
 
 /* Around BinkCopyToBuffer(hbink, dest, pitch, height, x, y, flags).
@@ -712,17 +772,24 @@ int mc3_bink_native_copy(uint32_t hbink, uint32_t dest_va, const uint8_t *dest,
         return 0;
     }
     m->dest = dest_va;
+    m->dest_host = (uint8_t *)dest;
+    m->dest_pitch = pitch;
+    if (after)
+        m->skipped = 0;                          /* the player's copy just ran */
     nv2a_gl_movie_frame(dest_va, (uint32_t)w, (uint32_t)h,
                         m->frame->data[0], m->frame->linesize[0],
                         m->frame->data[1], m->frame->linesize[1],
-                        m->frame->data[2], m->frame->linesize[2], m->mat);
+                        m->frame->data[2], m->frame->linesize[2], m->mat, m->alpha);
     if (!after) {
         static int skip = -1;
         if (skip < 0) {
             const char *e = getenv("MC3_MOVIE_SKIP_COPY");
             skip = !(e && *e == '0');
         }
-        return skip && nv2a_gl_movie_shown && nv2a_gl_movie_shown(dest_va);
+        if (skip && nv2a_gl_movie_shown && nv2a_gl_movie_shown(dest_va)) {
+            m->skipped = 1;
+            return 1;
+        }
     }
     return 0;
 }
