@@ -16,7 +16,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 SECS="${1:-${SECS:-40}}"
-BIN="${BIN:-$MC3_WORK/build-linux/mc3_recomp}"
+BIN="${BIN:-$MC3_WORK/build-linux/mcdub3}"
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (make build)"
 mc3_need_game
 command -v perf >/dev/null && perf --version >/dev/null 2>&1 \

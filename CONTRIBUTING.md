@@ -8,7 +8,7 @@ day-to-day loop. Decisions and their reasons: [docs/decisions/](docs/decisions/)
 
 ```
 STAGE 1: LIFT (Python)                            STAGE 2: BUILD (C)
-game/default.xbe ─► xboxrecomp/tools ─► work/gen/*.c ─► CMake + GCC ─► work/build-linux/mc3_recomp
+game/default.xbe ─► xboxrecomp/tools ─► work/gen/*.c ─► CMake + GCC ─► work/build-linux/mcdub3
  (x86 machine code)  parse, disassemble,  (the game as C)  + src/*.c          or devkitA64 ─► .nro (Switch)
                      identify, translate                   + toolkit runtime
 ```
@@ -76,7 +76,7 @@ time:
           │    src/main.c, src/switch_nx.c  boot, data patches, platform glue
           │    xboxrecomp/src/              the runtime: the "Xbox hardware"
           ▼
-   mc3_recomp / .nro
+   mcdub3 / .nro
 ```
 
 How each kind of change is applied:
@@ -237,9 +237,9 @@ mcdub3-nx/
     │   └── recomp_types.h                  copy of the toolkit's register model
     ├── build-linux/          [generated] stage-2 build tree (make build): CMake/Ninja files,
     │   │                       object files for gen/, src/ and the toolkit runtime
-    │   └── mc3_recomp          the Linux executable
+    │   └── mcdub3          the Linux executable
     ├── build-linux-vk/, build-linux-dbg/      variants (VULKAN=1, DEBUG=1)
-    ├── build-switch/, build-switch-vk/        Switch build trees (make switch); mc3_recomp.elf -> mcdub3.nro
+    ├── build-switch/, build-switch-vk/        Switch build trees (make switch); mcdub3.elf -> mcdub3.nro
     ├── switch_sd/            [generated] SD-card staging: switch/mcdub3-nx/{mcdub3.nro, game/}
     ├── elf/                  [generated] one ELF per staged NRO, to resolve console crash addresses
     ├── save/                 [generated] the title's drive letters (T:, U:, Z:) and partition images

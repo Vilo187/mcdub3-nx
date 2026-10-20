@@ -8,7 +8,7 @@ cmake_minimum_required(VERSION 3.20)
 # Layout and workflow: README.md, CLAUDE.md, docs/decisions/.
 # ============================================================================
 
-project(mc3_recomp C)
+project(mcdub3 C)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)

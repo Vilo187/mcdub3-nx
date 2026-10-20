@@ -17,7 +17,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 SUFFIX=""
 [ "${VULKAN:-0}" = "1" ] && SUFFIX="-vk"
 [ "${DEBUG:-0}" = "1" ] && SUFFIX="$SUFFIX-dbg"
-BIN="${BIN:-$MC3_WORK/build-linux$SUFFIX/mc3_recomp}"
+BIN="${BIN:-$MC3_WORK/build-linux$SUFFIX/mcdub3}"
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (tools/build_linux.sh)"
 # A run of a stale binary looks exactly like the fix did not work.
 STALE=$(find "$MC3_REPO/src" "$MC3_REPO/config" "$XBOXRECOMP_DIR/src" "$MC3_GEN_DIR" \

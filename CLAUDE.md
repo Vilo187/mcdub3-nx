@@ -191,7 +191,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   thread at work) the main thread waited 66-75% of the time in short waits,
   4 fps. Uncontended lock calls (mutant/critical section) now keep the lock;
   console measurement pending. `MC3_PERF=<s>` reports lock waits, CPU per
-  thread (Switch), APU pacing; `pkill -USR1 mc3_recomp` snapshots the main
+  thread (Switch), APU pacing; `pkill -USR1 mcdub3` snapshots the main
   thread's stack (`tools/stackwalk.py`).
 - Frame pacing (fixed 2026-10-18): the first flythrough (1.55 s vs 5.5 s on
   hardware), menus and garage ran 2-4x fast on Linux, with every clock and
@@ -225,7 +225,7 @@ TODO.md.
   smoke-tested on the toolkit's test XBE.
 - 2026-10-14: disc in `game/`; XBE parsed and fully lifted in the VM (above).
 - 2026-10-14: first Linux build OK on Ubuntu 22.04 ARM64 / GCC 11: all 87
-  lifted chunks + runtime link into `work/build-linux/mc3_recomp` (39 MB
+  lifted chunks + runtime link into `work/build-linux/mcdub3` (39 MB
   aarch64 ELF). Only warnings, all in the toolkit (printf `%lu` vs `DWORD`,
   `-Wnonnull` on `XBOX_TO_NATIVE`, comments, unused code). Next: first run.
 - 2026-10-17: music and sound in menus, garage and races; cars drawn; race view
