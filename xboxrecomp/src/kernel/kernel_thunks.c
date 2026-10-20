@@ -408,8 +408,16 @@ void xbox_kernel_init(void)
         const char *nl = getenv("RECOMP_NO_LOG");
         if (nl && *nl == '1')
             g_log_level = -1;
+#if defined(__SWITCH__)
+        /* Not on the SD card unless asked (RECOMP_KERNEL_LOG_FILE=1): the
+         * truncating open plus a flush per line took 1.16 s of MC3's boot
+         * (2026-10-19, [BOOT] markers); stderr is the RAM-backed log. */
+        else if ((nl = getenv("RECOMP_KERNEL_LOG_FILE")) && *nl == '1')
+            g_log_file = fopen("xbox_kernel.log", "w");
+#else
         else
             g_log_file = fopen("xbox_kernel.log", "w");
+#endif
     }
 
     /* Set log level from environment variable if present */
