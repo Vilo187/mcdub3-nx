@@ -635,6 +635,7 @@ int xbox_thread_holds_dispatch(void);     /* kernel_hal.c */
  * ISRs and DPCs are never pre-empted (t_gil_nopreempt), as before. */
 static RECOMP_TLS int t_gil_main;
 void xbox_gil_mark_main(void) { t_gil_main = 1; s_gil_main_tid = GetCurrentThreadId(); }
+int  xbox_gil_is_main(void) { return t_gil_main; }
 
 static int gil_eager(void)
 {

@@ -12,6 +12,7 @@
  */
 
 #include "kernel.h"
+#include "xbox_memory_layout.h"
 #include <stdio.h>
 #include <stdlib.h>
 #if defined(_WIN32)
@@ -203,6 +204,32 @@ int xbox_thread_holds_dispatch(void) { return t_dispatch_held; }
 int  xbox_gil_suspend(void);
 void xbox_gil_resume(int depth);
 
+/* The IRQL as the title reads it: KPCR.Irql, fs:[0x24].
+ *
+ * IRQL is kept in g_current_irql for the one emulated CPU, but code reads
+ * it from fs:[0x24], which stayed 0 on every thread. DirectSound decides
+ * there whether to take its critical section (0x0038A3B5: at DISPATCH it
+ * does not -- nothing else can run on the one CPU). So D3D's vblank handler,
+ * run at DISPATCH on the interrupt thread, took DirectSound's lock while the
+ * main thread held it and was raising IRQL (waiting for the dispatch lock
+ * the interrupt thread held): MC3 froze mid-race (2026-10-20). Each thread
+ * with a TIB of its own (worker, timer/DPC, USB) and the main thread now
+ * see their own IRQL there; a thread sharing the main TIB is left alone.
+ * RECOMP_IRQL_KPCR=0 turns it off. */
+int xbox_gil_is_main(void);                 /* kernel_bridge.c */
+static void irql_publish(KIRQL to)
+{
+    static int on = -1;
+    uint32_t fs = g_fs_base;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_IRQL_KPCR");
+        on = !(e && *e == '0');
+    }
+    if (!on || !fs || (fs == XBOX_TIB_MAIN && !xbox_gil_is_main()))
+        return;
+    *(volatile uint8_t *)((uintptr_t)fs + 0x24 + xbox_GetMemoryOffset()) = (uint8_t)to;
+}
+
 static void irql_transition(KIRQL from, KIRQL to)
 {
     InitOnceExecuteOnce(&g_dispatch_once, dispatch_lock_init, NULL, NULL);
@@ -231,6 +258,7 @@ static void irql_transition(KIRQL from, KIRQL to)
         t_dispatch_held = 0;
         LeaveCriticalSection(&g_dispatch_lock);
     }
+    irql_publish(to);
 }
 
 KIRQL xbox_CurrentIrql(void) { return g_current_irql; }
