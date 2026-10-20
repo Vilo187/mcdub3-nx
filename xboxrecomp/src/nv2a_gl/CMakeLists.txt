@@ -16,6 +16,9 @@ target_include_directories(xbox_nv2a_gl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 if(NINTENDO_SWITCH)
     find_package(SDL2 REQUIRED)
     target_link_libraries(xbox_nv2a_gl PUBLIC SDL2::SDL2)
+    # EGL (Mesa, portlibs): the compile thread's shared context (nv2a_gl.c).
+    # SDL2's include path is portlibs/include/SDL2; EGL/ sits one level up.
+    target_include_directories(xbox_nv2a_gl PRIVATE "$ENV{DEVKITPRO}/portlibs/switch/include")
 else()
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SDL2 REQUIRED IMPORTED_TARGET sdl2)
