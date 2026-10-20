@@ -416,6 +416,8 @@ typedef struct {
     uint32_t used, checked;
     uint32_t levels;                    /* mip levels the title gave it */
     uint32_t mips;                      /* levels the GL texture holds */
+    GLuint   hd;                        /* 2x copy for UI art (ui_upscale) */
+    uint32_t hd_hash;                   /* ... made from this content */
 } GlTex;
 
 #define GL_MAX_TEX 1024
@@ -698,7 +700,7 @@ static GlTex *s_tex_cur;                     /* what tex_get returned last */
 static GLuint tex_done(GlTex *t)
 {
     s_tex_cur = t;
-    return t->tex;
+    return t->hd && t->hd_hash == t->hash ? t->hd : t->tex;
 }
 
 static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
@@ -741,6 +743,8 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
         t = victim;
         if (t->tex) {
             glDeleteTextures(1, &t->tex);
+            if (t->hd)
+                glDeleteTextures(1, &t->hd);
             tex_bind_forget();
             s_tex_bytes -= t->bytes;
             tex_index_del(t);
@@ -853,6 +857,144 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
                     va, color);
     }
     return tex_done(t);
+}
+
+/* ── UI art upscaled once on the GPU ─────────────────────────────────
+ *
+ * The HUD (speedometer and tachometer dials, minimap frame, digits) and
+ * menu art are small single-level textures sized for a 480-line TV -- MC3's
+ * dials are 128x128 and 256x256 palettised images drawn ~108 title pixels
+ * wide (2026-10-20) -- so at 1.5x with square pixels they were stretched
+ * ~1.7x bilinearly: soft. Such a texture gets, once per content, a copy
+ * RECOMP_GL_UI_SCALE times larger (default 2, 1 = off) made by one GPU
+ * pass: Catmull-Rom on premultiplied colour (no dark fringes at alpha
+ * edges), clamped. Draws then sample the copy (tex_done). Which textures:
+ * one mip level, not linear (movies, CPU-drawn images), 16..256 a side,
+ * DXT only up to 64x64 (digits; bigger single-level DXT is world art).
+ * Made before the draw binds its surface (stage_prepare). */
+static GLuint compile(GLenum type, const char *const *src, int n);
+static GLuint s_ui_prog, s_ui_vao, s_ui_fbo;
+static GLint  s_ui_usz;
+static int    s_ui_scale = -1;
+
+static int ui_eligible(const GlTex *t)
+{
+    if (s_ui_scale < 0) {
+        const char *e = getenv("RECOMP_GL_UI_SCALE");
+        s_ui_scale = e ? atoi(e) : 2;
+        if (s_ui_scale < 1) s_ui_scale = 1;
+        if (s_ui_scale > 4) s_ui_scale = 4;
+        fprintf(stderr, "  [GL] UI art upscaled %dx (RECOMP_GL_UI_SCALE)\n", s_ui_scale);
+    }
+    if (s_ui_scale <= 1 || t->levels > 1 || t->pitch)       /* pitch: linear */
+        return 0;
+    if (t->w < 16 || t->h < 16 || t->w > 256 || t->h > 256)
+        return 0;
+    if ((t->color == 0x0C || t->color == 0x0E || t->color == 0x0F) && t->w * t->h > 64 * 64)
+        return 0;
+    return 1;
+}
+
+static int ui_prog_init(void)
+{
+    static const char *vs[1] = {
+        "#version 330 core\n"
+        "void main() {\n"
+        "    vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));\n"
+        "    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
+        "}\n" };
+    static const char *fs[1] = {
+        "#version 330 core\n"
+        "uniform sampler2D u_src;\n"
+        "uniform vec4 u_sz;            /* out w, h; source w, h */\n"
+        "out vec4 o;\n"
+        "vec4 cr(float t) {\n"
+        "    float t2 = t * t, t3 = t2 * t;\n"
+        "    return vec4(-0.5 * t3 + t2 - 0.5 * t, 1.5 * t3 - 2.5 * t2 + 1.0,\n"
+        "                -1.5 * t3 + 2.0 * t2 + 0.5 * t, 0.5 * t3 - 0.5 * t2);\n"
+        "}\n"
+        "void main() {\n"
+        "    vec2 p = gl_FragCoord.xy / u_sz.xy * u_sz.zw - 0.5, f = fract(p);\n"
+        "    ivec2 b = ivec2(floor(p)) - 1, mx = ivec2(u_sz.zw) - 1;\n"
+        "    vec4 wx = cr(f.x), wy = cr(f.y), acc = vec4(0.0);\n"
+        "    for (int j = 0; j < 4; j++)\n"
+        "        for (int i = 0; i < 4; i++) {\n"
+        "            vec4 c = texelFetch(u_src, clamp(b + ivec2(i, j), ivec2(0), mx), 0);\n"
+        "            acc += wx[i] * wy[j] * vec4(c.rgb * c.a, c.a);   /* premultiplied */\n"
+        "        }\n"
+        "    float a = clamp(acc.a, 0.0, 1.0);\n"
+        "    o = vec4(a > 0.0 ? clamp(acc.rgb / max(acc.a, 1e-4), 0.0, 1.0) : vec3(0.0), a);\n"
+        "}\n" };
+    GLuint v, f;
+    GLint ok = 0;
+    if (s_ui_prog)
+        return 1;
+    v = compile(GL_VERTEX_SHADER, vs, 1);
+    f = compile(GL_FRAGMENT_SHADER, fs, 1);
+    if (!v || !f) { s_ui_scale = 1; return 0; }
+    s_ui_prog = glCreateProgram();
+    glAttachShader(s_ui_prog, v);
+    glAttachShader(s_ui_prog, f);
+    glLinkProgram(s_ui_prog);
+    glDeleteShader(v);
+    glDeleteShader(f);
+    glGetProgramiv(s_ui_prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        fprintf(stderr, "  [GL] UI upscale link failed: UI art as is\n");
+        glDeleteProgram(s_ui_prog);
+        s_ui_prog = 0;
+        s_ui_scale = 1;
+        return 0;
+    }
+    glUseProgram(s_ui_prog);
+    s_cur_prog = s_ui_prog;
+    glUniform1i(glGetUniformLocation(s_ui_prog, "u_src"), 0);
+    s_ui_usz = glGetUniformLocation(s_ui_prog, "u_sz");
+    glGenVertexArrays(1, &s_ui_vao);
+    glGenFramebuffers(1, &s_ui_fbo);
+    return 1;
+}
+
+/* t was just looked up for a draw: make or refresh its upscaled copy. */
+static void ui_upscale(GlTex *t)
+{
+    uint32_t ow, oh;
+    float sz[4];
+    if ((t->hd && t->hd_hash == t->hash) || !ui_eligible(t) || !ui_prog_init())
+        return;
+    ow = t->w * (uint32_t)s_ui_scale;
+    oh = t->h * (uint32_t)s_ui_scale;
+    if (!t->hd) {
+        glGenTextures(1, &t->hd);
+        tex_param_forget(t->hd);
+        glBindTexture(GL_TEXTURE_2D, t->hd);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)ow, (GLsizei)oh, 0,
+                     GL_BGRA, GL_UNSIGNED_BYTE, NULL);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        tex_account(t, ow * oh * 4);
+    }
+    glBindFramebuffer(GL_FRAMEBUFFER, s_ui_fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->hd, 0);
+    glViewport(0, 0, (GLsizei)ow, (GLsizei)oh);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
+    glDisable(GL_BLEND);
+    glDisable(GL_SCISSOR_TEST);
+    glDisable(GL_CULL_FACE);
+    glColorMask(1, 1, 1, 1);
+    glUseProgram(s_ui_prog);
+    s_cur_prog = s_ui_prog;
+    sz[0] = (float)ow; sz[1] = (float)oh; sz[2] = (float)t->w; sz[3] = (float)t->h;
+    glUniform4fv(s_ui_usz, 1, sz);
+    active_unit(0);
+    bind_tex(t->tex);
+    glBindVertexArray(s_ui_vao);
+    glDrawArrays(GL_TRIANGLES, 0, 3);
+    glBindVertexArray(s_vao);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    state_dirty();
+    t->hd_hash = t->hash;
+    s_new_obj = 1;
 }
 
 static GLint wrap_mode(uint32_t m)
@@ -1053,6 +1195,7 @@ typedef struct {
     uint8_t *pl[3];
     size_t   cap[3];
     float    m[12];
+    float    alpha;                          /* written as the title's player does */
     int      active;
     uint32_t shown;                          /* s_frame it was last drawn */
     GLuint   tp[3], out, fbo;
@@ -1061,7 +1204,7 @@ typedef struct {
 static MovieSlot       s_mv;
 static pthread_mutex_t s_mv_lock = PTHREAD_MUTEX_INITIALIZER;
 static GLuint          s_mv_prog, s_mv_vao;
-static GLint           s_mv_um, s_mv_usz;
+static GLint           s_mv_um, s_mv_usz, s_mv_ua;
 static int             s_mv_on = -1;
 static float           s_mv_scale = 2.0f;
 
@@ -1081,7 +1224,7 @@ static int movie_hd_on(void)
  * matrix applied to (Y, U, V, 1), all 0..1. */
 void nv2a_gl_movie_frame(uint32_t va, uint32_t w, uint32_t h,
                          const uint8_t *y, int ys, const uint8_t *u, int us,
-                         const uint8_t *v, int vs, const float m[12])
+                         const uint8_t *v, int vs, const float m[12], float alpha)
 {
     const uint8_t *src[3];
     int str[3], k;
@@ -1107,6 +1250,7 @@ void nv2a_gl_movie_frame(uint32_t va, uint32_t w, uint32_t h,
             memcpy(s_mv.pl[k] + (size_t)r * pw[k], src[k] + (size_t)r * str[k], pw[k]);
     }
     memcpy(s_mv.m, m, sizeof s_mv.m);
+    s_mv.alpha = alpha;
     s_mv.va = va; s_mv.w = w; s_mv.h = h;
     s_mv.seq++;
     s_mv.active = 1;
@@ -1146,6 +1290,7 @@ static int movie_prog_init(void)
         "uniform sampler2D u_y, u_u, u_v;\n"
         "uniform vec4 u_m[3];\n"
         "uniform vec4 u_sz;            /* out w, h; luma w, h */\n"
+        "uniform float u_alpha;\n"
         "out vec4 o;\n"
         "/* Catmull-Rom weights for the 4 taps around fraction t */\n"
         "vec4 cr(float t) {\n"
@@ -1166,7 +1311,7 @@ static int movie_prog_init(void)
         "        yv += wy[j] * row;\n"
         "    }\n"
         "    vec4 c = vec4(clamp(yv, 0.0, 1.0), texture(u_u, uv).r, texture(u_v, uv).r, 1.0);\n"
-        "    o = vec4(clamp(vec3(dot(u_m[0], c), dot(u_m[1], c), dot(u_m[2], c)), 0.0, 1.0), 1.0);\n"
+        "    o = vec4(clamp(vec3(dot(u_m[0], c), dot(u_m[1], c), dot(u_m[2], c)), 0.0, 1.0), u_alpha);\n"
         "}\n" };
     GLuint v, f;
     GLint ok = 0;
@@ -1199,6 +1344,7 @@ static int movie_prog_init(void)
     glUniform1i(glGetUniformLocation(s_mv_prog, "u_v"), 2);
     s_mv_um = glGetUniformLocation(s_mv_prog, "u_m");
     s_mv_usz = glGetUniformLocation(s_mv_prog, "u_sz");
+    s_mv_ua = glGetUniformLocation(s_mv_prog, "u_alpha");
     glGenVertexArrays(1, &s_mv_vao);
     fprintf(stderr, "  [GL] movies upscaled %gx on the GPU (RECOMP_GL_MOVIE_HD)\n", s_mv_scale);
     return 1;
@@ -1287,6 +1433,7 @@ static GLuint movie_prepare(uint32_t va, uint32_t color)
     glUniform4fv(s_mv_um, 3, s_mv.m);
     sz[0] = (float)s_mv.ow; sz[1] = (float)s_mv.oh; sz[2] = (float)s_mv.w; sz[3] = (float)s_mv.h;
     glUniform4fv(s_mv_usz, 1, sz);
+    glUniform1f(s_mv_ua, s_mv.alpha);
     glBindVertexArray(s_mv_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(s_vao);
@@ -1315,8 +1462,25 @@ static void depth_tex_prepare(const uint32_t *regs, const Nv2aRawBatch *b)
         if (s_mv.active
             && (s_movie_tex[i] = movie_prepare(b->tex_va[i], (regs[base + 1] >> 8) & 0xFF)) != 0)
             continue;
-        if (depth_as_color(b->tex_va[i], (regs[base + 1] >> 8) & 0xFF, 1, &d) && d)
+        if (depth_as_color(b->tex_va[i], (regs[base + 1] >> 8) & 0xFF, 1, &d) && d) {
             s_depth_tex[i] = d;
+            continue;
+        }
+        {   /* a swizzled single-level texture: upload it now and make its
+             * upscaled copy (ui_upscale) while no surface is bound yet */
+            uint32_t format = regs[base + 1], color = (format >> 8) & 0xFF;
+            if (s_ui_scale != 1 && tex_size_from_format(color) && ((format >> 16) & 0xF) <= 1) {
+                uint32_t w = 1u << ((format >> 20) & 0xF), h = 1u << ((format >> 24) & 0xF);
+                if (w >= 16 && h >= 16 && w <= 256 && h <= 256) {
+                    s_palette_reg = regs[base + 8];
+                    s_palette_va = b->pal_va[i];
+                    s_tex_cur = NULL;
+                    (void)tex_get(b->tex_va[i], color, w, h, 0, (format >> 16) & 0xF);
+                    if (s_tex_cur)
+                        ui_upscale(s_tex_cur);
+                }
+            }
+        }
     }
 }
 
@@ -1819,6 +1983,8 @@ static void prog_cache_prewarm_step(unsigned max)
                 s_pw_bad ? " (file ends in a bad record)" : "");
 }
 
+static int ct_start(const char *path, unsigned skip);
+
 static void prog_cache_prewarm(void)
 {
     const char *path = prog_cache_path(), *e = getenv("RECOMP_PROG_PREWARM");
@@ -1831,58 +1997,121 @@ static void prog_cache_prewarm(void)
     boot = prog_bin_init();
     if (e && !strcmp(e, "boot")) boot = 1;
     if (e && !strcmp(e, "defer")) boot = 0;
-    if (boot)
+    {
+        const char *t = getenv("RECOMP_GL_COMPILE_THREAD");
+        /* Opt-in: on the Switch (Mesa 20.1, nouveau) the renderer's and this
+         * context deadlocked inside Mesa at the first logo (2026-10-20). */
+        int ct = t && *t == '1';
+        if (ct && !(e && (!strcmp(e, "boot") || !strcmp(e, "defer")))) {
+            const char *h = getenv("RECOMP_PROG_PREWARM_HEAD");
+            unsigned head = h ? (unsigned)atoi(h) : 6;
+            if (head)
+                prog_cache_prewarm_step(head);   /* the first screens' programs, now */
+            if (s_pw_file && ct_start(path, head)) {
+                fclose(s_pw_file);
+                s_pw_file = NULL;
+                fprintf(stderr, "  [GL] shader programs from %s: %u now, the rest on a compile"
+                        " thread (RECOMP_GL_COMPILE_THREAD)\n", path, head);
+                return;
+            }
+            if (s_pw_file)
+                fprintf(stderr, "  [GL] compile thread unavailable: shader programs from %s:"
+                        " %u now, the rest %u a frame once the title starts it\n",
+                        path, head, s_pw_per_frame);
+            return;
+        }
+    }
+    if (boot) {
         prog_cache_prewarm_step(0);
-    else
-        fprintf(stderr, "  [GL] shader programs from %s compile later, %u a frame,"
-                " once the title starts it (nv2a_gl_prewarm_start)\n", path, s_pw_per_frame);
+    } else {
+        /* The list is in first-use order: its head is what the first
+         * screens draw (MC3: the Rockstar logo). Compiled now, during the
+         * black screen; compiled at the logo's first frame instead, the
+         * picture came ~0.2 s after its sound (2026-10-19).
+         * RECOMP_PROG_PREWARM_HEAD sets how many (default 6). */
+        const char *h = getenv("RECOMP_PROG_PREWARM_HEAD");
+        unsigned head = h ? (unsigned)atoi(h) : 6;
+        if (head)
+            prog_cache_prewarm_step(head);
+        fprintf(stderr, "  [GL] shader programs from %s: %u now, the rest later, %u a frame,"
+                " once the title starts it (nv2a_gl_prewarm_start)\n", path, head, s_pw_per_frame);
+    }
 }
 
-static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
+/* Generate, compile and link the program for (b, pk); 0 on failure. Any
+ * thread with a current context sharing objects with the renderer's (the
+ * compile thread uses its own buffers). bkey != 0: keep it retrievable. */
+static GLuint prog_build(const Nv2aRawBatch *b, const Nv2aPshKey *pk, uint64_t vkey,
+                         char *vbody, size_t vcap, char *fsrc, size_t fcap, uint64_t bkey)
 {
-    static uint32_t last_gen;
-    static uint64_t last_vkey;
-    static GlProg *last;
-    uint64_t vkey = 0;
-    uint32_t bucket;
-    GlProg *p = NULL, *victim = NULL;
-    static char vbody[256 * 1024], fsrc[64 * 1024];
     const char *vs[4];
-    int nvs = 0, i;
-    GLuint v, fr;
+    int nvs = 0;
+    GLuint v, fr, prog;
     GLint ok = 0;
-    uint64_t bkey = 0;
+    vs[nvs++] = nv2a_gl_vsh_prelude();
+    if (vkey) {
+        if (nv2a_gl_vsh_program(b->vp_program, b->vp_slots, b->vp_start, vbody, vcap) < 0)
+            return 0;
+        vs[nvs++] = vbody;
+        vs[nvs++] = nv2a_gl_vsh_main_program();
+    } else {
+        vs[nvs++] = nv2a_gl_vsh_fixed();
+    }
+    if (nv2a_gl_psh(pk, fsrc, fcap) < 0)
+        return 0;
+    v = compile(GL_VERTEX_SHADER, vs, nvs);
+    {
+        const char *fs[1] = { fsrc };
+        fr = compile(GL_FRAGMENT_SHADER, fs, 1);
+    }
+    if (!v || !fr) {
+        if (v) glDeleteShader(v);
+        if (fr) glDeleteShader(fr);
+        return 0;
+    }
+    prog = glCreateProgram();
+    glAttachShader(prog, v);
+    glAttachShader(prog, fr);
+    if (bkey && glProgramParameteri)
+        glProgramParameteri(prog, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
+    glLinkProgram(prog);
+    glDeleteShader(v);
+    glDeleteShader(fr);
+    glGetProgramiv(prog, GL_LINK_STATUS, &ok);
+    if (!ok) {
+        char log[2048];
+        glGetProgramInfoLog(prog, sizeof log, NULL, log);
+        fprintf(stderr, "  [GL] link failed: %s\n", log);
+        glDeleteProgram(prog);
+        return 0;
+    }
+    return prog;
+}
 
-    if (b->xform == 2) {
-        /* The program's hash walks up to 136 slots: redo it only when the
-         * executor says the program changed. */
-        if (b->vp_prog_gen != last_gen || !last_vkey) {
-            last_vkey = prog_hash(b);
-            last_gen = b->vp_prog_gen;
-        }
-        vkey = last_vkey;
-    }
-    /* Runs of draws share their program. */
-    if (last && last->prog && last->vkey == vkey && !memcmp(&last->pkey, pk, sizeof *pk)) {
-        last->used = s_frame;
-        return last;
-    }
-    bucket = prog_bucket(vkey, pk);
-    for (i = s_prog_head[bucket]; i; i = s_prog[i - 1].next) {
+static GlProg *prog_find(uint64_t vkey, const Nv2aPshKey *pk)
+{
+    int i;
+    for (i = s_prog_head[prog_bucket(vkey, pk)]; i; i = s_prog[i - 1].next) {
         GlProg *c = &s_prog[i - 1];
-        if (c->prog && c->vkey == vkey && !memcmp(&c->pkey, pk, sizeof *pk)) {
-            c->used = s_frame;
-            last = c;
+        if (c->prog && c->vkey == vkey && !memcmp(&c->pkey, pk, sizeof *pk))
             return c;
-        }
     }
+    return NULL;
+}
+
+/* Enter a linked program in the table (renderer thread), evicting the
+ * least recently used slot if full; sets its uniforms up. */
+static GlProg *prog_register(uint64_t vkey, const Nv2aPshKey *pk, GLuint prog)
+{
+    GlProg *p = NULL, *victim = NULL;
+    uint32_t bucket = prog_bucket(vkey, pk);
+    int i;
     for (i = 0; i < GL_MAX_PROG; i++) {
         GlProg *c = &s_prog[i];
         if (!c->prog) { if (!victim || victim->prog) victim = c; }
         else if (!victim || (victim->prog && c->used < victim->used)) victim = c;
     }
     p = victim;
-    last = NULL;
     if (p->prog)
         prog_unlink(p);
     if (p->prog) {
@@ -1895,64 +2124,15 @@ static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
         s_prog_live--;
     }
     memset(p, 0, sizeof *p);
-    if ((++s_prog_made % 100) == 0)
-        fprintf(stderr, "  [GL] %u shader programs compiled (%u live)\n",
-                s_prog_made, s_prog_live + 1);
-
-    if (prog_bin_init()) {
-        bkey = prog_bin_key(b, pk);
-        if ((p->prog = prog_bin_load(bkey)) != 0)
-            goto linked;
-    }
-    vs[nvs++] = nv2a_gl_vsh_prelude();
-    if (vkey) {
-        if (nv2a_gl_vsh_program(b->vp_program, b->vp_slots, b->vp_start,
-                                vbody, sizeof vbody) < 0)
-            return NULL;
-        vs[nvs++] = vbody;
-        vs[nvs++] = nv2a_gl_vsh_main_program();
-    } else {
-        vs[nvs++] = nv2a_gl_vsh_fixed();
-    }
-    if (nv2a_gl_psh(pk, fsrc, sizeof fsrc) < 0)
-        return NULL;
-    v = compile(GL_VERTEX_SHADER, vs, nvs);
-    {
-        const char *fs[1] = { fsrc };
-        fr = compile(GL_FRAGMENT_SHADER, fs, 1);
-    }
-    if (!v || !fr)
-        return NULL;
-    p->prog = glCreateProgram();
-    glAttachShader(p->prog, v);
-    glAttachShader(p->prog, fr);
-    if (bkey && glProgramParameteri)
-        glProgramParameteri(p->prog, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
-    glLinkProgram(p->prog);
-    glDeleteShader(v);
-    glDeleteShader(fr);
-    glGetProgramiv(p->prog, GL_LINK_STATUS, &ok);
-    if (!ok) {
-        char log[2048];
-        glGetProgramInfoLog(p->prog, sizeof log, NULL, log);
-        fprintf(stderr, "  [GL] link failed: %s\n", log);
-        glDeleteProgram(p->prog);
-        p->prog = 0;
-        return NULL;
-    }
-    if (bkey)
-        prog_bin_store(bkey, p->prog);
-linked:
+    p->prog = prog;
     s_prog_live++;
     s_new_obj = 1;
-    prog_cache_append(b, pk);
     p->vkey = vkey;
     p->pkey = *pk;
     p->used = s_frame;
     p->hash = bucket;
     p->next = s_prog_head[bucket];
     s_prog_head[bucket] = (int)(p - s_prog) + 1;
-    last = p;
     p->u_c = glGetUniformLocation(p->prog, "c");
     p->vpc_rows = p->u_c >= 0 && glGetUniformLocation(p->prog, "c[191]") == p->u_c + 191;
     p->u_surf = glGetUniformLocation(p->prog, "u_surf");
@@ -1981,12 +2161,253 @@ linked:
         if (p->u_t[i] >= 0)
             glUniform1i(p->u_t[i], i);
     }
+    return p;
+}
+
+static void ct_drain(void);
+
+static GlProg *prog_get(const Nv2aRawBatch *b, const Nv2aPshKey *pk)
+{
+    static uint32_t last_gen;
+    static uint64_t last_vkey;
+    static GlProg *last;
+    uint64_t vkey = 0;
+    GlProg *p = NULL;
+    static char vbody[256 * 1024], fsrc[64 * 1024];
+    GLuint prog;
+    uint64_t bkey = 0;
+
+    if (b->xform == 2) {
+        /* The program's hash walks up to 136 slots: redo it only when the
+         * executor says the program changed. */
+        if (b->vp_prog_gen != last_gen || !last_vkey) {
+            last_vkey = prog_hash(b);
+            last_gen = b->vp_prog_gen;
+        }
+        vkey = last_vkey;
+    }
+    /* Runs of draws share their program. */
+    if (last && last->prog && last->vkey == vkey && !memcmp(&last->pkey, pk, sizeof *pk)) {
+        last->used = s_frame;
+        return last;
+    }
+    if ((p = prog_find(vkey, pk)) != NULL) {
+        p->used = s_frame;
+        last = p;
+        return p;
+    }
+    ct_drain();                              /* the compile thread may have it */
+    if ((p = prog_find(vkey, pk)) != NULL) {
+        p->used = s_frame;
+        last = p;
+        return p;
+    }
+    last = NULL;
+    if ((++s_prog_made % 100) == 0)
+        fprintf(stderr, "  [GL] %u shader programs compiled (%u live)\n",
+                s_prog_made, s_prog_live + 1);
+    if (prog_bin_init()) {
+        bkey = prog_bin_key(b, pk);
+        if ((prog = prog_bin_load(bkey)) != 0)
+            goto linked;
+    }
+    prog = prog_build(b, pk, vkey, vbody, sizeof vbody, fsrc, sizeof fsrc, bkey);
+    if (!prog)
+        return NULL;
+    if (bkey)
+        prog_bin_store(bkey, prog);
+linked:
+    prog_cache_append(b, pk);
+    p = prog_register(vkey, pk, prog);
+    last = p;
     if (s_trace) {
         static int shown;
         if (shown++ < 4)
             fprintf(stderr, "  [GL] program %016llX linked\n", (unsigned long long)vkey);
     }
     return p;
+}
+
+/* ── The shader list compiled on a thread of its own ──────────────────
+ *
+ * Without program binaries (the Switch's Mesa 20.1) the remembered list
+ * has to be compiled at every start: ~108 programs, ~75 ms each. Behind the
+ * legal screen, one a frame, that was 59 hitches over 8 s (2026-10-20). A
+ * second GL context sharing objects with the renderer's now does it on a
+ * thread of its own: it generates, compiles and links each record, and the
+ * renderer enters finished programs into its table between frames
+ * (ct_drain) -- uniform look-ups only. A draw that needs a program not yet
+ * done compiles it itself, as before. RECOMP_GL_COMPILE_THREAD=1 turns it
+ * on; off by default: on the Switch (Mesa 20.1, nouveau) the two contexts
+ * deadlocked inside Mesa at the first logo (2026-10-20). On the Switch the context
+ * is made through EGL without a surface; elsewhere through SDL. */
+#if defined(__SWITCH__)
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+#endif
+
+typedef struct { uint64_t vkey; Nv2aPshKey pk; GLuint prog; } CtDone;
+static pthread_mutex_t s_ct_lock = PTHREAD_MUTEX_INITIALIZER;
+static CtDone  *s_ct_done;
+static unsigned s_ct_n, s_ct_cap, s_ct_skip;
+static volatile int s_ct_running;
+static char     s_ct_path[512];
+#if defined(__SWITCH__)
+static EGLDisplay s_ct_dpy;
+static EGLContext s_ct_ctx;
+#else
+static SDL_GLContext s_ct_ctx;
+#endif
+
+static void ct_push(uint64_t vkey, const Nv2aPshKey *pk, GLuint prog)
+{
+    pthread_mutex_lock(&s_ct_lock);
+    if (s_ct_n == s_ct_cap) {
+        unsigned cap = s_ct_cap ? s_ct_cap * 2 : 64;
+        CtDone *n = realloc(s_ct_done, cap * sizeof *n);
+        if (!n) { pthread_mutex_unlock(&s_ct_lock); return; }
+        s_ct_done = n;
+        s_ct_cap = cap;
+    }
+    s_ct_done[s_ct_n].vkey = vkey;
+    s_ct_done[s_ct_n].pk = *pk;
+    s_ct_done[s_ct_n].prog = prog;
+    s_ct_n++;
+    pthread_mutex_unlock(&s_ct_lock);
+}
+
+/* Renderer thread: enter what the compile thread finished. */
+static void ct_drain(void)
+{
+    CtDone batch[32];
+    unsigned n, i;
+    if (!s_ct_n)
+        return;
+    do {
+        pthread_mutex_lock(&s_ct_lock);
+        n = s_ct_n < 32 ? s_ct_n : 32;
+        memcpy(batch, s_ct_done, n * sizeof *batch);
+        memmove(s_ct_done, s_ct_done + n, (s_ct_n - n) * sizeof *batch);
+        s_ct_n -= n;
+        pthread_mutex_unlock(&s_ct_lock);
+        for (i = 0; i < n; i++) {
+            if (prog_find(batch[i].vkey, &batch[i].pk))
+                glDeleteProgram(batch[i].prog);  /* compiled here meanwhile */
+            else
+                (void)prog_register(batch[i].vkey, &batch[i].pk, batch[i].prog);
+        }
+    } while (n == 32);
+}
+
+static void *ct_main(void *arg)
+{
+    static char vbody[256 * 1024], fsrc[64 * 1024];
+    struct timespec t0, t1;
+    ProgRec rec;
+    unsigned idx = 0, made = 0;
+    FILE *f;
+    (void)arg;
+#if defined(__SWITCH__)
+    eglBindAPI(EGL_OPENGL_API);
+    if (!eglMakeCurrent(s_ct_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, s_ct_ctx)) {
+        fprintf(stderr, "  [GL] compile thread: eglMakeCurrent failed (0x%X)\n", eglGetError());
+        s_ct_running = 0;
+        return NULL;
+    }
+#else
+    if (SDL_GL_MakeCurrent(s_win, s_ct_ctx) != 0) {
+        fprintf(stderr, "  [GL] compile thread: %s\n", SDL_GetError());
+        s_ct_running = 0;
+        return NULL;
+    }
+#endif
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    if ((f = fopen(s_ct_path, "rb"))) {
+        while (fread(&rec, sizeof rec, 1, f) == 1) {
+            Nv2aRawBatch bb;
+            uint64_t vkey;
+            GLuint prog;
+            if (rec.magic != PROG_REC_MAGIC || rec.slots > 136)
+                break;
+            if (idx++ < s_ct_skip)               /* compiled at start-up */
+                continue;
+            memset(&bb, 0, sizeof bb);
+            bb.xform = rec.xform;
+            bb.vp_program = (const uint32_t (*)[4])rec.prog;
+            bb.vp_slots = rec.slots ? rec.slots : 136;
+            bb.vp_start = rec.vp_start;
+            vkey = bb.xform == 2 ? prog_hash(&bb) : 0;
+            prog = prog_build(&bb, &rec.pk, vkey, vbody, sizeof vbody, fsrc, sizeof fsrc, 0);
+            if (prog) {
+                glFinish();                      /* complete before the renderer uses it */
+                ct_push(vkey, &rec.pk, prog);
+                made++;
+            }
+        }
+        fclose(f);
+    }
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    fprintf(stderr, "  [GL] compile thread: %u shader programs from %s in %.0f ms\n", made, s_ct_path,
+            (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6);
+#if defined(__SWITCH__)
+    eglMakeCurrent(s_ct_dpy, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+#else
+    SDL_GL_MakeCurrent(s_win, NULL);
+#endif
+    s_ct_running = 0;
+    return NULL;
+}
+
+/* Renderer thread, context current: make the shared context and start the
+ * thread on the list at path, skipping its first `skip` records. */
+static int ct_start(const char *path, unsigned skip)
+{
+    pthread_t th;
+    snprintf(s_ct_path, sizeof s_ct_path, "%s", path);
+    s_ct_skip = skip;
+#if defined(__SWITCH__)
+    {
+        EGLContext cur = eglGetCurrentContext();
+        EGLint cfg_id = 0, n = 0, attr[16], k = 0;
+        EGLint want[] = { EGL_CONFIG_ID, 0, EGL_NONE };
+        EGLConfig cfg;
+        s_ct_dpy = eglGetCurrentDisplay();
+        if (!s_ct_dpy || cur == EGL_NO_CONTEXT
+                || !eglQueryContext(s_ct_dpy, cur, EGL_CONFIG_ID, &cfg_id))
+            return 0;
+        want[1] = cfg_id;
+        if (!eglChooseConfig(s_ct_dpy, want, &cfg, 1, &n) || n < 1)
+            return 0;
+        attr[k++] = EGL_CONTEXT_MAJOR_VERSION_KHR; attr[k++] = 3;
+        attr[k++] = EGL_CONTEXT_MINOR_VERSION_KHR; attr[k++] = 3;
+        attr[k++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
+        attr[k++] = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR;
+        attr[k++] = EGL_NONE;
+        eglBindAPI(EGL_OPENGL_API);
+        s_ct_ctx = eglCreateContext(s_ct_dpy, cfg, cur, attr);
+        if (s_ct_ctx == EGL_NO_CONTEXT) {
+            fprintf(stderr, "  [GL] compile thread: no shared context (0x%X)\n", eglGetError());
+            return 0;
+        }
+    }
+#else
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 1);
+    s_ct_ctx = SDL_GL_CreateContext(s_win);       /* makes it current here */
+    SDL_GL_SetAttribute(SDL_GL_SHARE_WITH_CURRENT_CONTEXT, 0);
+    if (!s_ct_ctx) {
+        fprintf(stderr, "  [GL] compile thread: no shared context: %s\n", SDL_GetError());
+        SDL_GL_MakeCurrent(s_win, s_ctx);
+        return 0;
+    }
+    SDL_GL_MakeCurrent(s_win, s_ctx);
+#endif
+    s_ct_running = 1;
+    if (pthread_create(&th, NULL, ct_main, NULL) != 0) {
+        s_ct_running = 0;
+        return 0;
+    }
+    pthread_detach(th);
+    return 1;
 }
 
 /* ── Context ──────────────────────────────────────────────────────── */
@@ -3300,15 +3721,36 @@ static int fxaa_init(void)
     return 1;
 }
 
+/* The present pass's program, compiled before the title draws (prepare):
+ * compiled at the first present it held back the first logo frame. */
+static void fxaa_init_early(void)
+{
+    (void)fxaa_init();
+    state_dirty();
+}
+
 /* Present s (sw stored columns drawn) into the window rectangle through
  * FXAA; 0 when it is off (the caller blits). Default framebuffer bound. */
 static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
 {
     float rcp[2], mx[2], full[4], crop[4], band[2];
     uint32_t vw = s->vw ? s->vw : s->w;
-    int fill = 0;
+    int fill = 0, held43 = 0;
     if (!fxaa_init())
         return 0;
+    /* Held (nv2a_gl_fill_hold: MC3's boot movies): a 4:3 picture the title
+     * centred in a widescreen frame is shown at its own 4:3 shape -- the
+     * middle 640 columns in a 4:3 rectangle -- not stretched with the
+     * frame to 16:9 (18% too wide for 720 columns). */
+    if (s_fill_hold > 0 && xbox_video_widescreen() && s->aa_sx <= 1 && vw > 640
+            && s->h >= 400) {
+        int nw = dh * 4 / 3;
+        if (nw < dw) {
+            dx += (dw - nw) / 2;
+            dw = nw;
+        }
+        held43 = 1;
+    }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
     glViewport(dx, dy, dw, dh);
     glDisable(GL_DEPTH_TEST);
@@ -3321,6 +3763,10 @@ static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
     rcp[0] = 1.0f / (float)s->pw;            rcp[1] = 1.0f / (float)s->ph;
     /* texture u of title column c is c / w (stored columns scale alike) */
     full[0] = 0.0f; full[1] = (float)vw / (float)s->w; full[2] = 0.0f; full[3] = 1.0f;
+    if (held43) {
+        full[0] = (float)(vw - 640) * 0.5f / (float)s->w;
+        full[1] = ((float)vw - (float)(vw - 640) * 0.5f) / (float)s->w;
+    }
     {
         /* RECOMP_GL_FILL (default on in 16:9): a widescreen frame wider
          * than 640 whose side bands are black -- MC3 lays its menus and
@@ -3408,6 +3854,7 @@ static void gl_flip(void)
     }
     if (s_pw_go && s_pw_file)
         prog_cache_prewarm_step(s_pw_per_frame);   /* the deferred list, a little a frame */
+    ct_drain();                                    /* what the compile thread finished */
     {
         /* RECOMP_FPS_LOG=1: presented frames per 10 s on stderr (the Switch
          * build has its own [perf] report). */
@@ -3941,9 +4388,11 @@ static Nv2aBackend s_backend_q = {
 };
 
 /* Window, context and the shader cache before the title draws (prepare). */
+static void fxaa_init_early(void);
 static void gl_prepare(void)
 {
-    (void)ready();
+    if (ready())
+        fxaa_init_early();
 }
 
 static const Nv2aBackend s_backend_gl = {
@@ -3958,8 +4407,15 @@ static const Nv2aBackend s_backend_gl = {
 void nv2a_gl_install(void)
 {
     {
+        /* Default on for the Switch: MC3's race went from 7 to 10-12 fps
+         * with it, the title's GPU wait from 370 to ~25 ms/s (2026-10-20). */
         const char *e = getenv("RECOMP_GL_THREAD");
-        s_q_on = e && *e == '1' && q_start();
+#if defined(__SWITCH__)
+        int want = !(e && *e == '0');
+#else
+        int want = e && *e == '1';
+#endif
+        s_q_on = want && q_start();
     }
     if (s_q_on) {
         nv2a_backend_register(&s_backend_q);
