@@ -10293,7 +10293,109 @@ static void bridge_block_end(int d)
     t_kernel_gil_kept = 1;
 }
 
+/* Where the main thread's time goes in kernel calls (MC3_PERF reports it,
+ * xbox_kernel_main_report): per (ordinal, guest return address), the time
+ * spent inside the call. A frame that takes far longer than the main
+ * thread's CPU time is a frame spent waiting -- on an event, a sleep, the
+ * GPU -- and this names the wait (MC3 races on the Switch: 7 fps with the
+ * main thread 29% busy, 2026-10-19). */
+/* The kernel call the main thread is inside right now (0: none), for a
+ * hang: a call that never returns never reaches kmw_add. */
+static volatile uint32_t s_main_call_ord, s_main_call_ret;
+static volatile int64_t  s_main_call_t0;
+
+#define KMW_SLOTS 64
+static struct { uint32_t ord, ret; uint64_t us, n; } s_kmw[KMW_SLOTS];
+static CRITICAL_SECTION s_kmw_cs;
+static volatile LONG s_kmw_init;
+
+static void kmw_add(uint32_t ord, uint32_t ret, uint64_t us)
+{
+    uint32_t h = (ord * 2654435761u ^ ret) % KMW_SLOTS, i;
+    if (InterlockedCompareExchange(&s_kmw_init, 1, 0) == 0) {
+        InitializeCriticalSection(&s_kmw_cs);
+        InterlockedExchange(&s_kmw_init, 2);
+    }
+    if (s_kmw_init != 2)
+        return;
+    EnterCriticalSection(&s_kmw_cs);
+    for (i = 0; i < KMW_SLOTS; i++, h = (h + 1) % KMW_SLOTS) {
+        if (s_kmw[h].n && (s_kmw[h].ord != ord || s_kmw[h].ret != ret))
+            continue;
+        s_kmw[h].ord = ord; s_kmw[h].ret = ret;
+        s_kmw[h].us += us; s_kmw[h].n++;
+        break;
+    }
+    LeaveCriticalSection(&s_kmw_cs);
+}
+
+/* Print the top entries since the last call (ms per second of the
+ * interval) and reset. */
+void xbox_kernel_main_report(double interval_s)
+{
+    int i, j, top[6], nt = 0;
+    uint64_t total = 0;
+    if (s_kmw_init != 2 || interval_s <= 0)
+        return;
+    EnterCriticalSection(&s_kmw_cs);
+    for (i = 0; i < KMW_SLOTS; i++)
+        total += s_kmw[i].us;
+    for (j = 0; j < 6; j++) {
+        int best = -1;
+        for (i = 0; i < KMW_SLOTS; i++) {
+            int k, used = 0;
+            for (k = 0; k < nt; k++) if (top[k] == i) used = 1;
+            if (!used && s_kmw[i].n && (best < 0 || s_kmw[i].us > s_kmw[best].us))
+                best = i;
+        }
+        if (best < 0) break;
+        top[nt++] = best;
+    }
+    fprintf(stderr, "[perf] main thread in kernel calls: %.0f ms/s; top:", total / 1000.0 / interval_s);
+    for (j = 0; j < nt; j++)
+        fprintf(stderr, " ord %u from %08X %.0f ms/s (%.0f calls/s)%s", s_kmw[top[j]].ord, s_kmw[top[j]].ret,
+                s_kmw[top[j]].us / 1000.0 / interval_s, s_kmw[top[j]].n / interval_s, j + 1 < nt ? "," : "");
+    fprintf(stderr, "\n");
+    memset(s_kmw, 0, sizeof s_kmw);
+    LeaveCriticalSection(&s_kmw_cs);
+    {
+        uint32_t ord = s_main_call_ord;
+        if (ord) {
+            LARGE_INTEGER now, f;
+            QueryPerformanceCounter(&now);
+            QueryPerformanceFrequency(&f);
+            if ((now.QuadPart - s_main_call_t0) * 1000 / f.QuadPart > 500)
+                fprintf(stderr, "[perf] main thread STUCK in kernel call ord %u from %08X for %lld ms\n",
+                        ord, s_main_call_ret,
+                        (long long)((now.QuadPart - s_main_call_t0) * 1000 / f.QuadPart));
+        }
+    }
+}
+
+static void kernel_thunk_dispatch_inner(void);
 static void kernel_thunk_dispatch(void)
+{
+    LARGE_INTEGER t0, t1, f;
+    uint32_t ret, ord;
+    int slot = g_kernel_dispatch_slot;
+    if (!t_gil_main || slot < 0 || slot >= XBOX_KERNEL_THUNK_TABLE_SIZE) {
+        kernel_thunk_dispatch_inner();
+        return;
+    }
+    ret = BRIDGE_MEM32(g_esp);
+    ord = g_slot_ordinals[slot];
+    QueryPerformanceCounter(&t0);
+    s_main_call_t0 = t0.QuadPart;
+    s_main_call_ret = ret;
+    s_main_call_ord = ord;
+    kernel_thunk_dispatch_inner();
+    s_main_call_ord = 0;
+    QueryPerformanceCounter(&t1);
+    QueryPerformanceFrequency(&f);
+    kmw_add(ord, ret, (uint64_t)((t1.QuadPart - t0.QuadPart) * 1000000 / f.QuadPart));
+}
+
+static void kernel_thunk_dispatch_inner(void)
 {
     if (kernel_call_keeps_gil(g_kernel_dispatch_slot)) {
         kernel_thunk_dispatch_body();
