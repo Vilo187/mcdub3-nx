@@ -290,6 +290,10 @@ static void *perf_thread(void *arg)
         usleep((useconds_t)(secs * 1e6));
         xbox_gil_main_wait(&wait_us, &long_waits);
         gil_sample_report();
+        {   /* where the main thread blocks: kernel calls by ordinal and caller */
+            extern void xbox_kernel_main_report(double interval_s);
+            xbox_kernel_main_report(secs);
+        }
         {   /* the game's frame time (sub_001EDBE0: rdtsc delta, snapped to
              * 1/60..1/15 and clamped to 0.0001..0.1 s). The intro flythrough
              * steps by it; if nothing refreshes it during a load, it stays

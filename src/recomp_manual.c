@@ -971,6 +971,27 @@ void sub_0001B740(void)
     sub_0001B740_gen();
 }
 
+/* ── The loading screen keeps its 4:3 shape ──
+ *
+ * sub_0001B500 is the loading-screen thread's loop (thread 0x0001B720,
+ * started only from the boot sequence at 0x00020387): the legal screen.
+ * With "legal" in MC3_FILL_SKIP it is shown at its own 4:3 shape, the fill
+ * held while the loop runs. Not the default: the loop also runs behind
+ * other loading screens and ends before some of them do, so they started
+ * at 4:3 and switched to 16:9 halfway (2026-10-20). */
+extern void nv2a_gl_fill_hold(int delta) __attribute__((weak));
+extern void sub_0001B500_gen(void);
+void sub_0001B500(void)
+{
+    const char *e = getenv("MC3_FILL_SKIP");
+    int hold = nv2a_gl_fill_hold && e && strstr(e, "legal");   /* opt-in: see above */
+    if (hold)
+        nv2a_gl_fill_hold(1);
+    sub_0001B500_gen();
+    if (hold)
+        nv2a_gl_fill_hold(-1);
+}
+
 /* ── Save-game deletion, traced (MC3_SAVE_TRACE=1) ──
  *
  * Deleting a profile says "deleted" but leaves it on disk, and no file call
@@ -1029,6 +1050,47 @@ void sub_002F4E4E(void)
     sub_002F4E4E_gen();
     if (save_trace_on())
         fprintf(stderr, "[SAVE] XDeleteSaveGame -> %u\n", g_eax);
+}
+
+/* ── "Is pad n a steering wheel?", asked once per controller ──
+ *
+ * sub_0007D7A0 (thiscall, the game's pad object) returns
+ * XInputGetCapabilities(handle).SubType == 0x10 (XINPUT_DEVSUBTYPE_GC_WHEEL),
+ * and the game asks every frame. XInputGetCapabilities is a synchronous USB
+ * control transfer (XPP 0x0040BB0F, waiting at 0x0040F0BB with a 50 ms
+ * timeout): ~1-2 ms on the Xbox, ~19 ms on the emulated OHCI on the Switch,
+ * where the transfer waits for the controller thread's 4 ms pass and the
+ * completion interrupt for the guest lock. Two per frame took 450 ms of
+ * every second of the main thread in a race (10-12 fps, 2026-10-20). The
+ * answer cannot change while the same handle is open, so it is kept per
+ * handle ([pad+0x34]; [pad+0x1C] == 4 is "open"). MC3_PAD_CAPS_CACHE=0
+ * asks every time, as the game does. */
+extern void sub_0007D7A0_gen(void);
+void sub_0007D7A0(void)
+{
+    static uint32_t handle_of[8], answer_of[8];
+    static unsigned next;
+    static int on = -1;
+    uint32_t pad = g_ecx, handle = MEM32(pad + 0x34);
+    int open = MEM32(pad + 0x1C) == 4 && handle;
+    unsigned i;
+    if (on < 0) {
+        const char *e = getenv("MC3_PAD_CAPS_CACHE");
+        on = !(e && e[0] == '0');
+    }
+    if (on && open)
+        for (i = 0; i < 8; i++)
+            if (handle_of[i] == handle) {
+                g_eax = answer_of[i];
+                g_esp += 4;                      /* ret: thiscall, no arguments */
+                return;
+            }
+    sub_0007D7A0_gen();
+    if (on && open) {
+        handle_of[next % 8] = handle;
+        answer_of[next % 8] = g_eax & 0xFFu;
+        next++;
+    }
 }
 
 /* ── Manual function overrides ─────────────────────────────── */
