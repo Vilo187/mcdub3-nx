@@ -64,9 +64,11 @@ jobs:
           fi
           [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "build_run_id must be a number"; exit 1; }
           echo "run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
-          read -r name conclusion sha < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
-            --jq '[.name, .conclusion, .head_sha] | @tsv')
-          [ "$name" = "Switch build" ] || { echo "run $RUN_ID is '$name', not a Switch build"; exit 1; }
+          # Tab-separated: a workflow name has spaces ("Switch build").
+          IFS=$'\t' read -r path conclusion sha < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '[.path, .conclusion, .head_sha] | @tsv')
+          [ "$path" = ".github/workflows/switch-build.yml" ] \
+            || { echo "run $RUN_ID is from $path, not a Switch build"; exit 1; }
           [ "$conclusion" = "success" ] || { echo "run $RUN_ID did not succeed ($conclusion)"; exit 1; }
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "Releasing Switch build $RUN_ID at $sha"
