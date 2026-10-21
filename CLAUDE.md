@@ -238,10 +238,12 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   Mac after ~8 min; same chain): mcPgCareer::ReportRaceResult (sub_0024F8C0)
   -> sub_00251CD0 calls listeners from a list of 12-byte entries at
   this+0x78..+0x7C (vtable slot 0x28; sub_00251D40: 0x2C), and one entry
-  was stale (null method, then a garbage object). Root cause (who leaves
-  the entry) not found yet; src/recomp_manual.c drops entries whose object,
-  vtable or method are not valid and logs `[LISTEN]` with what they held
-  (MC3_LISTENER_CHECK=0 off).
+  went bad while the loop walked it: with every entry valid beforehand the
+  crash stayed, so a listener's callback changes the list mid-broadcast
+  (the Xbox gets away with reading the freed memory). src/recomp_manual.c
+  replaces both broadcasts: current entry first, then the others from a
+  copy, each only if still listed and valid; `[LISTEN]` logs what was
+  skipped (MC3_LISTENER_CHECK=0: the original loop).
 
 ### First lift (2026-10-14)
 
