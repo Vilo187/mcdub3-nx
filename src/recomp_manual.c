@@ -1317,3 +1317,95 @@ void recomp_unimpl(const char *text, uint32_t va)
     }
     if (stop) abort();
 }
+
+/* ── Career race results: listeners checked before they are called ──
+ *
+ * mcPgCareer::ReportRaceResult() (sub_0024F8C0, named by its own messages)
+ * hands the result to sub_00251CD0, which calls every listener in a list
+ * of 12-byte entries {u16 id, u32 key, object*} at this+0x78..+0x7C
+ * (vtable slot 0x28; the entry at index this+0x94 first, -1 = none);
+ * sub_00251D40 does the same through slot 0x2C. Starting one career race
+ * on the Switch, and after ~8 minutes on the Mac, the list held a stale
+ * entry: first a null method (the runtime skipped the call), then an
+ * object at garbage (0xCDCDCD08 on the Mac, 0x535F4D7C on the Switch), and
+ * the game crashed (2026-10-21; same call chain on both). Which object
+ * leaves its entry behind is not known yet. Until it is, entries whose
+ * object, vtable or method do not point where they must (object in RAM,
+ * vtable in .rdata, method in code) are taken out of the list before the
+ * call and logged with what they held. MC3_LISTENER_CHECK=0 turns it off. */
+static int listener_ram(uint32_t va)
+{
+    return !(va & 3) && ((va >= 0x00010000u && va < 0x04000000u)
+                         || (va >= 0x80000000u && va < 0x84000000u));
+}
+
+static int listener_valid(uint32_t obj, unsigned slot)
+{
+    uint32_t vt, fn;
+    if (!listener_ram(obj))
+        return 0;
+    vt = MEM32(obj);
+    if (vt < 0x00411440u || vt >= 0x00471A80u || (vt & 3))   /* .rdata */
+        return 0;
+    fn = MEM32(vt + slot);
+    return fn >= 0x00012000u && fn < 0x00411000u;               /* code */
+}
+
+static void listener_prune(uint32_t self, unsigned slot, const char *who)
+{
+    static int on = -1, logged;
+    uint32_t begin, end, rd, wr, idx, new_idx = 0xFFFFFFFFu, i;
+    if (on < 0) {
+        const char *e = getenv("MC3_LISTENER_CHECK");
+        on = !(e && e[0] == '0');
+    }
+    if (!on || !listener_ram(self))
+        return;
+    begin = MEM32(self + 0x78);
+    end = MEM32(self + 0x7C);
+    idx = MEM32(self + 0x94);
+    if (!listener_ram(begin) || end < begin || end - begin > 12u * 4096 || (end - begin) % 12) {
+        if (logged++ < 20)
+            fprintf(stderr, "[LISTEN] %s: list of %08X is not a list (begin %08X end %08X): left alone\n",
+                    who, self, begin, end);
+        return;
+    }
+    for (rd = wr = begin, i = 0; rd < end; rd += 12, i++) {
+        uint32_t obj = MEM32(rd + 8);
+        if (!listener_valid(obj, slot)) {
+            if (logged++ < 20)
+                fprintf(stderr, "[LISTEN] %s: entry %u of %08X dropped: id %04X key %08X object %08X "
+                                "vtable %08X%s\n", who, i, self, MEM16(rd), MEM32(rd + 4), obj,
+                        listener_ram(obj) ? MEM32(obj) : 0, i == idx ? " (the current one)" : "");
+            continue;
+        }
+        if (i == idx)
+            new_idx = (wr - begin) / 12;
+        if (wr != rd) {
+            MEM32(wr) = MEM32(rd);
+            MEM32(wr + 4) = MEM32(rd + 4);
+            MEM32(wr + 8) = MEM32(rd + 8);
+        }
+        wr += 12;
+    }
+    if (wr != end) {
+        MEM32(self + 0x7C) = wr;
+        if (idx != 0xFFFFFFFFu)
+            MEM32(self + 0x94) = new_idx;
+    }
+}
+
+/* Written out, not by macro: tools/recomp/manual_scan.py reads the text. */
+extern void sub_00251CD0_gen(void);
+void sub_00251CD0(void)
+{
+    listener_prune(g_ecx, 0x28, "race result");
+    sub_00251CD0_gen();
+}
+
+extern void sub_00251D40_gen(void);
+void sub_00251D40(void)
+{
+    listener_prune(g_ecx, 0x2C, "race event");
+    sub_00251D40_gen();
+}
