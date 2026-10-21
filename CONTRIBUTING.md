@@ -545,10 +545,10 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
 2. Write its notes in `RELEASE_NOTES.md` under `## v0.2.0`. Commit and push.
 3. Actions > **Switch build** > Run workflow, with an optional description.
    It runs the tests, then builds `mcdub3-nx-<edition>.nro` on the runner.
-   The run's summary shows its run ID.
 4. Try the NRO from the run's artifact on the console.
-5. Actions > **Switch release** > Run workflow with that run ID (pre-release
-   or not). A reviewer approves the `release` environment; your runner then
+5. Actions > **Switch release** > Run workflow (pre-release or not). It
+   releases the latest successful build; give a run ID only to release an
+   older one. A reviewer approves the `release` environment; your runner then
    builds the NSP forwarders (one per edition) with your keys, and the
    workflow tags `v0.2.0` on the built commit and publishes the NROs and
    NSPs with the notes, all together or nothing.
