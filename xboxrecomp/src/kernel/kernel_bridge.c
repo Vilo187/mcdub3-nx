@@ -849,6 +849,13 @@ static void gil_yield_wait(void)
     LeaveCriticalSection(&s_gil_cs);
 }
 
+/* A project's check for this thread's poll loops, run at every periodic
+ * yield with the lock back (recomp_set_spin_hook; NULL to clear). For a
+ * loop whose exit condition the yield itself can break: MC3's D3D fence
+ * wait (src/recomp_manual.c, sub_003DF4D0). */
+static RECOMP_TLS void (*t_spin_hook)(void);
+void recomp_set_spin_hook(void (*fn)(void)) { t_spin_hook = fn; }
+
 /* RECOMP_SPIN_HINT's periodic yield: a poll loop waits for another thread,
  * an interrupt or a DPC -- all of which need the lock. */
 void recomp_spin_yield(void)
@@ -856,6 +863,8 @@ void recomp_spin_yield(void)
     int d = xbox_gil_suspend();
     SwitchToThread();
     xbox_gil_resume(d);
+    if (t_spin_hook)
+        t_spin_hook();
 }
 
 /* RECOMP_PREEMPT: someone is waiting -- yield, unless this is an ISR or DPC
@@ -10431,6 +10440,22 @@ void xbox_kernel_main_report(double interval_s)
                         (long long)((now.QuadPart - s_main_call_t0) * 1000 / f.QuadPart));
         }
     }
+}
+
+/* The kernel call the main thread is inside now, for a hang snapshot:
+ * 0, or its ordinal, with the guest return address and how long ago it
+ * started. */
+uint32_t xbox_main_kernel_call(uint32_t *ret, long long *ms)
+{
+    uint32_t ord = s_main_call_ord;
+    LARGE_INTEGER now, f;
+    if (!ord)
+        return 0;
+    QueryPerformanceCounter(&now);
+    QueryPerformanceFrequency(&f);
+    *ret = s_main_call_ret;
+    *ms = (long long)((now.QuadPart - s_main_call_t0) * 1000 / f.QuadPart);
+    return ord;
 }
 
 static void kernel_thunk_dispatch_inner(void);
