@@ -4,6 +4,7 @@
 #   <SD>/switch/mcdub3-nx/mcdub3.nro          (mcdub3-vulkan.nro with VULKAN=1)
 #   <SD>/switch/mcdub3-nx/game/               the extracted disc (never the ISO)
 #   <SD>/switch/mcdub3-nx/mcdub3_env.txt      optional KEY=VALUE runtime switches
+#   <SD>/switch/mcdub3-nx/hd/textures/        the HD texture pack, with HD=1 only
 #   <SD>/switch/mcdub3-nx/mcdub3_log.txt      written when no nxlink host listens
 #
 # Environment (defaults from tools/env.sh):
@@ -71,6 +72,18 @@ if [ "${NO_GAME:-0}" != "1" ]; then
     # copying (same disk, no extra space); only changed files are copied.
     rsync -a --size-only --link-dest="$MC3_GAME_DIR/" \
         "$MC3_GAME_DIR/" "$DEST/game/" --exclude '*_analysis.json'
+fi
+# The HD texture pack (hd/textures beside game/, see nv2a_gl/hd_pack.c):
+# HD=1 stages it next to the game, otherwise a pack staged by an earlier
+# HD=1 build is removed, so the staged folder matches the choice. Only
+# textures/ goes: hd/dump is raw material for tools/hd_upscale.sh.
+if [ "${HD:-0}" = "1" ]; then
+    [ -d "$MC3_REPO/hd/textures" ] || mc3_fail "HD=1 but no hd/textures: make hd-dump, then make hd-upscale"
+    mkdir -p "$DEST/hd/textures"
+    rsync -a --delete "$MC3_REPO/hd/textures/" "$DEST/hd/textures/"
+    echo "  HD pack: $(find "$DEST/hd/textures" -name '*.png' | wc -l) textures staged ($(du -sh "$DEST/hd" | cut -f1))"
+else
+    rm -rf "$DEST/hd"
 fi
 # Runtime switches for the console (switch/<app>_env.txt), staged with the NRO.
 if [ -f "$MC3_REPO/switch/${MC3_APP}_env.txt" ]; then

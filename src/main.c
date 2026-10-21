@@ -290,6 +290,10 @@ static void *perf_thread(void *arg)
         usleep((useconds_t)(secs * 1e6));
         xbox_gil_main_wait(&wait_us, &long_waits);
         gil_sample_report();
+        {   /* hand-overs, and whom the main thread waited behind */
+            extern void xbox_gil_stat_report(double secs);
+            xbox_gil_stat_report(secs);
+        }
         {   /* where the main thread blocks: kernel calls by ordinal and caller */
             extern void xbox_kernel_main_report(double interval_s);
             xbox_kernel_main_report(secs);
@@ -475,6 +479,19 @@ static int game_main(void)
     if (!game_dir || !game_dir[0])
         game_dir = MC3_DEFAULT_GAME_DIR;
     snprintf(xbe_path, sizeof(xbe_path), "%s/default.xbe", game_dir);
+    {
+        /* Replacement textures (renderer, hd_pack.c) live beside the game,
+         * never inside it: <game_dir>/../hd -- sdmc:/switch/mcdub3-nx/hd on
+         * the Switch, hd/ in the repo on Linux. RECOMP_GL_HD_DIR overrides. */
+        const char *hd = getenv("RECOMP_GL_HD_DIR");
+        if (!hd || !hd[0]) {
+            char dir[1024];
+            const char *slash = strrchr(game_dir, '/');
+            size_t n = slash ? (size_t)(slash - game_dir) : 0;
+            snprintf(dir, sizeof dir, "%.*s%shd", (int)n, game_dir, n ? "/" : "");
+            setenv("RECOMP_GL_HD_DIR", dir, 1);
+        }
+    }
 
     xbe_data = load_file(xbe_path, &xbe_size);
     if (!xbe_data) {
