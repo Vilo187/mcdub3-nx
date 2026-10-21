@@ -1,4 +1,4 @@
-<p align="center"><img src="assets/game-logo.png" alt="Midnight Club 3: DUB Edition" width="560"></p>
+<p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="560"></p>
 
 The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Switch, Linux and macOS without requirement of emulation.
 
