@@ -62,10 +62,17 @@ if [ "${1:-}" = prepare ]; then
     if [ -f "$MC3_REPO/$APP_ICON" ]; then
         # A bare baseline JPEG, 256x256, 4:2:0, nothing else in it: anything
         # more and the home menu shows a '?' or nothing (NTON does the same).
-        mc3_python                       # sets MC3_PYTHON (work/venv or the system)
-        PY="$MC3_PYTHON"
-        "$PY" -c "import PIL" 2>/dev/null || "$PY" -m pip install --quiet pillow \
-            || mc3_fail "cannot install Pillow for $PY (needed to clean the icon)"
+        # A Python with Pillow: the project venvs (Linux work/venv, macOS
+        # work/macvenv), else the system's, with Pillow installed for the user.
+        PY=""
+        for c in "$MC3_WORK/venv/bin/python3" "$MC3_WORK/macvenv/bin/python3" python3; do
+            if "$c" -c 'import PIL' >/dev/null 2>&1; then PY="$c"; break; fi
+        done
+        if [ -z "$PY" ]; then
+            PY=python3
+            "$PY" -m pip install --quiet --user pillow \
+                || mc3_fail "cannot install Pillow for $PY (needed to clean the icon)"
+        fi
         "$PY" - "$MC3_REPO/$APP_ICON" "$ICON_OUT" <<'PY'
 import sys
 from PIL import Image
