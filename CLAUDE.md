@@ -171,12 +171,14 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   logos cannot, mc3intro can (Enter). The keyboard is pad 1 by default
   (src/main.c; RECOMP_KEYBOARD=0 off). `make run WATCH=1`: F12 writes every
   draw of the frame on screen to the log (a diagnostic; nothing visible).
-  Keyboard (Linux since 2026-10-16, input/sdl_keyboard.c; laid out for
-  racing 2026-10-17): W/S = gas/brake (right/left trigger), A/D = steer
-  (left stick), J/K/U/I = buttons A/B/X/Y (A = OK, B = back), Space = X,
-  arrows = d-pad (menus; in a race left/right change the song), Enter =
-  Start, Backspace = Back, Shift/Ctrl = White/Black, Q/E = stick clicks,
-  numpad 4/6/8/2 or F/H/T/G = right stick. Unattended runs only:
+  Keyboard (Linux since 2026-10-16, input/sdl_keyboard.c; relaid
+  2026-10-21 so buttons sit where their names say): A/B/X/Y = buttons A/B/
+  X/Y, Enter = Start, Backspace = Back, arrows left/right = steer (left
+  stick), up = gas (right trigger) + stick up, down = brake (left trigger)
+  + stick down (menus navigate with the stick), I/J/K/L = d-pad (songs and
+  map in a race), Q/E (or Shift/Ctrl) = White/Black (the Switch's L/R),
+  Z/C = stick clicks, T/F/G/H or numpad 8/4/2/6 = right stick, Space = A
+  (MC3's handbrake, the Switch's A), Tab = Back too. Unattended runs only:
   `MC3_SKIP_MOVIES=1` pulses A+Start on the pad while intro movies play.
 - Debug switches (toolkit): `RECOMP_CLOCK_RATE=<f>` (+ `RECOMP_CLOCK_ONLY=
   tsc|qpc|tick|sys`) runs the guest clocks at f x real time -- tells clock-
