@@ -101,11 +101,70 @@ void sub_002B9C90(void)
  * pointer at 0x003ECAE8 (mov esi, [0x3ECAE8] at the top of this function).
  * Name the semaphore on the first wait, then run the original: its kick-off
  * queues new releases, which now land. */
+/*
+ * The wait's last loop (0x003DF607) reads the time handed out once
+ * (+0x2C, into a register) and spins while
+ *     handed - target < handed - gpu      (unsigned)
+ * i.e. while the GPU is behind the fence inside the window [.., handed].
+ * Its poll-loop yield lets the other guest threads run -- MC3's loading
+ * screen keeps drawing from its own thread -- and when they push and the
+ * GPU runs past `handed` before this thread looks again, handed - gpu
+ * wraps to ~4 G and the loop never ends: the career loading-screen hang
+ * (2026-10-21; snapshot: fence 000F6AEF, GPU at 000F90B5, main thread
+ * spinning there with the loading screen still animating). On the Xbox the
+ * window is microseconds and nothing pushes in it. So while the original
+ * runs, a spin hook checks at each yield: once the GPU has passed the fence
+ * it stores the fence itself in the semaphore, which ends the loop on its
+ * next read, and puts the GPU's value back when the wait returns (unless
+ * the GPU has written a newer one). Lower is the safe direction: a reader
+ * in between waits, never runs ahead. MC3_FENCE_FIX=0 turns it off.
+ */
+static uint32_t s_fence_sem_va;
+static RECOMP_TLS uint32_t t_fence_target, t_fence_saved;
+static RECOMP_TLS int t_fence_fixed;
+extern void recomp_set_spin_hook(void (*fn)(void));
+
+/* Compare-and-swap on guest memory: the executor writes it from its thread. */
+static uint32_t fence_cas(uint32_t va, uint32_t expect, uint32_t want)
+{
+    uint32_t *p = (uint32_t *)((uintptr_t)va + g_xbox_mem_offset);
+    __atomic_compare_exchange_n(p, &expect, want, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST);
+    return expect;                            /* the value found */
+}
+
+static void fence_spin_hook(void)
+{
+    uint32_t gpu;
+    if (!s_fence_sem_va)
+        return;
+    if (t_fence_fixed) {
+        /* Still spinning after the fix: some other loop -- give it the
+         * real value back. */
+        fence_cas(s_fence_sem_va, t_fence_target, t_fence_saved);
+        t_fence_fixed = 0;
+        return;
+    }
+    gpu = __atomic_load_n((uint32_t *)((uintptr_t)s_fence_sem_va + g_xbox_mem_offset), __ATOMIC_SEQ_CST);
+    if (gpu == t_fence_target || (int32_t)(gpu - t_fence_target) < 0)
+        return;                                /* not there yet, or exact */
+    if (fence_cas(s_fence_sem_va, gpu, t_fence_target) == gpu) {
+        static int logged;
+        t_fence_saved = gpu;
+        t_fence_fixed = 1;
+        if (logged++ < 5)
+            fprintf(stderr, "[D3D] fence wait: GPU at %08X ran past fence %08X and the "
+                            "window -- released\n", gpu, t_fence_target);
+    }
+}
+
 extern void sub_003DF4D0_gen(void);
 extern void nv2a_pb_set_semaphore_target(uint32_t guest_va);
 void sub_003DF4D0(void)
 {
     static uint32_t sem_va;
+    static int fix = -1;
+    uint32_t save_target = t_fence_target, save_saved = t_fence_saved;
+    int save_fixed = t_fence_fixed;
 
     if (!sem_va) {
         uint32_t device = MEM32(0x003ECAE8u);
@@ -115,9 +174,27 @@ void sub_003DF4D0(void)
             nv2a_pb_set_semaphore_target(sem_va);
             fprintf(stderr, "[D3D] GPU semaphore at 0x%08X (device 0x%08X)\n",
                     sem_va, device);
+            s_fence_sem_va = sem_va;
         }
     }
+    if (fix < 0) {
+        const char *e = getenv("MC3_FENCE_FIX");
+        fix = !(e && e[0] == '0');
+    }
+    if (!fix || !s_fence_sem_va) {
+        sub_003DF4D0_gen();
+        return;
+    }
+    t_fence_target = MEM32(g_esp + 4);         /* (time, flags), stdcall */
+    t_fence_fixed = 0;
+    recomp_set_spin_hook(fence_spin_hook);
     sub_003DF4D0_gen();
+    if (t_fence_fixed)
+        fence_cas(s_fence_sem_va, t_fence_target, t_fence_saved);
+    t_fence_target = save_target;
+    t_fence_saved = save_saved;
+    t_fence_fixed = save_fixed;
+    recomp_set_spin_hook(save_target ? fence_spin_hook : NULL);
 }
 
 /* ── Differential tests (src/difftest.c, tools/difftest.py) ── */
