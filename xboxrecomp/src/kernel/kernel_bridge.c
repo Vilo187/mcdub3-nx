@@ -681,15 +681,25 @@ void xbox_gil_main_wait(long long *wait_us, long long *long_waits)
     *long_waits = InterlockedExchange(&s_gil_main_long, 0);
 }
 
+/* Hand-over counts for the perf report (gil_stats.c). */
+void xbox_gil_stat_take(uint32_t tid, const char *label, int is_main, int waited,
+                        uint32_t blocker, const char *blocker_label, long long wait_us);
+const char *xbox_gil_my_label(void);
+static const char *volatile s_gil_holder_label;
+
 static void gil_lock(void)
 {
     uint64_t me;
-    int eager = gil_eager(), prio = eager ? gil_prio_now() : 0, counted = 0;
+    int eager = gil_eager(), prio = eager ? gil_prio_now() : 0, counted = 0, waited;
+    DWORD blocker;
+    const char *blocker_label;
     LARGE_INTEGER t0, t1, f;
-    if (t_gil_main)
-        QueryPerformanceCounter(&t0);
+    QueryPerformanceCounter(&t0);
     EnterCriticalSection(&s_gil_cs);
     me = s_gil_next++;
+    waited = me != s_gil_serving;
+    blocker = s_gil_holder_tid;
+    blocker_label = s_gil_holder_label;
     if (me != s_gil_serving && eager) {
         s_gil_waiting[prio]++;
         counted = 1;
@@ -724,14 +734,19 @@ static void gil_lock(void)
     LeaveCriticalSection(&s_gil_cs);
     s_gil_holder_esp = (uint32_t *)&g_esp;
     s_gil_holder_tid = GetCurrentThreadId();
-    if (t_gil_main) {
+    s_gil_holder_label = xbox_gil_my_label();
+    {
         int64_t us;
         QueryPerformanceCounter(&t1);
         QueryPerformanceFrequency(&f);
         us = (int64_t)((t1.QuadPart - t0.QuadPart) * 1000000 / f.QuadPart);
-        InterlockedExchangeAdd(&s_gil_main_wait_us, (LONG)us);
-        if (us > 50000)
-            InterlockedIncrement(&s_gil_main_long);
+        if (t_gil_main) {
+            InterlockedExchangeAdd(&s_gil_main_wait_us, (LONG)us);
+            if (us > 50000)
+                InterlockedIncrement(&s_gil_main_long);
+        }
+        xbox_gil_stat_take((uint32_t)s_gil_holder_tid, s_gil_holder_label, t_gil_main,
+                           waited, (uint32_t)blocker, blocker_label, us);
     }
 }
 
@@ -863,6 +878,7 @@ void recomp_preempt(void)
 
 void xbox_gil_isr_begin(void) { xbox_gil_enter(); t_gil_nopreempt++; }
 void xbox_gil_isr_end(void)   { t_gil_nopreempt--; xbox_gil_leave(); }
+static void xbox_gil_nopreempt(int d) { t_gil_nopreempt += d; }
 
 static RECOMP_TLS int g_is_spawned_thread = 0;
 
@@ -3379,6 +3395,34 @@ static XboxTimer g_timers[XBOX_MAX_TIMERS];
 static CRITICAL_SECTION g_timer_lock;
 static int g_timer_started;
 
+void xbox_gil_label(const char *name);       /* gil_stats.c */
+
+static int timer_batch_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_TIMER_BATCH");
+        on = !(e && *e == '0');
+    }
+    return on;
+}
+
+/* Will this pass of the timer thread run guest code? A racy look: a miss
+ * only means the routines take the lock one by one, as before. */
+static int timer_pass_due(long long now_ms)
+{
+    int i;
+    if (xbox_irq_lines() || g_dpc_head != g_dpc_tail)
+        return 1;
+    if (s_vb_next_us && vb_now_us() >= s_vb_next_us
+        && xbox_GetConnectedInterrupt(NV2A_VECTOR))
+        return 1;
+    for (i = 0; i < XBOX_MAX_TIMERS; i++)
+        if (g_timers[i].timer_va && g_timers[i].dpc_va && now_ms >= g_timers[i].due_ms)
+            return 1;
+    return 0;
+}
+
 static DWORD WINAPI kernel_timer_thread(LPVOID unused)
 {
     int slot = xbox_worker_stack_alloc();
@@ -3392,6 +3436,7 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
         return 0;
     }
     g_esp = XBOX_WORKER_STACK_TOP(slot);
+    xbox_gil_label("timer");
     fprintf(stderr, "  [KERNEL] timer thread on worker stack slice %d (top 0x%08X)\n",
             slot, XBOX_WORKER_STACK_TOP(slot));
     fflush(stderr);
@@ -3412,7 +3457,7 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
 
     for (;;) {
         long long now;
-        int i;
+        int i, batch;
 
         /* a device interrupt, the next vblank, or 10 ms */
         WaitForSingleObject(xbox_irq_line_event(), kernel_vblank_wait_ms());
@@ -3421,10 +3466,22 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
          * a raised section. */
         pending_start_flush(0); /* threads whose creator made no further call */
         xbox_KfRaiseIrql(DISPATCH_LEVEL);
+        now = (long long)GetTickCount64();
+        /* One hold of the guest lock for the whole pass -- the vblank ISR,
+         * its DPC, device ISRs, timer DPCs -- instead of one per routine
+         * (the lock nests per thread). On the Switch each hand-over is a
+         * scheduler round trip for the main thread, which lost and retook
+         * the lock two to four times a vblank (2026-10-21). Only when there
+         * is something to run: an idle wake-up takes nothing.
+         * RECOMP_TIMER_BATCH=0: the old one-per-routine. */
+        batch = timer_batch_on() && timer_pass_due(now);
+        if (batch) {
+            xbox_gil_enter();
+            xbox_gil_nopreempt(1);
+        }
         kernel_vblank_tick();  /* the GPU's frame clock */
         kernel_service_irqs(); /* device interrupts; their DPCs drain below */
         kernel_drain_dpcs();   /* deferred work, before due timers */
-        now = (long long)GetTickCount64();
 
         for (i = 0; i < XBOX_MAX_TIMERS; i++) {
             uint32_t dpc, fired_va;
@@ -3455,6 +3512,10 @@ static DWORD WINAPI kernel_timer_thread(LPVOID unused)
                     BRIDGE_MEM32(fired_va + 4) = 1;   /* SignalState */
                 }
             }
+        }
+        if (batch) {
+            xbox_gil_nopreempt(-1);
+            xbox_gil_leave();
         }
         xbox_KfLowerIrql(PASSIVE_LEVEL);
     }
