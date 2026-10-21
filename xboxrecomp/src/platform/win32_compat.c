@@ -882,6 +882,8 @@ void xbox_guest_pin(int interrupt)
      * interrupt thread goes above it so it pre-empts guest threads. */
     if (interrupt)
         svcSetThreadPriority(CUR_THREAD_HANDLE, 0x2C);
+#elif defined(__APPLE__)
+    (void)interrupt;           /* macOS has no thread-to-core pinning */
 #else
     {
         cpu_set_t set;

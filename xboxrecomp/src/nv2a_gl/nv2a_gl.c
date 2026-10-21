@@ -37,6 +37,7 @@
 #include "gl_api.h"
 #include "gl_psh.h"
 #include "gl_vsh.h"
+#include "../platform/host_main.h"
 #include "hd_pack.h"
 #include "../kernel/nv2a_present.h"
 #include "../kernel/nv2a_backend.h"
@@ -2643,6 +2644,43 @@ static int ct_start(const char *path, unsigned skip)
 
 /* ── Context ──────────────────────────────────────────────────────── */
 
+/* SDL's video, the window and the context (run on the main thread, see
+ * ready). s_win / s_ctx stay NULL on failure. A context made for another
+ * thread is let go of here, so that thread can take it. */
+static int s_win_for_other;                  /* made for a thread other than main */
+
+static void gl_make_window(void *unused)
+{
+    (void)unused;
+    if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+        fprintf(stderr, "  [GL] SDL video: %s\n", SDL_GetError());
+        return;
+    }
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+#if defined(__APPLE__)
+    /* macOS hands out a 3.2+ core context only when asked for a
+     * forward-compatible one (GL 2.1 otherwise); it runs GL 4.1 on Metal. */
+    SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+#endif
+    SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+    s_win = SDL_CreateWindow("NV2A", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                             1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
+                             | SDL_WINDOW_ALLOW_HIGHDPI);
+    if (!s_win) {
+        fprintf(stderr, "  [GL] window: %s\n", SDL_GetError());
+        return;
+    }
+    s_ctx = SDL_GL_CreateContext(s_win);
+    if (!s_ctx) {
+        fprintf(stderr, "  [GL] context: %s\n", SDL_GetError());
+        return;
+    }
+    if (s_win_for_other)
+        SDL_GL_MakeCurrent(s_win, NULL);
+}
+
 static int ready(void)
 {
     if (s_state)
@@ -2657,23 +2695,15 @@ static int ready(void)
             return 0;
         }
     } else {
-        if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-            fprintf(stderr, "  [GL] SDL video: %s\n", SDL_GetError());
+        /* SDL's video, the window and the context on the main thread
+         * (platform/host_main.c: macOS allows no other), the context then
+         * made current here. Elsewhere a direct call, as before. */
+        s_win_for_other = !xbox_host_on_main();
+        xbox_host_main_call(gl_make_window, NULL);
+        if (!s_win || !s_ctx)
             return 0;
-        }
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-        SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-        s_win = SDL_CreateWindow("NV2A", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                                 1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE);
-        if (!s_win) {
-            fprintf(stderr, "  [GL] window: %s\n", SDL_GetError());
-            return 0;
-        }
-        s_ctx = SDL_GL_CreateContext(s_win);
-        if (!s_ctx) {
-            fprintf(stderr, "  [GL] context: %s\n", SDL_GetError());
+        if (s_win_for_other && SDL_GL_MakeCurrent(s_win, s_ctx) != 0) {
+            fprintf(stderr, "  [GL] context to the renderer thread: %s\n", SDL_GetError());
             return 0;
         }
     }
@@ -4201,8 +4231,21 @@ swap:
     gl_step_done("swap");
     tex_bind_forget();
     {
+        /* Where the main thread pumps the window system's events itself
+         * (macOS, platform/host_main.c), only take what it queued: pumping
+         * from here is not allowed there. */
         SDL_Event e;
-        while (SDL_PollEvent(&e)) {
+        int pump = xbox_host_on_main();
+        while (pump ? SDL_PollEvent(&e)
+                    : SDL_PeepEvents(&e, 1, SDL_GETEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT) > 0) {
+            if (e.type == SDL_QUIT) {
+                /* The window's close button, Cmd+Q, the Dock's Quit: the
+                 * title has no way out of its own, so leave here (exit
+                 * handlers flush the log and any audio dump). */
+                fprintf(stderr, "  [GL] window closed: quitting\n");
+                fflush(stderr);
+                exit(0);
+            }
 #if !defined(_WIN32) && !defined(__SWITCH__)
             xbox_sdl_keyboard_handle(&e);       /* RECOMP_KEYBOARD (input/) */
 #endif
