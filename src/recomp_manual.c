@@ -1414,10 +1414,37 @@ static void listener_call(uint32_t obj, unsigned slot, uint32_t arg)
         fprintf(stderr, "[LISTEN] method %08X of %08X not in dispatch: skipped\n", fn_va, obj);
         return;
     }
-    g_esp -= 4; MEM32(g_esp) = arg;
-    g_esp -= 4; MEM32(g_esp) = 0;              /* return address */
-    g_ecx = obj;
-    fn();                                      /* ret 4: pops both */
+    {
+        static int trace = -1;
+        if (trace < 0) {
+            const char *e = getenv("MC3_LISTEN_TRACE");
+            trace = e && e[0] == '1';
+        }
+        if (trace)
+            fprintf(stderr, "[LISTEN]   -> object %08X vtable %08X method %08X (arg %u)\n",
+                    obj, MEM32(obj), fn_va, arg);
+    }
+    {
+        /* The callee must pop its return address and argument (ret 4) and
+         * keep ebx, esi, edi, ebp, as MSVC's thiscall does. A translated
+         * method that does not is a lifter bug; the original loop kept its
+         * position in esi and crashed on one. Say which method, and put the
+         * stack back where the call left it. */
+        uint32_t esp0 = g_esp, bx = g_ebx, si = g_esi, di = g_edi, bp = g_ebp;
+        static int logged;
+        g_esp -= 4; MEM32(g_esp) = arg;
+        g_esp -= 4; MEM32(g_esp) = 0;          /* return address */
+        g_ecx = obj;
+        fn();                                  /* ret 4: pops both */
+        if (g_esp != esp0 || g_ebx != bx || g_esi != si || g_edi != di || g_ebp != bp) {
+            if (logged++ < 20)
+                fprintf(stderr, "[LISTEN] method %08X of object %08X (vtable %08X +%02X) broke the "
+                                "calling convention:%s%s%s%s%s esp %+d\n", fn_va, obj, MEM32(obj), slot,
+                        g_ebx != bx ? " ebx" : "", g_esi != si ? " esi" : "", g_edi != di ? " edi" : "",
+                        g_ebp != bp ? " ebp" : "", "", (int)(g_esp - esp0));
+            g_esp = esp0;
+        }
+    }
 }
 
 static int listener_live(uint32_t self, uint32_t obj, uint16_t id, uint32_t key)
