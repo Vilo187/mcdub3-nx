@@ -55,7 +55,8 @@ cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" \
-    -DMC3_APP="$MC3_APP" -DMC3_SD_DIR="$MC3_SD_DIR" "${ARGS[@]}" >/dev/null
+    -DMC3_APP="$MC3_APP" -DMC3_SD_DIR="$MC3_SD_DIR" \
+    -DMC3_VERSION="$APP_VERSION" -DMC3_BUILD_ID="${MC3_BUILD_ID:-local}" "${ARGS[@]}" >/dev/null
 ninja -C "$BUILD" -j"$JOBS"
 
 DEST="$SD/switch/$MC3_SD_DIR"
@@ -66,6 +67,24 @@ cp "$BUILD/mcdub3.nro" "$DEST/$NRO_NAME.nro"
 mkdir -p "$MC3_WORK/elf"
 ELF_KEEP="$MC3_WORK/elf/$NRO_NAME-$(md5sum "$DEST/$NRO_NAME.nro" | cut -c1-8).elf"
 cp "$BUILD/mcdub3.elf" "$ELF_KEEP"
+# Release output (CI, .github/workflows/switch-build.yml): the NRO named
+# for its edition, as players pick it (mcdub3-nx-usa.nro, later -pal-..),
+# its ELF for crash offsets, and what was built.
+if [ -n "${RELEASE_DIR:-}" ]; then
+    EDITION=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' "$MC3_REPO/config/xbe_facts.h")
+    [ -n "$EDITION" ] || mc3_fail "config/xbe_facts.h has no MC3_EDITION: make lift"
+    mkdir -p "$RELEASE_DIR"
+    cp "$DEST/$NRO_NAME.nro" "$RELEASE_DIR/mcdub3-nx-$EDITION.nro"
+    cp "$BUILD/mcdub3.elf" "$RELEASE_DIR/mcdub3-nx-$EDITION.elf"
+    {
+        echo "version=$APP_VERSION"
+        echo "edition=$EDITION"
+        echo "build=${MC3_BUILD_ID:-local}"
+        echo "commit=${GITHUB_SHA:-$(git -C "$MC3_REPO" rev-parse HEAD 2>/dev/null || echo unknown)}"
+        echo "nro_sha256=$(sha256sum "$RELEASE_DIR/mcdub3-nx-$EDITION.nro" | cut -d' ' -f1)"
+    } > "$RELEASE_DIR/mcdub3-nx-$EDITION.buildinfo"
+    echo "  release: $RELEASE_DIR/mcdub3-nx-$EDITION.nro (version $APP_VERSION)"
+fi
 if [ "${NO_GAME:-0}" != "1" ]; then
     mc3_need_game
     # The disc is gigabytes: hard-link it from $MC3_GAME_DIR instead of

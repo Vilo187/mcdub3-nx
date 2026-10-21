@@ -222,6 +222,12 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   main thread serves SDL (xboxrecomp/src/platform/host_main.c). Linux SDL
   pads are opened at boot and hot-plugged (they were never opened before).
 
+- Releases (2026-10-21, ADR 0005): version in switch/app.env, notes in
+  RELEASE_NOTES.md; ci.yml (tests) -> switch-build.yml (self-hosted runner
+  with the disc, label mcdub3-disc) -> switch-release.yml (environment
+  `release`, approval). NROs are mcdub3-nx-<edition>.nro; the boot check
+  (MC3_XBE_SIZE / MC3_XBE_FNV64 in config/xbe_facts.h) refuses another XBE.
+
 ### First lift (2026-10-14)
 
 21,585 functions, 0 failed, 2.98 M lines of C in 87 chunks (`--split 250`).

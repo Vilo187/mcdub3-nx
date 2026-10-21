@@ -20,7 +20,8 @@ NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
 export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
-       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE SETTINGS GAME
+       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE SETTINGS GAME \
+       RELEASE_DIR MC3_BUILD_ID
 
 .PHONY: help setup nsp check-vm extract lift regen relift \
         build build-vk build-debug mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \

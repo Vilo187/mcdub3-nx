@@ -24,13 +24,23 @@ docker info >/dev/null 2>&1 || DOCKER=(sudo docker)   # not in the docker group 
 
 ENVS=()
 SCRIPT="${1:-switch/build.sh}"
-for v in MC3_WORK MC3_GAME_DIR MC3_GEN_DIR MC3_APP MC3_SD_DIR SD_ROOT BUILD_DIR JOBS VULKAN LTO LTO_JOBS NO_GAME KEYS HD; do
+for v in MC3_WORK MC3_GAME_DIR MC3_GEN_DIR MC3_APP MC3_SD_DIR SD_ROOT BUILD_DIR JOBS VULKAN LTO LTO_JOBS NO_GAME KEYS HD \
+         RELEASE_DIR MC3_BUILD_ID GITHUB_SHA; do
     [ -n "${!v:-}" ] && ENVS+=(-e "$v=${!v}")
+done
+
+# Folders outside the repo (a CI runner keeps MC3_WORK, the disc and the
+# release output elsewhere) are mounted at the same paths.
+MOUNTS=(-v "$MC3_REPO:$MC3_REPO")
+for d in "$MC3_WORK" "$MC3_GAME_DIR" "${RELEASE_DIR:-}"; do
+    [ -n "$d" ] || continue
+    mkdir -p "$d"
+    case "$(cd "$d" && pwd -P)/" in "$(cd "$MC3_REPO" && pwd -P)/"*) ;; *) MOUNTS+=(-v "$d:$d") ;; esac
 done
 
 echo "$SCRIPT in $IMAGE"
 exec "${DOCKER[@]}" run --rm \
     -u "$(id -u):$(id -g)" -e HOME=/tmp \
-    -v "$MC3_REPO:$MC3_REPO" -w "$MC3_REPO" \
+    "${MOUNTS[@]}" -w "$MC3_REPO" \
     "${ENVS[@]}" \
     "$IMAGE" bash "$SCRIPT"
