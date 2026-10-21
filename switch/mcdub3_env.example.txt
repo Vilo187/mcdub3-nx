@@ -1,0 +1,229 @@
+# mcdub3_env.txt -- settings for Midnight Club 3 on the Switch
+#
+# Lives beside the NRO: sdmc:/switch/mcdub3-nx/mcdub3_env.txt
+# One KEY=VALUE per line; '#' starts a comment. Read once at start, so
+# restart the game after editing. Every line below is commented out and
+# shows the default: remove the '#' in front of a setting to change it.
+# The log (mcdub3_log.txt) lists every setting in effect on its "settings:"
+# line. The same names work on Linux and macOS as environment variables
+# (make run RECOMP_GL_SCALE=1.5).
+#
+# Switches: 1 = on, 0 = off.
+
+# ============================================================================
+# Picture
+# ============================================================================
+
+# Rendering resolution as a multiple of the Xbox's 720x480 (0.5 .. 4).
+# 1.5 gives 1280x720, the sweet spot for a 720p screen. Higher looks sharper
+# but costs frame rate on the Switch.
+#RECOMP_GL_SCALE=1
+
+# Tell the game the TV is widescreen: it then renders 16:9 itself.
+#RECOMP_WIDESCREEN=1
+
+# Square pixels in 16:9 (the game's anamorphic picture shown at its true
+# shape). Only with RECOMP_WIDESCREEN=1.
+#RECOMP_GL_SQUARE=1
+
+# Menus and videos laid out for 4:3 (black bands left and right) are shown
+# filled to the full width, trimming a little at the top and bottom.
+#RECOMP_GL_FILL=1
+
+# Movies that keep their original 4:3 framing (comma-separated names from
+# game/video/, without .bik). Default: the boot logos and the intro.
+#MC3_FILL_SKIP=rockstar,sdlogo,mc3intro
+
+# fill = stretch the picture to the whole screen whatever its shape
+# (default: keep the aspect ratio).
+#RECOMP_GL_ASPECT=
+
+# Anti-aliasing of edges (FXAA), applied to the final picture.
+#RECOMP_GL_FXAA=1
+
+# Sharpening strength, 0 (off) .. 1.
+#RECOMP_GL_SHARPEN=0.5
+
+# Mipmaps: smoother textures in the distance, less shimmering.
+#RECOMP_GL_MIPS=1
+
+# Anisotropic filtering: sharp textures at shallow angles (roads).
+# 1 = off, up to 16.
+#RECOMP_GL_ANISO=16
+
+# Texture detail bias: negative = sharper, positive = softer.
+#RECOMP_GL_LOD_BIAS=-0.25
+
+# Menu and HUD art redrawn N times larger on the GPU (whole numbers;
+# 1 = off).
+#RECOMP_GL_UI_SCALE=2
+
+# The motion blur reads the depth buffer (0 = the old, wrong blur; for
+# comparison only).
+#RECOMP_GL_DEPTH_TEX=1
+
+# Texture memory budget in MB before old textures are dropped.
+#RECOMP_GL_TEX_MB=256
+
+# ============================================================================
+# Movies
+# ============================================================================
+
+# Decode the Bink movies with FFmpeg (0 = the game's own decoder, slower).
+#MC3_NATIVE_BINK=1
+
+# Play the movie soundtrack through FFmpeg, in sync (0 = the game's own
+# path, which stutters).
+#MC3_NATIVE_BINK_AUDIO=1
+
+# Movie volume in percent.
+#MC3_MOVIE_VOLUME=100
+
+# Upscale movie frames on the GPU.
+#MC3_MOVIE_HD=1
+#RECOMP_GL_MOVIE_SCALE=2
+
+# ============================================================================
+# Texture packs (HD)
+# ============================================================================
+
+# Where replacement textures are read from. Default: hd/ beside game/
+# (sdmc:/switch/mcdub3-nx/hd/textures/<hash>.png). Packs are made on a PC
+# with make hd-dump / make hd-upscale and staged with make switch HD=1.
+# Without the folder nothing is read.
+#RECOMP_GL_HD_DIR=sdmc:/switch/mcdub3-nx/hd
+
+# Write every texture the game uses to hd/dump/ as a PNG, to build a pack.
+# For the PC: on the Switch the writes stall the game for seconds.
+#RECOMP_GL_TEX_DUMP=0
+
+# ============================================================================
+# Sound
+# ============================================================================
+
+# Master volume in percent (0 .. 100).
+#RECOMP_AUDIO_VOLUME=100
+
+# ============================================================================
+# Controllers
+# ============================================================================
+
+# Face buttons by label (default: Switch A = Xbox A, as the game's prompts
+# say) or by position (position: Switch B = Xbox A, as on an Xbox pad).
+#RECOMP_PAD_LAYOUT=label
+
+# single = two detached Joy-Cons are one player each, held sideways.
+#RECOMP_NX_JOYCON=
+# 0 = do not turn the stick of a sideways Joy-Con.
+#RECOMP_NX_JOYCON_ROTATE=1
+
+# Rumble.
+#RECOMP_RUMBLE=1
+
+# Unattended runs only: press A+Start while the intro movies play.
+#MC3_SKIP_MOVIES=0
+
+# ============================================================================
+# Performance
+# ============================================================================
+
+# Draw on a thread of its own (faster on the Switch).
+#RECOMP_GL_THREAD=1
+
+# Shader compiling: the remembered shaders are compiled one a frame behind
+# the legal screen. boot = all at start (a few seconds of black), 0 = none
+# ahead (stutter when each is first used).
+#RECOMP_PROG_PREWARM=
+#RECOMP_PROG_PREWARM_PER_FRAME=1
+
+# How long a thread that yields gives way to the others, in ms.
+#RECOMP_YIELD_QUANTUM_MS=10
+
+# Interrupts, DPCs and timers run under one hold of the guest lock per pass
+# (0 = one per routine, as before 2026-10-21).
+#RECOMP_TIMER_BATCH=1
+
+# Hand the guest lock over by thread priority instead of first come, first
+# served (experimental).
+#RECOMP_GIL_EAGER=0
+
+# Audio thread above the system priority (0 = leave it at 59).
+#RECOMP_NX_AUDIO_PRIO=1
+
+# ============================================================================
+# Fixes that can be turned off (for comparison when testing)
+# ============================================================================
+
+# D3D's fence wait no longer hangs when the GPU runs past it (the career
+# loading-screen hang).
+#MC3_FENCE_FIX=1
+
+# Frames paced by D3D's own flip targets (0 = one flip per vblank; menus
+# then run too fast).
+#MC3_FLIP_PACE=1
+
+# The GPU interrupt handler runs under the trap lock (0 = old behaviour).
+#MC3_TRAP_HOOK=1
+
+# Lock calls that do not block keep the guest lock.
+#RECOMP_KERNEL_FAST=1
+
+# ============================================================================
+# Logging and diagnostics
+# ============================================================================
+
+# Fewer log lines (every line is an SD-card write). Set by default on the
+# Switch.
+#RECOMP_QUIET=1
+
+# Time stamps on log lines.
+#MC3_LOG_TIME=1
+
+# Frame rate in the log every 10 seconds.
+#RECOMP_FPS_LOG=0
+
+# Performance report every N seconds: guest-lock waits and hand-overs,
+# where the main thread blocks, CPU per thread, audio pacing.
+#MC3_PERF=
+
+# Guest clocks at N times real time (tells clock-timed from frame-paced);
+# with RECOMP_CLOCK_ONLY=tsc|qpc|tick|sys only that clock.
+#RECOMP_CLOCK_RATE=1
+#RECOMP_CLOCK_ONLY=
+
+# Slow file reads down to a DVD's pace, MB/s and ms per seek (streaming bugs
+# that fast storage hides).
+#RECOMP_IO_MBPS=
+#RECOMP_IO_SEEK_MS=
+
+# Snapshot of the main thread's stack once the game has made no progress
+# for N seconds (a hang).
+#RECOMP_WATCHDOG_SECS=
+
+# Traces, one subsystem each (1 = on): movies (split of each frame's time),
+# flips, sound engine, music decoder, saves, game clock, controller.
+#MC3_BINK_TRACE=0
+#MC3_FLIP_TRACE=0
+#MC3_XACT_TRACE=0
+#MC3_WMA_TRACE=0
+#MC3_SAVE_TRACE=0
+#MC3_TIME_TRACE=0
+#RECOMP_APU_TRACE=0
+#RECOMP_INPUT_DIAG=0
+#RECOMP_RUMBLE_TRACE=0
+#RECOMP_GL_TRACE=0
+
+# Stop at the first instruction the translator could not convert.
+#RECOMP_UNIMPL_TRAP=0
+
+# ============================================================================
+# Required: set by the game itself, do not change
+# ============================================================================
+# RECOMP_VBLANK=1  RECOMP_FLIP_VBLANK=1  RECOMP_PB_EXEC=1  RECOMP_USB=1
+# RECOMP_AC97_READY=plain  RECOMP_NET_LINK=0  RECOMP_APU_DSP_ACK=0x83AD0810
+# These make the emulated hardware behave (vblank, GPU, USB pads, sound
+# chip, no network). Changing them stops the game from booting or running.
+#
+# Developer switches not listed here (GPU, USB and kernel traces, memory
+# watches, test hooks) are named with their meaning in the source: search
+# for the name under src/ and xboxrecomp/src/.

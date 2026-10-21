@@ -208,6 +208,20 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   pushbuffer callback (sub_003E52D0; param & 0x1F = command, 1 = flip,
   (param >> 5) & 7 = interval); `MC3_FLIP_PACE=0` / `MC3_TRAP_HOOK=0` undo.
 
+- Career loading-screen hang (found 2026-10-21, fix under test): the main
+  thread spun in D3D's fence wait (sub_003DF4D0, loop at 0x003DF607) while
+  the loading-screen thread kept drawing. The loop keeps the time handed out
+  (+0x2C of the push-buffer state 0x003ECAF0) from before its poll yield;
+  the GPU ran past it and `handed - gpu` wrapped. src/recomp_manual.c ends
+  the loop through a spin hook (recomp_set_spin_hook) once the GPU has
+  passed the fence (MC3_FENCE_FIX=0 off). `pkill -USR1 mcdub3` now also
+  prints the main thread's kernel call and that fence state.
+- macOS (2026-10-21): native Apple Silicon build into work/build-mac
+  (`make build run`; Homebrew in /opt/homebrew). Boots and plays the
+  movies on GL 4.1 (Metal). The game runs off the main thread there; the
+  main thread serves SDL (xboxrecomp/src/platform/host_main.c). Linux SDL
+  pads are opened at boot and hot-plugged (they were never opened before).
+
 ### First lift (2026-10-14)
 
 21,585 functions, 0 failed, 2.98 M lines of C in 87 chunks (`--split 250`).

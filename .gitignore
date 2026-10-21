@@ -26,7 +26,10 @@ __pycache__/
 keys
 bugs
 drafts
-assets
+assets/*
+!assets/game-logo.jpeg
 TODO.md
+# Your own Switch settings (the template is switch/mcdub3_env.example.txt).
+/switch/mcdub3_env.txt
 # Personal HD texture packs (beside game/; see hd_pack.c): never committed.
 /hd/
