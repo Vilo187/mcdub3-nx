@@ -21,7 +21,20 @@ TYPE=RelWithDebInfo
 ARGS+=(-DMC3_GEN_DEBUGINFO="$([ "${GEN_DEBUGINFO:-0}" = "1" ] && echo ON || echo OFF)")
 BUILD="${BUILD_DIR:-$MC3_WORK/build-$MC3_HOST$SUFFIX}"
 
-cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" \
+# Library paths CMake remembered (pkg-config) that are gone: Homebrew's
+# upgrades delete the old version's folder (FFmpeg 8.1 -> 9.0, 2026-10-21),
+# and the link then fails on files that no longer exist. Forget those
+# entries so CMake looks them up again.
+UNSET=()
+if [ -f "$BUILD/CMakeCache.txt" ]; then
+    while IFS= read -r path; do
+        [ -e "$path" ] && continue
+        echo "libraries moved since the last configure (e.g. a Homebrew upgrade): looking them up again"
+        UNSET=(-U 'pkgcfg_lib_*' -U '__pkg_config_checked_*' -U '__pkg_config_arguments_*')
+        break
+    done < <(sed -n 's/^pkgcfg_lib_[^:]*:FILEPATH=//p' "$BUILD/CMakeCache.txt")
+fi
+cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja ${UNSET[@]+"${UNSET[@]}"} -DCMAKE_BUILD_TYPE="$TYPE" \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" "${ARGS[@]}" >/dev/null
 ninja -C "$BUILD" -j"${JOBS:-$(mc3_default_jobs)}"
 echo "built $BUILD/mcdub3   (run: tools/run_linux.sh)"
