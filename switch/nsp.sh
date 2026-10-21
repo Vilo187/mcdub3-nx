@@ -13,13 +13,16 @@
 #
 #   exefs    NTON's forwarder program (nx-hbloader + Forwarder-Mod, built
 #            for firmware 21+), title ID patched in by hacBrewPack
-#   romfs    nextNroPath / nextArgv: APP_NRO, where the forwarder looks
+#   romfs    nextNroPath / nextArgv: the edition's NRO, where the forwarder looks
 #   control  NACP from nacptool, then NTON's settings: no user selection,
 #            screenshots and video capture on, no save data, one language;
 #            the icon re-encoded as a bare baseline JPEG (else a '?')
 #   logo     APP_LOGO_DIR if it holds both files, else NTON's
 #
-# Everything comes from switch/app.env. Output: work/nsp/mcdub3-<version>.nsp.
+# Everything comes from switch/app.env. One NSP per edition (APP_EDITIONS,
+# or EDITION=<one>): work/nsp/mcdub3-nx-<edition>-<version>.nsp, each
+# starting sdmc:/switch/mcdub3-nx/mcdub3-nx-<edition>.nro under its own title
+# ID, so editions install side by side.
 #
 # Two phases, because the container may have no DNS (the VM's Docker could
 # not resolve github.com, 2026-10-18): `nsp.sh prepare` runs on the host
@@ -97,18 +100,32 @@ NTON_ASSETS="$NTON_DIR/nton/assets"
 [ -f "$NTON_ASSETS/exefs/main" ] && [ -f "$NTON_ASSETS/exefs/main.npdm" ] \
     || mc3_fail "NTON has no nton/assets/exefs at this commit: check the pin"
 
-rm -rf "$STAGE"
-mkdir -p "$STAGE/exefs" "$STAGE/romfs" "$STAGE/control" "$STAGE/logo"
-cp "$NTON_ASSETS/exefs/main" "$NTON_ASSETS/exefs/main.npdm" "$STAGE/exefs/"
+# One NSP: a forwarder to mcdub3-nx-<edition>.nro with that edition's title
+# ID and name (switch/app.env).
+build_nsp() {
+    local EDITION=$1 TITLE_ID NAME NRO key
+    key=${EDITION//-/_}                  # pal-es -> APP_TITLE_ID_pal_es
+    [[ "$key" =~ ^[A-Za-z0-9_]+$ ]] || mc3_fail "edition '$EDITION': letters, digits, - and _ only"
+    local tid_var="APP_TITLE_ID_$key" name_var="APP_NAME_$key"
+    TITLE_ID="${!tid_var:-}"
+    NAME="${!name_var:-$APP_NAME}"
+    NRO="$APP_NRO_DIR/mcdub3-nx-$EDITION.nro"
+    [[ "$TITLE_ID" =~ ^01[0-9a-f]{11}000$ ]] \
+        || mc3_fail "switch/app.env: APP_TITLE_ID_$EDITION missing or not 01xxxxxxxxxxx000"
+    echo
+    echo "==== $EDITION: $NAME, title $TITLE_ID"
+    rm -rf "$STAGE"
+    mkdir -p "$STAGE/exefs" "$STAGE/romfs" "$STAGE/control" "$STAGE/logo"
+    cp "$NTON_ASSETS/exefs/main" "$NTON_ASSETS/exefs/main.npdm" "$STAGE/exefs/"
 
-echo "== romfs: forward to $APP_NRO"
-printf '%s' "$APP_NRO" > "$STAGE/romfs/nextNroPath"
-printf '%s' "$APP_NRO" > "$STAGE/romfs/nextArgv"
+    echo "== romfs: forward to $NRO"
+    printf '%s' "$NRO" > "$STAGE/romfs/nextNroPath"
+    printf '%s' "$NRO" > "$STAGE/romfs/nextArgv"
 
-echo "== control: NACP and icon"
-"$DEVKITPRO/tools/bin/nacptool" --create "$APP_NAME" "$APP_AUTHOR" "$APP_VERSION" \
-    "$STAGE/control/control.nacp" --titleid="0x$APP_TITLE_ID" >/dev/null
-python3 - "$STAGE/control/control.nacp" "$APP_NAME" "$APP_AUTHOR" "$APP_VERSION" <<'PY'
+    echo "== control: NACP and icon"
+    "$DEVKITPRO/tools/bin/nacptool" --create "$NAME" "$APP_AUTHOR" "$APP_VERSION" \
+        "$STAGE/control/control.nacp" --titleid="0x$TITLE_ID" >/dev/null
+    python3 - "$STAGE/control/control.nacp" "$NAME" "$APP_AUTHOR" "$APP_VERSION" <<'PY'
 import sys
 path, name, publisher, version = sys.argv[1:5]
 d = bytearray(open(path, "rb").read())
@@ -126,30 +143,36 @@ for off in (0x3080, 0x3088, 0x3090, 0x3098, 0x30A0, 0x3148, 0x3150, 0x3158,
 d[0x3188:0x318A] = b"\0\0"           # cache storage index max
 open(path, "wb").write(d)
 PY
-if [ -f "$ICON_OUT" ]; then
-    cp "$ICON_OUT" "$STAGE/control/icon_AmericanEnglish.dat"
-elif [ -f "$MC3_REPO/$APP_ICON" ]; then
-    mc3_fail "icon not prepared: run 'bash switch/nsp.sh prepare' on the host first (make nsp does)"
-else
-    echo "   no icon at $APP_ICON: the home menu shows a placeholder"
-fi
+    if [ -f "$ICON_OUT" ]; then
+        cp "$ICON_OUT" "$STAGE/control/icon_AmericanEnglish.dat"
+    elif [ -f "$MC3_REPO/$APP_ICON" ]; then
+        mc3_fail "icon not prepared: run 'bash switch/nsp.sh prepare' on the host first (make nsp does)"
+    else
+        echo "   no icon at $APP_ICON: the home menu shows a placeholder"
+    fi
 
-LOGO_DIR="$MC3_REPO/${APP_LOGO_DIR:-assets/logo}"
-if [ -f "$LOGO_DIR/NintendoLogo.png" ] && [ -f "$LOGO_DIR/StartupMovie.gif" ]; then
-    echo "== start-up logo: ${APP_LOGO_DIR:-assets/logo}"
-    cp "$LOGO_DIR/NintendoLogo.png" "$LOGO_DIR/StartupMovie.gif" "$STAGE/logo/"
-else
-    echo "== start-up logo: NTON's"
-    cp "$NTON_ASSETS/logo/NintendoLogo.png" "$NTON_ASSETS/logo/StartupMovie.gif" "$STAGE/logo/"
-fi
+    LOGO_DIR="$MC3_REPO/${APP_LOGO_DIR:-assets/logo}"
+    if [ -f "$LOGO_DIR/NintendoLogo.png" ] && [ -f "$LOGO_DIR/StartupMovie.gif" ]; then
+        echo "== start-up logo: ${APP_LOGO_DIR:-assets/logo}"
+        cp "$LOGO_DIR/NintendoLogo.png" "$LOGO_DIR/StartupMovie.gif" "$STAGE/logo/"
+    else
+        echo "== start-up logo: NTON's"
+        cp "$NTON_ASSETS/logo/NintendoLogo.png" "$NTON_ASSETS/logo/StartupMovie.gif" "$STAGE/logo/"
+    fi
 
-echo "== pack"
-(cd "$STAGE" && "$HBP_DIR/hacbrewpack" -k "$KEYS" --titleid "$APP_TITLE_ID" \
-    --exefsdir exefs --romfsdir romfs --controldir control --logodir logo \
-    --nspdir nsp --ncadir nca --tempdir tmp --backupdir backup)
-NSP="$OUT/mcdub3-$APP_VERSION.nsp"
-mv "$STAGE/nsp/$APP_TITLE_ID.nsp" "$NSP"
-rm -rf "$STAGE"
-echo
-echo "built $NSP ($(stat -c %s "$NSP") bytes)"
-echo "  starts $APP_NRO as \"$APP_NAME\" $APP_VERSION, title $APP_TITLE_ID"
+    echo "== pack"
+    (cd "$STAGE" && "$HBP_DIR/hacbrewpack" -k "$KEYS" --titleid "$TITLE_ID" \
+        --exefsdir exefs --romfsdir romfs --controldir control --logodir logo \
+        --nspdir nsp --ncadir nca --tempdir tmp --backupdir backup)
+    NSP="$OUT/mcdub3-nx-$EDITION-$APP_VERSION.nsp"
+    mv "$STAGE/nsp/$TITLE_ID.nsp" "$NSP"
+    rm -rf "$STAGE"
+    echo
+    echo "built $NSP ($(stat -c %s "$NSP") bytes)"
+    echo "  starts $NRO as \"$NAME\" $APP_VERSION, title $TITLE_ID"
+}
+
+# Every edition in APP_EDITIONS, or the ones given (EDITION=usa make nsp).
+for ed in ${EDITION:-$APP_EDITIONS}; do
+    build_nsp "$ed"
+done
