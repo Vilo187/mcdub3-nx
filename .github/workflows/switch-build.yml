@@ -105,5 +105,5 @@ jobs:
             echo "Build \`${{ steps.version.outputs.build_id }}\`, run ID \`${{ github.run_id }}\`."
             if [ -n "$DESCRIPTION" ]; then echo; echo "$DESCRIPTION"; fi
             echo
-            echo "Release it: Actions > Switch release > Run workflow, build run ID \`${{ github.run_id }}\`."
+            echo "Release it: Actions > Switch release > Run workflow (the latest successful build is the default; this one is run ID \`${{ github.run_id }}\`)."
           } >> "$GITHUB_STEP_SUMMARY"
