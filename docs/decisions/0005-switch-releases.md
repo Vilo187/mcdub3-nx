@@ -31,10 +31,16 @@ own NRO, as nfsmw-nx does (one `nfsmw-nx-<edition>.nro` per edition).
   `mcdub3-nx-<edition>.nro`, its ELF and a `.buildinfo` (version, edition,
   build ID, commit, SHA-256).
 - **Release** (`switch-release.yml`, started by hand with a build's run ID):
-  runs in the `release` environment, whose required reviewers approve it;
-  checks the build succeeded, the tag is new, the notes exist and the NROs
-  match their build info; tags `v<version>` on the build's commit and
-  publishes the NROs with the notes.
+  its first job runs in the `release` environment, whose required reviewers
+  approve it, and checks the build succeeded, the tag is new, the notes
+  exist and the NROs match their build info. A job on a self-hosted runner
+  with the console keys (label `mcdub3-keys`) then builds an NSP forwarder
+  per edition (`make nsp`). The last job tags `v<version>` on the build's
+  commit and publishes NROs and NSPs with the notes, together or not at all.
+- **Keys** (decided 2026-10-21): NSPs need the console's `prod.keys`. They
+  stay on the owner's runner and are read from its disk (`MC3_KEYS`); never
+  a GitHub secret, artifact or hosted runner. The NSPs contain no keys
+  (hacBrewPack only uses them to encrypt the package).
 - **Editions**: `tools/first_lift.sh` records the XBE's size, FNV-1a 64,
   region and edition (`usa`, `jpn`, `pal` from the certificate, or
   `MC3_EDITION`) in `config/xbe_facts.h`; the NRO refuses any other XBE at
@@ -52,7 +58,9 @@ own NRO, as nfsmw-nx does (one `nfsmw-nx-<edition>.nro` per edition).
 
 ## Consequences
 
-- Releasing needs the runner online (the Linux VM, with Docker).
+- Releasing needs the runners online: the disc runner (the Linux VM, with
+  Docker) to build, the keys runner (the VM or the Mac, with Docker) for
+  the NSPs.
 - Per-edition configuration (facts, seeds) is one set today; the second
   edition moves it into `config/<edition>/`.
 - The released NRO contains the game's recompiled code (no data); that is the

@@ -1,12 +1,21 @@
-# Switch release: publish a finished Switch build as a GitHub release.
-# Started by hand (Actions > Switch release > Run workflow) with the run ID
-# of a successful "Switch build". The job runs in the "release" environment:
-# with required reviewers set on it (Settings > Environments > release), it
-# waits for approval before anything is published.
+# Switch release: publish a finished Switch build as a GitHub release, with
+# an NSP forwarder per edition. Started by hand (Actions > Switch release >
+# Run workflow) with the run ID of a successful "Switch build".
+#
+#   approve   GitHub runner, "release" environment: with required reviewers
+#             set on it (Settings > Environments > release), the release
+#             waits here for approval. Then it checks the build, the version,
+#             the notes and the NROs.
+#   nsp       your self-hosted runner (label mcdub3-keys): builds the NSP
+#             forwarders with the console keys on that machine (MC3_KEYS in
+#             the runner's .env). The keys are never uploaded or stored on
+#             GitHub; only the finished NSPs are.
+#   publish   GitHub runner: tags v<version> on the build's commit and
+#             publishes NROs and NSPs together, or nothing.
 #
 # The release notes are the "## v<version>" section of RELEASE_NOTES.md, as
 # committed in the build's commit; the version is switch/app.env's
-# APP_VERSION at that commit. The tag v<version> is created on that commit.
+# APP_VERSION at that commit.
 name: Switch release
 
 on:
@@ -29,13 +38,17 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Release
+  approve:
+    name: Approve and check
     runs-on: ubuntu-24.04
     environment: release
     env:
       GH_TOKEN: ${{ github.token }}
       RUN_ID: ${{ inputs.build_run_id }}
+    outputs:
+      sha: ${{ steps.build.outputs.sha }}
+      tag: ${{ steps.notes.outputs.tag }}
+      version: ${{ steps.notes.outputs.version }}
     steps:
       - name: The build
         id: build
@@ -78,7 +91,7 @@ jobs:
           pattern: mcdub3-nx-*
           path: ${{ runner.temp }}/build
 
-      - name: Check the artifacts
+      - name: Check the NROs
         run: |
           cd "$RUNNER_TEMP/build"
           ls -R
@@ -93,33 +106,86 @@ jobs:
             n=$((n + 1))
           done
           [ "$n" -gt 0 ] || { echo "no NRO in build $RUN_ID"; exit 1; }
+          cp "$RUNNER_TEMP/notes.md" ./notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-checked
+          path: ${{ runner.temp }}/build/
+          retention-days: 7
+
+  nsp:
+    name: NSP forwarders
+    needs: approve
+    runs-on: [self-hosted, mcdub3-keys]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.approve.outputs.sha }}
+          clean: true
+
+      - name: Build
+        env:
+          MC3_WORK: ${{ github.workspace }}/../mcdub3-work-nsp
+        run: |
+          : "${MC3_KEYS:?the runner needs MC3_KEYS (path to prod.keys) in its .env (CONTRIBUTING.md, Releases)}"
+          test -f "$MC3_KEYS" || { echo "no keys at MC3_KEYS"; exit 1; }
+          make nsp KEYS="$MC3_KEYS"
+          mkdir -p "$RUNNER_TEMP/nsp"
+          cp "$MC3_WORK"/nsp/mcdub3-nx-*-"${{ needs.approve.outputs.version }}".nsp "$RUNNER_TEMP/nsp/"
+          ls -l "$RUNNER_TEMP/nsp"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-nsp
+          path: ${{ runner.temp }}/nsp/
+          retention-days: 7
+          if-no-files-found: error
+
+  publish:
+    name: Publish
+    needs: [approve, nsp]
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.approve.outputs.tag }}
+      SHA: ${{ needs.approve.outputs.sha }}
+      PRERELEASE: ${{ inputs.prerelease }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-checked
+          path: build
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-nsp
+          path: nsp
 
       - name: Publish
-        env:
-          TAG: ${{ steps.notes.outputs.tag }}
-          SHA: ${{ steps.build.outputs.sha }}
-          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          cd "$RUNNER_TEMP/build"
           {
-            desc=$(cat ./*/description.txt 2>/dev/null | sed '/^$/d' | sort -u)
+            desc=$(cat build/*/description.txt 2>/dev/null | sed '/^$/d' | sort -u)
             [ -n "$desc" ] && printf '%s\n\n' "$desc"
-            cat "$RUNNER_TEMP/notes.md"
+            cat build/notes.md
             echo
             echo "---"
             echo
             echo "| File | Edition | SHA-256 |"
             echo "|---|---|---|"
-            for info in */*.buildinfo; do
+            for info in build/*/*.buildinfo; do
               f=$(basename "${info%.buildinfo}.nro")
               echo "| \`$f\` | $(sed -n 's/^edition=//p' "$info") | \`$(sed -n 's/^nro_sha256=//p' "$info")\` |"
             done
+            for f in nsp/*.nsp; do
+              echo "| \`$(basename "$f")\` | forwarder | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
+            done
             echo
-            echo "Build $(sed -n 's/^build=//p' ./*/*.buildinfo | head -1), commit $SHA."
-          } > "$RUNNER_TEMP/body.md"
+            echo "Build $(sed -n 's/^build=//p' build/*/*.buildinfo | head -1), commit $SHA."
+          } > body.md
           flags=()
           [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
-          gh release create "$TAG" ./*/*.nro \
+          gh release create "$TAG" build/*/*.nro nsp/*.nsp \
             --repo "$GITHUB_REPOSITORY" --target "$SHA" \
-            --title "mcdub3-nx $TAG" --notes-file "$RUNNER_TEMP/body.md" "${flags[@]}"
+            --title "mcdub3-nx $TAG" --notes-file body.md "${flags[@]}"
           echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"

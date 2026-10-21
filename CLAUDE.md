@@ -10,8 +10,12 @@ Keep this file current: findings, rules, status. It is the project's memory.
   Every path is relative to the repo root: the disc in `game/`, everything
   generated in `work/` (both gitignored; tools/env.sh). No default paths
   outside the repo.
-- Never commit, upload or pass to CI the console keys: `keys/prod.keys`
-  (gitignored; the NSP forwarder build reads them from there, locally only).
+- Never commit, upload or store on GitHub the console keys: `keys/prod.keys`
+  (gitignored; the NSP forwarder build reads them from there). Not as a
+  secret, not as an artifact, never on GitHub's runners. The one exception
+  (decided 2026-10-21, ADR 0005): the release's NSP job on the owner's own
+  self-hosted runner reads them from that machine's disk (`MC3_KEYS`); only
+  the finished NSPs leave it.
 - Toolkit changes go in `xboxrecomp/` as their own commits, subject prefixed
   `xboxrecomp:`. Prefer new files over edits to files the Switch layer or
   upstream also change (ADR 0002). Note upstreamable fixes in

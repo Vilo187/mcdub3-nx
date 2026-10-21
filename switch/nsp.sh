@@ -63,15 +63,18 @@ if [ "${1:-}" = prepare ]; then
         # A bare baseline JPEG, 256x256, 4:2:0, nothing else in it: anything
         # more and the home menu shows a '?' or nothing (NTON does the same).
         # A Python with Pillow: the project venvs (Linux work/venv, macOS
-        # work/macvenv), else the system's, with Pillow installed for the user.
+        # work/macvenv) or the system's; else a venv of its own in work/
+        # (system Pythons refuse pip installs: PEP 668).
         PY=""
-        for c in "$MC3_WORK/venv/bin/python3" "$MC3_WORK/macvenv/bin/python3" python3; do
+        for c in "$MC3_WORK/venv/bin/python3" "$MC3_WORK/macvenv/bin/python3" \
+                 "$MC3_WORK/pillow-venv/bin/python3" python3; do
             if "$c" -c 'import PIL' >/dev/null 2>&1; then PY="$c"; break; fi
         done
         if [ -z "$PY" ]; then
-            PY=python3
-            "$PY" -m pip install --quiet --user pillow \
-                || mc3_fail "cannot install Pillow for $PY (needed to clean the icon)"
+            python3 -m venv "$MC3_WORK/pillow-venv" \
+                && "$MC3_WORK/pillow-venv/bin/pip" install --quiet pillow \
+                || mc3_fail "cannot make a Python with Pillow in $MC3_WORK/pillow-venv (needed for the icon)"
+            PY="$MC3_WORK/pillow-venv/bin/python3"
         fi
         "$PY" - "$MC3_REPO/$APP_ICON" "$ICON_OUT" <<'PY'
 import sys
