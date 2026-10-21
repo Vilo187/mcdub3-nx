@@ -234,6 +234,15 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   `release`, approval). NROs are mcdub3-nx-<edition>.nro; the boot check
   (MC3_XBE_SIZE / MC3_XBE_FNV64 in config/xbe_facts.h) refuses another XBE.
 
+- Career race crash (found 2026-10-21, Switch "starting a specific race",
+  Mac after ~8 min; same chain): mcPgCareer::ReportRaceResult (sub_0024F8C0)
+  -> sub_00251CD0 calls listeners from a list of 12-byte entries at
+  this+0x78..+0x7C (vtable slot 0x28; sub_00251D40: 0x2C), and one entry
+  was stale (null method, then a garbage object). Root cause (who leaves
+  the entry) not found yet; src/recomp_manual.c drops entries whose object,
+  vtable or method are not valid and logs `[LISTEN]` with what they held
+  (MC3_LISTENER_CHECK=0 off).
+
 ### First lift (2026-10-14)
 
 21,585 functions, 0 failed, 2.98 M lines of C in 87 chunks (`--split 250`).
