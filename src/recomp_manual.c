@@ -1473,6 +1473,47 @@ static void listener_broadcast(uint32_t self, unsigned slot, const char *who)
         if (listener_valid(snap[i].obj, slot))
             listener_call(snap[i].obj, slot, arg);
     }
+    /* Listeners added during the broadcast hear it too, as the original
+     * loop reached them (it runs to the list's live end): starting a race
+     * registers the race's own listeners from a callback, and without this
+     * the race stopped at "PREPARE TO RACE" (2026-10-21). Rounds until no
+     * new entry appears, each called once. */
+    {
+        int round;
+        for (round = 0; round < 8 && n < LISTEN_MAX; round++) {
+            uint32_t e, b = MEM32(self + 0x78), en = MEM32(self + 0x7C), added = 0;
+            if (!listener_ram(b) || en < b || en - b > 12u * 4096)
+                break;
+            for (e = b; e + 12 <= en && n < LISTEN_MAX; e += 12) {
+                uint16_t id = MEM16(e);
+                uint32_t key = MEM32(e + 4), obj = MEM32(e + 8), k;
+                int seen = id == cur_id && key == cur_key;
+                for (k = 0; k < n && !seen; k++)
+                    seen = snap[k].obj == obj && snap[k].id == id && snap[k].key == key;
+                if (seen)
+                    continue;
+                snap[n].id = id; snap[n].key = key; snap[n].obj = obj;
+                n++;
+                added++;
+                if (listener_valid(obj, slot))
+                    listener_call(obj, slot, arg);
+            }
+            if (!added)
+                break;
+        }
+    }
+    {
+        static int trace = -1;
+        static long count;
+        if (trace < 0) {
+            const char *e = getenv("MC3_LISTEN_TRACE");
+            trace = e && e[0] == '1';
+        }
+        if (trace && count++ < 200)
+            fprintf(stderr, "[LISTEN] %s %08X(arg %u): %u listener(s), current %d, list now %u\n",
+                    who, self, arg, n, (int)idx,
+                    (MEM32(self + 0x7C) - MEM32(self + 0x78)) / 12);
+    }
     g_ebx = saved_ebx; g_esi = saved_esi; g_edi = saved_edi; g_ebp = saved_ebp;
     g_esp += 8;                                /* ret 4: return address and the argument */
 }
