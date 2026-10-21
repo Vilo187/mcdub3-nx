@@ -29,10 +29,10 @@ for v in MC3_WORK MC3_GAME_DIR MC3_GEN_DIR MC3_APP MC3_SD_DIR SD_ROOT BUILD_DIR 
     [ -n "${!v:-}" ] && ENVS+=(-e "$v=${!v}")
 done
 
-# Folders outside the repo (a CI runner keeps MC3_WORK, the disc and the
-# release output elsewhere) are mounted at the same paths.
+# Folders outside the repo (a CI runner keeps MC3_WORK, the disc, the
+# release output and the keys elsewhere) are mounted at the same paths.
 MOUNTS=(-v "$MC3_REPO:$MC3_REPO")
-for d in "$MC3_WORK" "$MC3_GAME_DIR" "${RELEASE_DIR:-}"; do
+for d in "$MC3_WORK" "$MC3_GAME_DIR" "${RELEASE_DIR:-}" "$([ -n "${KEYS:-}" ] && dirname "$KEYS")"; do
     [ -n "$d" ] || continue
     mkdir -p "$d"
     case "$(cd "$d" && pwd -P)/" in "$(cd "$MC3_REPO" && pwd -P)/"*) ;; *) MOUNTS+=(-v "$d:$d") ;; esac

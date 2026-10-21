@@ -1,4 +1,6 @@
-# The self-hosted runner with the disc (CONTRIBUTING.md, Releases).
+# The self-hosted runners (CONTRIBUTING.md, Releases): the disc for builds,
+# the console keys for NSP forwarders.
 self-hosted-runner:
   labels:
     - mcdub3-disc
+    - mcdub3-keys

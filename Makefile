@@ -148,8 +148,8 @@ switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-imag
 
 nsp:  ## NSP forwarders (home-menu apps), one per edition, from switch/app.env, in the container; EDITION=usa for one, KEYS=keys/prod.keys
 	@mkdir -p $(LOGS)
-	bash switch/nsp.sh prepare 2>&1 | tee $(LOGS)/nsp_$(NOW).log
-	bash switch/$(if $(filter 1,$(NATIVE)),nsp.sh,docker_build.sh switch/nsp.sh) 2>&1 | tee -a $(LOGS)/nsp_$(NOW).log
+	set -o pipefail; bash switch/nsp.sh prepare 2>&1 | tee $(LOGS)/nsp_$(NOW).log
+	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),nsp.sh,docker_build.sh switch/nsp.sh) 2>&1 | tee -a $(LOGS)/nsp_$(NOW).log
 
 switch-vk:  ## Switch build with Vulkan (NVK)
 	$(MAKE) switch VULKAN=1

@@ -537,7 +537,7 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
 |---|---|---|---|
 | Tests | `ci.yml` | GitHub | every push and pull request; first stage of a build |
 | Build | `switch-build.yml` | the self-hosted runner with the disc | you: Actions > Switch build > Run workflow |
-| Release | `switch-release.yml` | GitHub, `release` environment (approval) | you: Actions > Switch release > Run workflow |
+| Release | `switch-release.yml` | GitHub (`release` environment: approval), then the self-hosted runner with the keys (NSPs), then GitHub (publish) | you: Actions > Switch release > Run workflow |
 
 **To release a version**
 
@@ -548,8 +548,10 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
    The run's summary shows its run ID.
 4. Try the NRO from the run's artifact on the console.
 5. Actions > **Switch release** > Run workflow with that run ID (pre-release
-   or not). A reviewer approves the `release` environment; the workflow tags
-   `v0.2.0` on the built commit and publishes the NROs with the notes.
+   or not). A reviewer approves the `release` environment; your runner then
+   builds the NSP forwarders (one per edition) with your keys, and the
+   workflow tags `v0.2.0` on the built commit and publishes the NROs and
+   NSPs with the notes, all together or nothing.
 
 **One-time set-up**
 
@@ -561,13 +563,20 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
   pull request cannot reach the runner, but keep this on for a public repo.
 - *The runner* (the Linux VM, with Docker as for `make switch`): Settings >
   Actions > Runners > New self-hosted runner > Linux, ARM64; follow the
-  commands, and give it the extra label `mcdub3-disc`. In the runner's
-  folder, `.env` sets where the discs are, one folder per edition:
+  commands, and give it the extra labels `mcdub3-disc` and `mcdub3-keys`.
+  In the runner's folder, `.env` sets where the discs (one folder per
+  edition) and the keys are:
 
   ```sh
   # actions-runner/.env
   MC3_DISCS=/home/<you>/mcdub3-discs      # contains usa/default.xbe ...
+  MC3_KEYS=/home/<you>/keys/prod.keys     # your console's keys, for the NSPs
   ```
+
+  Labels: `mcdub3-disc` (it has the discs: builds) and `mcdub3-keys` (it has
+  the keys: NSP forwarders). One machine can carry both; the Mac can be the
+  `mcdub3-keys` runner too (Docker Desktop running). The keys are read from
+  that disk only: never a GitHub secret or artifact (CLAUDE.md, Rules).
 
   Run it as a service (`sudo ./svc.sh install && sudo ./svc.sh start`). Each
   build lifts the disc again in a work folder beside the checkout
