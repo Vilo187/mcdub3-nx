@@ -28,6 +28,10 @@ MANUAL="$MC3_REPO/src/recomp_manual.c"
 # (tools/trace_wrappers.py), lifted and compiled with the game; empty: none.
 TRACE_C="$MC3_GEN_DIR/zz_trace_wrappers.c"
 MMIO="${MC3_MMIO_SECTIONS:-DSOUND,XPP}"
+# Extra arguments for the disassembler / recompiler steps, as words: split on
+# spaces once into arrays, never globbed (e.g. MC3_RECOMP_ARGS="--a --b 2").
+read -ra DISASM_ARGS <<< "${MC3_DISASM_ARGS:-}"
+read -ra RECOMP_ARGS <<< "${MC3_RECOMP_ARGS:-}"
 A="$MC3_ANALYSIS_DIR"
 
 mc3_need_game
@@ -42,7 +46,7 @@ if [ "${LIFT_ONLY:-0}" != "1" ]; then
     cp "$XBE_JSON" "$A/xbe_analysis.json"
     "$MC3_PYTHON" -m tools.disasm "$MC3_XBE" -o "$A/disasm" \
         --analysis-json "$XBE_JSON" --seed-functions "$SEEDS" \
-        ${MC3_DISASM_ARGS:-}
+        ${DISASM_ARGS[@]+"${DISASM_ARGS[@]}"}
     "$MC3_PYTHON" -m tools.func_id "$MC3_XBE" -o "$A/func_id" \
         --functions "$A/disasm/functions.json" \
         --strings "$A/disasm/strings.json" \
@@ -69,7 +73,7 @@ fi
     --all --split 250 --gen-dir "$MC3_GEN_DIR" -o "$A/recomp" \
     --disasm-dir "$A/disasm" --func-id-dir "$A/func_id" --abi-dir "$A/abi" \
     --exclude-manual "$EXCLUDE" --mmio-sections "$MMIO" \
-    ${MC3_RECOMP_ARGS:-} 2>&1 | tee "$A/recomp.log"
+    ${RECOMP_ARGS[@]+"${RECOMP_ARGS[@]}"} 2>&1 | tee "$A/recomp.log"
 
 # The trace wrappers are compiled with the lifted code (CMake globs gen/*.c).
 [ -n "${TRACE:-}" ] && cp "$MC3_WORK/trace/trace_wrappers.c" "$TRACE_C"
