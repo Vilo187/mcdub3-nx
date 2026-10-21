@@ -76,6 +76,25 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ steps.build.outputs.sha }}
+          fetch-depth: 0
+
+      - name: Can the tag be made?
+        env:
+          HAS_RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN != '' }}
+          DEFAULT: ${{ github.event.repository.default_branch }}
+        run: |
+          # GitHub refuses (403) a workflow's own token a tag on a commit whose
+          # .github/workflows differ from the default branch's: that needs the
+          # 'workflows' permission, which GITHUB_TOKEN never has (found
+          # 2026-10-21 releasing a build made before workflow fixes). With a
+          # RELEASE_TOKEN secret (fine-grained, Contents + Workflows: write)
+          # any build can be released.
+          [ "$HAS_RELEASE_TOKEN" = "true" ] && exit 0
+          if ! git diff --quiet "${{ steps.build.outputs.sha }}" "origin/$DEFAULT" -- .github/workflows; then
+            echo "::error::The workflows changed since this build (${{ steps.build.outputs.sha }}), so GitHub will not let this workflow tag it. Run a new Switch build and release that one (or add a RELEASE_TOKEN secret)."
+            git diff --stat "${{ steps.build.outputs.sha }}" "origin/$DEFAULT" -- .github/workflows
+            exit 1
+          fi
 
       - name: Version and notes
         id: notes
@@ -160,7 +179,8 @@ jobs:
     needs: [approve, nsp]
     runs-on: ubuntu-24.04
     env:
-      GH_TOKEN: ${{ github.token }}
+      # RELEASE_TOKEN when set (see "Can the tag be made?"), else the run's own.
+      GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
       TAG: ${{ needs.approve.outputs.tag }}
       SHA: ${{ needs.approve.outputs.sha }}
       PRERELEASE: ${{ inputs.prerelease }}

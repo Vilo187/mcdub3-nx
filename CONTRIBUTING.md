@@ -548,7 +548,11 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
 4. Try the NRO from the run's artifact on the console.
 5. Actions > **Switch release** > Run workflow (pre-release or not). It
    releases the latest successful build; give a run ID only to release an
-   older one. A reviewer approves the `release` environment; your runner then
+   older one. A build made before a change to `.github/workflows/` cannot be
+   released: GitHub does not let a workflow's own token tag such a commit,
+   and the release stops at once saying so. Build again, or add a
+   `RELEASE_TOKEN` secret (a fine-grained token for this repository with
+   Contents and Workflows: read and write) to release any build. A reviewer approves the `release` environment; your runner then
    builds the NSP forwarders (one per edition) with your keys, and the
    workflow tags `v0.2.0` on the built commit and publishes the NROs and
    NSPs with the notes, all together or nothing.
