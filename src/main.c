@@ -154,11 +154,36 @@ static void crash_signal(int sig, siginfo_t *si, void *uc)
  * the main guest thread (registers, indirect-call trail, stack for
  * tools/stackwalk.py) while the game keeps running. For a hang: freeze it,
  * then ask where it is. A diagnostic, so stdio in a handler is accepted. */
+/* D3D's wait for the GPU (sub_003DF4D0, BlockOnTime): the push-buffer
+ * state at 0x003ECAF0 keeps the last time handed out at +0x2C, a pointer to
+ * the time the GPU has reached at +0x30 and the event the GPU interrupt
+ * sets at +0x1DCC. A main thread stuck there (career loading screen hang,
+ * 2026-10-21) waits for one of them: these say which. */
+#define MC3_PB_STATE 0x003ECAF0u
+static uint32_t snap_rd32(uint32_t va)
+{
+    return *(volatile uint32_t *)((uintptr_t)va + g_xbox_mem_offset);
+}
+
 static void snapshot_signal(int sig)
 {
     extern void xbox_WatchdogDump(const char *why);
+    extern uint32_t xbox_main_kernel_call(uint32_t *ret, long long *ms);
+    uint32_t ord, ret = 0, tp;
+    long long ms = 0;
     (void)sig;
     xbox_WatchdogDump("SIGUSR1 snapshot");
+    ord = xbox_main_kernel_call(&ret, &ms);
+    if (ord)
+        fprintf(stderr, "  main thread in kernel call ord %u from %08X for %lld ms\n", ord, ret, ms);
+    else
+        fprintf(stderr, "  main thread in guest code (no kernel call)\n");
+    tp = snap_rd32(MC3_PB_STATE + 0x30);
+    fprintf(stderr, "  D3D push buffer: time handed out %08X, GPU time %08X (at %08X), "
+                    "event +0x1DCC signal %u\n",
+            snap_rd32(MC3_PB_STATE + 0x2C), tp ? snap_rd32(tp) : 0, tp,
+            snap_rd32(MC3_PB_STATE + 0x1DCC + 4));
+    fflush(stderr);
 }
 
 static void install_crash_reporter(void)
@@ -456,6 +481,16 @@ static void log_settings(void)
     printf("\n");
 }
 
+#if !defined(__SWITCH__)
+/* SDL's controller set-up, on the main thread (macOS wants it there). */
+static void input_init_on_main(void *unused)
+{
+    extern void xbox_InputInit(void);
+    (void)unused;
+    xbox_InputInit();
+}
+#endif
+
 static int game_main(void)
 {
     char xbe_path[512];
@@ -575,6 +610,15 @@ static int game_main(void)
 
     xbox_WatchdogStart();   /* inert unless RECOMP_WATCHDOG_SECS is set */
     perf_report_start();    /* inert unless MC3_PERF is set */
+#if !defined(__SWITCH__)
+    {   /* SDL game controllers (a DualSense, an Xbox pad) as pads 1-4, with
+         * the keyboard on top of pad 1; plugged in later, picked up within
+         * a second. On this thread, before the guest starts the renderer. */
+        extern void xbox_InputInit(void);
+        extern void xbox_host_main_call(void (*fn)(void *), void *arg);
+        xbox_host_main_call(input_init_on_main, NULL);
+    }
+#endif
 
     printf("Starting guest at 0x%08X (esp=0x%08X)\n", MC3_XBE_ENTRY_POINT, g_esp);
     xbox_gil_mark_main();   /* the frame-rate thread (RECOMP_GIL_EAGER) */
@@ -624,10 +668,19 @@ int main(int argc, char **argv)
     return rc;
 }
 #else
-int main(int argc, char **argv)
+/* Linux: the game on the main thread. macOS: the game on a thread of its
+ * own and the main thread kept for the window system (the toolkit's
+ * platform/host_main.c), which macOS requires. */
+static int game_main_args(int argc, char **argv)
 {
     (void)argc;
     (void)argv;
     return game_main();
+}
+
+int main(int argc, char **argv)
+{
+    extern int xbox_host_main_run(int (*fn)(int, char **), int argc, char **argv);
+    return xbox_host_main_run(game_main_args, argc, argv);
 }
 #endif

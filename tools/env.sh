@@ -8,7 +8,7 @@
 #   └── work/           everything generated (gitignored):
 #       ├── analysis/   xbe_parser / disasm / func_id / abi_analysis output
 #       ├── gen/        lifted C from tools/regen.sh
-#       ├── build-linux/, build-switch/ ...
+#       ├── build-linux/, build-mac/, build-switch/ ...
 #       ├── switch_sd/  SD-card staging
 #       ├── logs/, elf/
 #       ├── venv/       Python + capstone for the lift pipeline
@@ -23,6 +23,25 @@ export MC3_GAME_DIR="${MC3_GAME_DIR:-$MC3_REPO/game}"
 export MC3_XBE="${MC3_XBE:-$MC3_GAME_DIR/default.xbe}"
 export MC3_ANALYSIS_DIR="${MC3_ANALYSIS_DIR:-$MC3_WORK/analysis}"
 export MC3_GEN_DIR="${MC3_GEN_DIR:-$MC3_WORK/gen}"
+
+# The desktop host: Linux (the VM) or macOS (native, Apple Silicon). Each
+# builds into its own tree under work/ (build-linux*, build-mac*), so the
+# VM and the Mac can share the workspace folder.
+if [ "$(uname -s)" = "Darwin" ]; then MC3_HOST=mac; else MC3_HOST=linux; fi
+export MC3_HOST
+
+# macOS: build and run as arm64 with the Apple Silicon Homebrew
+# (/opt/homebrew). A shell under Rosetta (uname -m = x86_64) would pick the
+# Intel Homebrew in /usr/local and build an x86 binary; re-run natively.
+# Call at the top of a script: mc3_mac_native "$0" "$@".
+mc3_mac_native() {
+    [ "$MC3_HOST" = mac ] || return 0
+    if [ "$(uname -m)" != arm64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+        exec arch -arm64 /bin/bash "$@"
+    fi
+    [ -d /opt/homebrew/bin ] && export PATH="/opt/homebrew/bin:$PATH"
+    return 0
+}
 
 # The lift pipeline's Python: the first that can import capstone, from the
 # project venv (vm/setup-ubuntu.sh) or the system. Scripts call mc3_python.

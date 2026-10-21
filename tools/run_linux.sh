@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Run the Linux build in a window, logging to $MC3_WORK/logs/.
+# Run the desktop build (Linux or macOS) in a window, logging to
+# $MC3_WORK/logs/.
 #
 #   tools/run_linux.sh                        play: window, keyboard/controller
 #   GDB=1 tools/run_linux.sh                  under gdb (break sub_XXXXXXXX works:
@@ -13,11 +14,12 @@
 #   RECOMP_KEYBOARD=1 RECOMP_WATCHDOG_SECS=30 tools/run_linux.sh
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+mc3_mac_native "$0" "$@"
 
 SUFFIX=""
 [ "${VULKAN:-0}" = "1" ] && SUFFIX="-vk"
 [ "${DEBUG:-0}" = "1" ] && SUFFIX="$SUFFIX-dbg"
-BIN="${BIN:-$MC3_WORK/build-linux$SUFFIX/mcdub3}"
+BIN="${BIN:-$MC3_WORK/build-$MC3_HOST$SUFFIX/mcdub3}"
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (tools/build_linux.sh)"
 # A run of a stale binary looks exactly like the fix did not work.
 STALE=$(find "$MC3_REPO/src" "$MC3_REPO/config" "$XBOXRECOMP_DIR/src" "$MC3_GEN_DIR" \
@@ -41,8 +43,19 @@ mkdir -p "$MC3_SAVE_DIR"
 cd "$MC3_WORK"
 
 CMD=("$BIN")
-[ -n "${SECS:-}" ] && CMD=(timeout --signal=KILL "$SECS" "${CMD[@]}")
-[ "${HEADLESS:-0}" = "1" ] && CMD=(xvfb-run -a "${CMD[@]}")
+if [ -n "${SECS:-}" ]; then
+    if command -v timeout >/dev/null; then
+        CMD=(timeout --signal=KILL "$SECS" "${CMD[@]}")
+    elif command -v gtimeout >/dev/null; then              # macOS + coreutils
+        CMD=(gtimeout --signal=KILL "$SECS" "${CMD[@]}")
+    else                                                   # macOS: perl's alarm
+        CMD=(perl -e 'alarm shift; exec @ARGV' "$SECS" "${CMD[@]}")
+    fi
+fi
+if [ "${HEADLESS:-0}" = "1" ]; then
+    [ "$MC3_HOST" = mac ] && mc3_fail "HEADLESS=1 needs xvfb: Linux only"
+    CMD=(xvfb-run -a "${CMD[@]}")
+fi
 
 if [ "${GDB:-0}" = "1" ]; then
     # gdb stops at the fault itself, before the crash reporter runs:

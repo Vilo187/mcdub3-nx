@@ -20,10 +20,10 @@ NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
 export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
-       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD
+       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE SETTINGS GAME
 
 .PHONY: help setup nsp check-vm extract lift regen relift \
-        build build-vk build-debug run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
+        build build-vk build-debug mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
         switch switch-vk switch-lto send \
         hd-dump hd-tools hd-upscale \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
@@ -120,6 +120,13 @@ report:  ## Explain the snapshot in the newest run log (LOG=<file> for another)
 
 trap:  ## Run, stopping at the first untranslated instruction reached
 	RECOMP_UNIMPL_TRAP=1 bash tools/run_linux.sh
+
+## macOS app
+
+mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=1.5, SETTINGS="K=V ...", HD=1, GAME=<disc dir>)
+	@mkdir -p $(LOGS)
+	$(MAKE) build
+	bash tools/mac_app.sh 2>&1 | tee $(LOGS)/mac_app_$(NOW).log
 
 ## Texture packs (hd/ beside game/; xboxrecomp/src/nv2a_gl/hd_pack.c)
 
