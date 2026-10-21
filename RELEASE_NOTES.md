@@ -1,18 +1,8 @@
 # Release notes
 
-One section per release, newest first, headed `## v<version>` with the
-version in `switch/app.env` (`APP_VERSION`). The Switch release workflow
-(`.github/workflows/switch-release.yml`) publishes the section of the
-version it releases; write it before starting the release.
-
 ## v0.1.0
 
-First test release of mcdub3-nx: the Xbox version of *Midnight Club 3: DUB
-Edition*, recompiled to run natively on the Nintendo Switch.
-
-You need your own copy of the game: the extracted Xbox disc (`default.xbe`
-and its files, not the ISO). The NRO contains no game data and does not run
-without it.
+First beta release of the game.
 
 ### Install
 
@@ -21,8 +11,8 @@ without it.
 3. Start the NRO from the Homebrew Menu in title takeover mode (hold **R**
    while launching a game).
 
-| File | Edition |
-|---|---|
+| File                | Edition                |
+| ------------------- | ---------------------- |
 | `mcdub3-nx-usa.nro` | NTSC-U (North America) |
 
 A build refuses a disc from another edition (or a modified `default.xbe`)
