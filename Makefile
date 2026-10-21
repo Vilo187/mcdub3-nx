@@ -21,7 +21,7 @@ NOW   = $(shell date +%Y%m%d_%H%M%S)
 # Command-line settings that the scripts read from the environment.
 export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE SETTINGS GAME \
-       RELEASE_DIR MC3_BUILD_ID
+       RELEASE_DIR MC3_BUILD_ID EDITION
 
 .PHONY: help setup nsp check-vm extract lift regen relift \
         build build-vk build-debug mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
@@ -146,7 +146,7 @@ switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-imag
 	@mkdir -p $(LOGS)
 	bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 
-nsp:  ## The NSP forwarder (home-menu app) from switch/app.env, in the container; KEYS=keys/prod.keys
+nsp:  ## NSP forwarders (home-menu apps), one per edition, from switch/app.env, in the container; EDITION=usa for one, KEYS=keys/prod.keys
 	@mkdir -p $(LOGS)
 	bash switch/nsp.sh prepare 2>&1 | tee $(LOGS)/nsp_$(NOW).log
 	bash switch/$(if $(filter 1,$(NATIVE)),nsp.sh,docker_build.sh switch/nsp.sh) 2>&1 | tee -a $(LOGS)/nsp_$(NOW).log

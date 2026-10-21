@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Send the NRO to the console and stream its log back (make send).
 #
-#   switch/send.sh [nro]          default: the staged mcdub3.nro (VULKAN=1: -vulkan)
+#   switch/send.sh [nro]          default: the staged mcdub3-nx-<edition>.nro (VULKAN=1: -vulkan)
 #   SWITCH_IP=192.168.1.50 ...    address the console directly instead of
 #                                 finding it by broadcast
 #   NATIVE=1 ...                  use a host nxlink instead of the container
@@ -17,7 +17,8 @@
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
 
-NRO="${1:-$MC3_WORK/switch_sd/switch/$MC3_SD_DIR/$MC3_APP$([ "${VULKAN:-0}" = 1 ] && echo -vulkan).nro}"
+EDITION=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' "$MC3_REPO/config/xbe_facts.h")
+NRO="${1:-$MC3_WORK/switch_sd/switch/$MC3_SD_DIR/mcdub3-nx-${EDITION:-usa}$([ "${VULKAN:-0}" = 1 ] && echo -vulkan).nro}"
 [ -f "$NRO" ] || mc3_fail "no $NRO: make switch first"
 ARGS=(-s)
 [ -n "${SWITCH_IP:-}" ] && ARGS+=(-a "$SWITCH_IP")

@@ -162,7 +162,9 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   1280x720 in its code). Movies upscaled 2x on the GPU (MC3_MOVIE_HD,
   RECOMP_GL_MOVIE_SCALE; first test pending). HD video packs made from the
   game's videos can't be shipped.
-- NSP forwarder (works since 2026-10-18): `make nsp` follows NTON's recipe
+- NSP forwarder (works since 2026-10-18; one per edition since 2026-10-21,
+  each starting mcdub3-nx-<edition>.nro under APP_TITLE_ID_<edition> from
+  switch/app.env): `make nsp` follows NTON's recipe
   (its Forwarder-Mod forwarder reading romfs:/nextNroPath, its NACP
   settings, icon re-encoded bare); start-up logo from assets/logo/ or NTON's.
   The VM's Docker has no DNS: `nsp.sh prepare` fetches on the host.

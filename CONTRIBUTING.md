@@ -34,7 +34,7 @@ The files will be organized according to the following hiërarchy:
 
 ```
 sdmc:/switch/mcdub3-nx/
-├── mcdub3.nro
+├── mcdub3-nx-usa.nro  the NRO for your edition of the game (mcdub3-nx-<edition>.nro)
 ├── mcdub3_env.txt   settings: KEY=VALUE per line, every switch explained inside
 │                    (template: switch/mcdub3_env.example.txt)
 ├── mcdub3_log.txt   written when not launched through nxlink
@@ -280,7 +280,7 @@ mcdub3-nx/
     │   └── mcdub3          the Linux executable
     ├── build-linux-vk/, build-linux-dbg/      variants (VULKAN=1, DEBUG=1)
     ├── build-switch/, build-switch-vk/        Switch build trees (make switch); mcdub3.elf -> mcdub3.nro
-    ├── switch_sd/            [generated] SD-card staging: switch/mcdub3-nx/{mcdub3.nro, game/}
+    ├── switch_sd/            [generated] SD-card staging: switch/mcdub3-nx/{mcdub3-nx-<edition>.nro, game/}
     ├── elf/                  [generated] one ELF per staged NRO, to resolve console crash addresses
     ├── save/                 [generated] the title's drive letters (T:, U:, Z:) and partition images
     ├── logs/                 [generated] every make lift/build/run/switch log, timestamped
@@ -503,15 +503,18 @@ installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
 ## Sending builds to the Switch
 
 - **nxlink** (fastest): open hbmenu, press **Y** (netloader), then
-  `nxlink -s work/switch_sd/switch/mcdub3-nx/mcdub3.nro`. `-s` keeps the
+  `nxlink -s work/switch_sd/switch/mcdub3-nx/mcdub3-nx-usa.nro` (or `make send`). `-s` keeps the
   connection open and streams the log to your terminal. The game data must
   already be on the card at `sdmc:/switch/mcdub3-nx/game/`.
 - **SD card**: copy `work/switch_sd/switch/mcdub3-nx/` to the card.
 - Start with **title takeover** (hold R while launching a game). Applet mode
   leaves too little memory.
-- Or install the **NSP forwarder**: `make nsp` builds
-  `work/nsp/mcdub3-<version>.nsp`, a home-menu app that starts
-  `sdmc:/switch/mcdub3-nx/mcdub3.nro` as an application (full memory). It is
+- Or install an **NSP forwarder**: `make nsp` builds one per edition in
+  `APP_EDITIONS` (switch/app.env; `EDITION=usa make nsp` for one),
+  `work/nsp/mcdub3-nx-<edition>-<version>.nsp`: a home-menu app that starts
+  `sdmc:/switch/mcdub3-nx/mcdub3-nx-<edition>.nro` as an application (full
+  memory). Each edition has its own title ID (`APP_TITLE_ID_<edition>`), so
+  editions install side by side; reinstalling one replaces it. It is
   built the way [NTON](https://github.com/rlaphoenix/NTON) builds forwarders:
   NTON's forwarder program (nx-hbloader + Forwarder-Mod, firmware 21+)
   reading the NRO path from its romfs, NTON's NACP settings, the icon

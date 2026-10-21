@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build the Switch NRO and stage an SD-card layout:
 #
-#   <SD>/switch/mcdub3-nx/mcdub3.nro          (mcdub3-vulkan.nro with VULKAN=1)
+#   <SD>/switch/mcdub3-nx/mcdub3-nx-<edition>.nro   the edition of the lift
+#                                             (config/xbe_facts.h: usa, ...);
+#                                             -vulkan / -lto added for those
 #   <SD>/switch/mcdub3-nx/game/               the extracted disc (never the ISO)
 #   <SD>/switch/mcdub3-nx/mcdub3_env.txt      optional KEY=VALUE runtime switches
 #   <SD>/switch/mcdub3-nx/hd/textures/        the HD texture pack, with HD=1 only
@@ -26,7 +28,11 @@ mc3_check_lift_fresh
 
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 SD="${SD_ROOT:-$MC3_WORK/switch_sd}"
-NRO_NAME=mcdub3
+# The NRO is named for the edition its lift fits (MC3_EDITION, written by
+# tools/first_lift.sh), as releases and the NSP forwarders name it.
+EDITION=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' "$MC3_REPO/config/xbe_facts.h")
+[ -n "$EDITION" ] || mc3_fail "config/xbe_facts.h has no MC3_EDITION: make lift"
+NRO_NAME="mcdub3-nx-$EDITION"
 SUFFIX=""
 ARGS=(-DMC3_VULKAN=OFF)
 if [ "${VULKAN:-0}" = "1" ]; then
@@ -62,6 +68,7 @@ ninja -C "$BUILD" -j"$JOBS"
 DEST="$SD/switch/$MC3_SD_DIR"
 mkdir -p "$DEST"
 cp "$BUILD/mcdub3.nro" "$DEST/$NRO_NAME.nro"
+rm -f "$DEST/mcdub3.nro" "$DEST/mcdub3-vulkan.nro" "$DEST/mcdub3-lto.nro"   # names before 2026-10-21
 # Keep the ELF of every staged NRO, by hash: crash offsets in a console log
 # only resolve against the exact build that wrote it.
 mkdir -p "$MC3_WORK/elf"
@@ -71,19 +78,17 @@ cp "$BUILD/mcdub3.elf" "$ELF_KEEP"
 # for its edition, as players pick it (mcdub3-nx-usa.nro, later -pal-..),
 # its ELF for crash offsets, and what was built.
 if [ -n "${RELEASE_DIR:-}" ]; then
-    EDITION=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' "$MC3_REPO/config/xbe_facts.h")
-    [ -n "$EDITION" ] || mc3_fail "config/xbe_facts.h has no MC3_EDITION: make lift"
     mkdir -p "$RELEASE_DIR"
-    cp "$DEST/$NRO_NAME.nro" "$RELEASE_DIR/mcdub3-nx-$EDITION.nro"
-    cp "$BUILD/mcdub3.elf" "$RELEASE_DIR/mcdub3-nx-$EDITION.elf"
+    cp "$DEST/$NRO_NAME.nro" "$RELEASE_DIR/$NRO_NAME.nro"
+    cp "$BUILD/mcdub3.elf" "$RELEASE_DIR/$NRO_NAME.elf"
     {
         echo "version=$APP_VERSION"
         echo "edition=$EDITION"
         echo "build=${MC3_BUILD_ID:-local}"
         echo "commit=${GITHUB_SHA:-$(git -C "$MC3_REPO" rev-parse HEAD 2>/dev/null || echo unknown)}"
-        echo "nro_sha256=$(sha256sum "$RELEASE_DIR/mcdub3-nx-$EDITION.nro" | cut -d' ' -f1)"
-    } > "$RELEASE_DIR/mcdub3-nx-$EDITION.buildinfo"
-    echo "  release: $RELEASE_DIR/mcdub3-nx-$EDITION.nro (version $APP_VERSION)"
+        echo "nro_sha256=$(sha256sum "$RELEASE_DIR/$NRO_NAME.nro" | cut -d' ' -f1)"
+    } > "$RELEASE_DIR/$NRO_NAME.buildinfo"
+    echo "  release: $RELEASE_DIR/$NRO_NAME.nro (version $APP_VERSION)"
 fi
 if [ "${NO_GAME:-0}" != "1" ]; then
     mc3_need_game
