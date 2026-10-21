@@ -4,6 +4,46 @@ The technical source of truth: how the project turns the Xbox game into a
 Switch program, what sits where, how to set up the development VM, and the
 day-to-day loop. Decisions and their reasons: [docs/decisions/](docs/decisions/).
 
+## Quick start
+
+### Mac and Linux
+
+Put the extracted disc (`default.xbe` + data) in `game/`, run the following commands from the repo root:
+
+```sh
+make setup        # once: build deps, devkitPro, Python venv
+make lift         # parse the XBE, write config/xbe_facts.h, lift to C
+make build run    # Linux or macOS build + run in a window
+make switch       # Switch NRO + SD staging in work/switch_sd (HD=1: with the texture pack)
+make nsp          # NSP forwarder for the home menu
+make mac-app      # Mac app (SCALE=1.5, SETTINGS="K=V ...", HD=1): work/mac_app/
+make hd-dump      # texture packs: dump, then make hd-tools hd-upscale
+make              # every target, grouped
+```
+
+### Nintendo Switch
+
+Build the software and copy the files to the console with the following commands:
+
+```sh
+make switch       # Switch NRO + SD staging in work/switch_sd (HD=1: with the texture pack)
+make nsp          # NSP forwarder for the home menu
+```
+
+The files will be organized according to the following hiërarchy:
+
+```
+sdmc:/switch/mcdub3-nx/
+├── mcdub3.nro
+├── mcdub3_env.txt   settings: KEY=VALUE per line, every switch explained inside
+│                    (template: switch/mcdub3_env.example.txt)
+├── mcdub3_log.txt   written when not launched through nxlink
+├── game/            the extracted disc (not the ISO)
+└── hd/textures/     optional texture pack (make switch HD=1)
+```
+
+Start with title takeover (hold **R** while launching a game) if the NRO forwarder is not installed to ensure 4GB of RAM is allocated to the game.
+
 ## How it works: two stages
 
 ```
@@ -27,14 +67,14 @@ translator (`make relift`, skips the analysis steps).
 
 The stage-1 steps, each a Python tool in `xboxrecomp/tools/`:
 
-| Step | Tool (`xboxrecomp/tools/`) | Does | Output |
-|---|---|---|---|
-| parse | `xbe_parser` | reads the XBE header: sections, entry point, kernel imports | `work/analysis/xbe_*` |
-| disassemble | `disasm` (uses **capstone**, a Python x86 disassembler) | finds every function and jump target | `work/analysis/disasm/` |
-| identify | `func_id` | recognises library code (C runtime, XDK) | `work/analysis/func_id/` |
-| ABI | `abi_analysis` | recovers calling conventions and argument counts | `work/analysis/abi/` |
-| translate | `recomp` | turns each x86 function into a C function | `work/gen/` |
-| (helpers) | `seed_from_log`, `xiso` | seed candidates from a run log; ISO unpacking | `config/`, `game/` |
+| Step        | Tool (`xboxrecomp/tools/`)                              | Does                                                        | Output                   |
+| ----------- | ------------------------------------------------------- | ----------------------------------------------------------- | ------------------------ |
+| parse       | `xbe_parser`                                            | reads the XBE header: sections, entry point, kernel imports | `work/analysis/xbe_*`    |
+| disassemble | `disasm` (uses **capstone**, a Python x86 disassembler) | finds every function and jump target                        | `work/analysis/disasm/`  |
+| identify    | `func_id`                                               | recognises library code (C runtime, XDK)                    | `work/analysis/func_id/` |
+| ABI         | `abi_analysis`                                          | recovers calling conventions and argument counts            | `work/analysis/abi/`     |
+| translate   | `recomp`                                                | turns each x86 function into a C function                   | `work/gen/`              |
+| (helpers)   | `seed_from_log`, `xiso`                                 | seed candidates from a run log; ISO unpacking               | `config/`, `game/`       |
 
 **Stage 2, the build (`make build`, `make switch`).** Plain C: CMake + GCC
 (Linux) or devkitA64 (Switch) compile three things into one program:
@@ -81,15 +121,15 @@ time:
 
 How each kind of change is applied:
 
-| To change | Put it in | How it takes effect |
-|---|---|---|
-| a game function (bug fix, native replacement, stub) | `src/recomp_manual.c`: define `void sub_XXXXXXXX(void)` | the lift skips that function (`--exclude-manual`); the linker uses ours, for direct calls and indirect calls (the dispatch table points at the same symbol) |
-| a game function, but keep the original | declare `extern void sub_XXXXXXXX_gen(void);`, define `sub_XXXXXXXX` and call `sub_XXXXXXXX_gen()` inside it | the lift emits the original body under the `_gen` name, so ours wraps it (trace, fix up arguments or results) |
-| keep an override around but switched off | wrap it in `#if 0 … #endif` | the lift ignores it and generates the original again (relift) |
-| a missing function | `config/seed_functions.json` (with a note) | the disassembler treats it as a function start; it gets lifted like the rest |
-| game data or settings (a constant, a limit) | `src/main.c`, after the memory is mapped: write to the guest address | patched in memory at boot; the XBE file stays untouched |
-| how the Xbox hardware or kernel behaves | `xboxrecomp/src/` (commit as `xboxrecomp:`) | rebuilt and linked |
-| how x86 is translated | `xboxrecomp/tools/recomp/` (commit as `xboxrecomp:`) | the next lift produces different C |
+| To change                                           | Put it in                                                                                                    | How it takes effect                                                                                                                                         |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| a game function (bug fix, native replacement, stub) | `src/recomp_manual.c`: define `void sub_XXXXXXXX(void)`                                                      | the lift skips that function (`--exclude-manual`); the linker uses ours, for direct calls and indirect calls (the dispatch table points at the same symbol) |
+| a game function, but keep the original              | declare `extern void sub_XXXXXXXX_gen(void);`, define `sub_XXXXXXXX` and call `sub_XXXXXXXX_gen()` inside it | the lift emits the original body under the `_gen` name, so ours wraps it (trace, fix up arguments or results)                                               |
+| keep an override around but switched off            | wrap it in `#if 0 … #endif`                                                                                  | the lift ignores it and generates the original again (relift)                                                                                               |
+| a missing function                                  | `config/seed_functions.json` (with a note)                                                                   | the disassembler treats it as a function start; it gets lifted like the rest                                                                                |
+| game data or settings (a constant, a limit)         | `src/main.c`, after the memory is mapped: write to the guest address                                         | patched in memory at boot; the XBE file stays untouched                                                                                                     |
+| how the Xbox hardware or kernel behaves             | `xboxrecomp/src/` (commit as `xboxrecomp:`)                                                                  | rebuilt and linked                                                                                                                                          |
+| how x86 is translated                               | `xboxrecomp/tools/recomp/` (commit as `xboxrecomp:`)                                                         | the next lift produces different C                                                                                                                          |
 
 So "moving our changes back into the source" never happens: our changes *are*
 source (`src/`, `config/`, `xboxrecomp/`), and each lift re-creates the base
@@ -97,14 +137,14 @@ from the XBE. A new lift never loses a fix, because no fix lives in `work/gen/`.
 
 ### Regen or just build?
 
-| You changed | Run | Why |
-|---|---|---|
-| `src/main.c`, `src/switch_nx.c`, `xboxrecomp/src/` (runtime) | `make build` | plain C; the lift is unaffected |
-| the *body* of an existing override in `src/recomp_manual.c` | `make build` | same set of functions replaced; only our code changed |
-| *added or removed* an override in `src/recomp_manual.c` | `make relift build` | the lift must drop (or restore) the lifted body; fast: skips the analysis steps |
-| `xboxrecomp/tools/recomp/` (translator) | `make relift build` | same analysis, different C |
-| `config/seed_functions.json`, `xboxrecomp/tools/disasm`, `func_id`, `abi_analysis` | `make regen build` | the analysis itself changes (which functions exist) |
-| the disc (`game/`) | `make lift build` | new base |
+| You changed                                                                        | Run                 | Why                                                                             |
+| ---------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------- |
+| `src/main.c`, `src/switch_nx.c`, `xboxrecomp/src/` (runtime)                       | `make build`        | plain C; the lift is unaffected                                                 |
+| the *body* of an existing override in `src/recomp_manual.c`                        | `make build`        | same set of functions replaced; only our code changed                           |
+| *added or removed* an override in `src/recomp_manual.c`                            | `make relift build` | the lift must drop (or restore) the lifted body; fast: skips the analysis steps |
+| `xboxrecomp/tools/recomp/` (translator)                                            | `make relift build` | same analysis, different C                                                      |
+| `config/seed_functions.json`, `xboxrecomp/tools/disasm`, `func_id`, `abi_analysis` | `make regen build`  | the analysis itself changes (which functions exist)                             |
+| the disc (`game/`)                                                                 | `make lift build`   | new base                                                                        |
 
 `make build` checks this for you: it stops, and names the step to run, when
 the seeds are newer than the lifted C or the set of overrides in
@@ -128,12 +168,12 @@ game (lifted code)        \Device\CdRom0\..., D:\..., \Device\Harddisk0\Partitio
         └── save_dir   T:\ U:\ Z:\ drive letters, partition images
 ```
 
-| | Linux (debug) | Switch |
-|---|---|---|
-| `game_dir` | `<repo>/game` (tools/env.sh → `MC3_GAME_DIR`) | `sdmc:/switch/mcdub3-nx/game` |
-| `save_dir` | `<repo>/work/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3-nx/save` |
-| chosen by | the scripts, through environment variables | `src/main.c` defaults (`#ifdef __SWITCH__`) |
-| override | `MC3_GAME_DIR=…`, `MC3_SAVE_DIR=…` | the same keys in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` |
+|            | Linux (debug)                                            | Switch                                                   |
+| ---------- | -------------------------------------------------------- | -------------------------------------------------------- |
+| `game_dir` | `<repo>/game` (tools/env.sh → `MC3_GAME_DIR`)            | `sdmc:/switch/mcdub3-nx/game`                            |
+| `save_dir` | `<repo>/work/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3-nx/save`                            |
+| chosen by  | the scripts, through environment variables               | `src/main.c` defaults (`#ifdef __SWITCH__`)              |
+| override   | `MC3_GAME_DIR=…`, `MC3_SAVE_DIR=…`                       | the same keys in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` |
 
 So nothing about files is decided twice: the scripts in `tools/` only exist on
 the development machine and set the Linux folders; `switch/build.sh` stages the
@@ -251,12 +291,12 @@ mcdub3-nx/
 
 ### What to delete when
 
-| Want to | Delete | Then |
-|---|---|---|
-| Rebuild from scratch | `make clean-build` (`work/build-*`) | `make build` |
-| Re-lift from scratch | `make clean-gen` (`work/gen`, `work/analysis`) | `make lift` |
-| Free disk | old `work/build-*`, `work/logs/*` | nothing |
-| Reset Python | `work/venv` | `make setup` |
+| Want to              | Delete                                         | Then         |
+| -------------------- | ---------------------------------------------- | ------------ |
+| Rebuild from scratch | `make clean-build` (`work/build-*`)            | `make build` |
+| Re-lift from scratch | `make clean-gen` (`work/gen`, `work/analysis`) | `make lift`  |
+| Free disk            | old `work/build-*`, `work/logs/*`              | nothing      |
+| Reset Python         | `work/venv`                                    | `make setup` |
 
 Never needed: deleting anything outside `work/` (and `game/` only holds the disc).
 
@@ -265,6 +305,52 @@ Never needed: deleting anything outside `work/` (and `game/` only holds the disc
 One Ubuntu ARM64 VM on the Mac (Apple Silicon) does everything: lifting, the
 windowed Linux build with gdb, and Switch cross-builds. Parallels Desktop or
 UTM both work. Why: [ADR 0003](docs/decisions/0003-linux-vm-debug-loop.md).
+
+## Native macOS build (Apple Silicon)
+
+The same lifted C builds and runs natively on an Apple Silicon Mac
+(2026-10-21), next to the VM: the trees are `work/build-mac*`, so the Mac
+and the VM can share `work/`. The lift itself still runs in the VM (or
+anywhere with the Python pipeline); `make build run` on the Mac needs only
+the lifted C in `work/gen/`.
+
+```sh
+/opt/homebrew/bin/brew install cmake ninja pkgconf sdl2 ffmpeg libepoxy
+make build run
+```
+
+- Use the Apple Silicon Homebrew (`/opt/homebrew`). The scripts re-run
+  themselves as arm64 when started from a Rosetta shell
+  (`mc3_mac_native` in tools/env.sh), so an Intel Homebrew in `/usr/local`
+  is never picked up.
+- Rendering is OpenGL 4.1 on Metal (Apple's GL); the renderer asks for a
+  forward-compatible 3.3 core context there.
+- macOS lets only the main thread touch windows and events, so the game runs
+  on a thread of its own and the main thread serves window creation and the
+  event pump (xboxrecomp/src/platform/host_main.c).
+- No core pinning (macOS has no thread affinity); `HEADLESS=1` (xvfb) is
+  Linux only.
+
+### The Mac app
+
+`make mac-app` packages the build as `work/mac_app/Midnight Club 3.app`
+(tools/mac_app.sh): self-contained (Homebrew's libraries copied in with
+dylibbundler, ad-hoc signed), so it can go to /Applications. It keeps its
+data like the Switch's SD folder, in `~/Library/Application Support/mcdub3/`:
+`game/` (the disc; on first launch the app opens the folder and asks for
+it), `hd/textures/`, `save/`, `mcdub3_env.txt` (settings, written from the
+documented template on first launch), `mcdub3_log.txt`.
+
+```sh
+make mac-app SCALE=1.5                                   # default resolution 1280x720
+make mac-app SCALE=2 SETTINGS="RECOMP_GL_SHARPEN=0.3 MC3_MOVIE_VOLUME=80"
+make mac-app HD=1                                        # texture pack inside the app
+make mac-app GAME=$PWD/game                              # link this disc on first launch
+```
+
+Settings apply in order, later wins: the defaults built in (SCALE,
+SETTINGS, HD), then `mcdub3_env.txt` in Application Support. Every
+`RECOMP_*` / `MC3_*` setting works there (README, Settings).
 
 ## Create the VM (Parallels Desktop)
 

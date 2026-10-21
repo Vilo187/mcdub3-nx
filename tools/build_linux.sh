@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Build the Linux host binary: the day-to-day debug build. Same lifted code
-# and runtime as the Switch; opens an SDL2 window.
+# Build the desktop binary: Linux (the day-to-day debug build) or macOS
+# (native, into work/build-mac*). Same lifted code and runtime as the
+# Switch; opens an SDL2 window.
 #
 #   tools/build_linux.sh              OpenGL renderer, RelWithDebInfo
 #   VULKAN=1 tools/build_linux.sh     Vulkan renderer (what the Switch ships)
@@ -10,6 +11,7 @@
 #                                     in sub_XXXXXXXX; costs gigabytes of disk)
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
+mc3_mac_native "$0" "$@"
 mc3_check_lift_fresh
 
 SUFFIX=""; ARGS=(-DMC3_VULKAN=OFF)
@@ -17,7 +19,7 @@ SUFFIX=""; ARGS=(-DMC3_VULKAN=OFF)
 TYPE=RelWithDebInfo
 [ "${DEBUG:-0}" = "1" ] && { TYPE=Debug; SUFFIX="$SUFFIX-dbg"; }
 ARGS+=(-DMC3_GEN_DEBUGINFO="$([ "${GEN_DEBUGINFO:-0}" = "1" ] && echo ON || echo OFF)")
-BUILD="${BUILD_DIR:-$MC3_WORK/build-linux$SUFFIX}"
+BUILD="${BUILD_DIR:-$MC3_WORK/build-$MC3_HOST$SUFFIX}"
 
 cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" "${ARGS[@]}" >/dev/null
