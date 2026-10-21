@@ -252,31 +252,90 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
 /* ======================================================================== */
 
 #include <SDL.h>
+#include <stdio.h>
+#include "../platform/host_main.h"
 
 static SDL_GameController *g_pads[XBOX_MAX_CONTROLLERS];
 static BOOL  g_controller_connected[XBOX_MAX_CONTROLLERS];
 static DWORD g_packet[XBOX_MAX_CONTROLLERS];
 
-/* Open up to XBOX_MAX_CONTROLLERS attached game controllers. */
+/* Open the attached game controllers into free ports, closing any that
+ * went away. Called at start and again every second while a port is
+ * empty, so a pad plugged in mid-game is picked up (SDL's device-added
+ * events go to whichever thread pumps them, not here). */
 static void open_controllers(void)
 {
-    int slot = 0;
-    for (int i = 0; i < SDL_NumJoysticks() && slot < XBOX_MAX_CONTROLLERS; i++) {
+    int i, slot;
+    for (slot = 0; slot < XBOX_MAX_CONTROLLERS; slot++)
+        if (g_pads[slot] && !SDL_GameControllerGetAttached(g_pads[slot])) {
+            fprintf(stderr, "  [INPUT] pad %d: %s removed\n", slot + 1,
+                    SDL_GameControllerName(g_pads[slot]) ? SDL_GameControllerName(g_pads[slot]) : "?");
+            SDL_GameControllerClose(g_pads[slot]);
+            g_pads[slot] = NULL;
+            g_controller_connected[slot] = FALSE;
+        }
+    for (i = 0; i < SDL_NumJoysticks(); i++) {
+        SDL_JoystickID id;
+        int open = 0;
         if (!SDL_IsGameController(i))
             continue;
-        if (!g_pads[slot]) {
-            g_pads[slot] = SDL_GameControllerOpen(i);
-            g_controller_connected[slot] = (g_pads[slot] != NULL);
+        id = SDL_JoystickGetDeviceInstanceID(i);
+        for (slot = 0; slot < XBOX_MAX_CONTROLLERS; slot++)
+            if (g_pads[slot]
+                && SDL_JoystickInstanceID(SDL_GameControllerGetJoystick(g_pads[slot])) == id)
+                open = 1;
+        if (open)
+            continue;
+        for (slot = 0; slot < XBOX_MAX_CONTROLLERS && g_pads[slot]; slot++) { }
+        if (slot == XBOX_MAX_CONTROLLERS)
+            break;
+        if ((g_pads[slot] = SDL_GameControllerOpen(i)) != NULL) {
+            g_controller_connected[slot] = TRUE;
+            fprintf(stderr, "  [INPUT] pad %d: %s\n", slot + 1,
+                    SDL_GameControllerName(g_pads[slot]) ? SDL_GameControllerName(g_pads[slot]) : "?");
         }
-        slot++;
     }
 }
 
+/* Lazily, from the first state read: nothing called xbox_InputInit on
+ * Linux, so SDL's controller subsystem never started and a real pad (a
+ * DualSense, 2026-10-21) was never read -- only the keyboard worked.
+ * Joystick input is taken with the window unfocused too: the reader is
+ * the emulated USB pad, not a window. */
+static void input_poll_devices(void)
+{
+    static int inited;
+    static Uint32 last;
+    Uint32 now;
+    if (!inited) {
+        inited = 1;
+        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+        if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER)
+            && SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER) != 0) {
+            fprintf(stderr, "  [INPUT] no game controllers: %s\n", SDL_GetError());
+            return;
+        }
+        open_controllers();
+        last = SDL_GetTicks();
+        return;
+    }
+    now = SDL_GetTicks();
+    if (now - last >= 1000) {
+        last = now;
+        SDL_GameControllerUpdate();
+        open_controllers();
+    }
+}
+
+/* Where the main thread owns the window system (macOS,
+ * platform/host_main.c) controllers are opened and rescanned there, after
+ * each event pump; the readers below only read. */
+static void input_main_tick(void) { input_poll_devices(); }
+
 void xbox_InputInit(void)
 {
-    if (!SDL_WasInit(SDL_INIT_GAMECONTROLLER))
-        SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER);
-    open_controllers();
+    input_poll_devices();
+    xbox_host_main_tick(input_main_tick);
 }
 
 #if defined(__SWITCH__)
@@ -318,6 +377,8 @@ DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
     }
 #endif
 
+    if (dwPort == 0 && xbox_host_on_main())
+        input_poll_devices();
     SDL_GameController *c = g_pads[dwPort];
     if (!c || !SDL_GameControllerGetAttached(c)) {
 #if !defined(__SWITCH__)
