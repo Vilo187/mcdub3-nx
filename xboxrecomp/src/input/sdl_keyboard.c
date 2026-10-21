@@ -8,20 +8,22 @@
  * passed with a real controller (Midnight Club 3, 2026-10-16). Now the
  * renderers hand key events here and xbox_InputGetState reads them as pad 1.
  *
- * Laid out for a racing game (Midnight Club 3, 2026-10-17): driving on the
- * left hand, the face buttons on the right, the d-pad on the arrows -- it
- * changes the song in a race and moves through menus. Letters named after
- * the buttons put the brake and the steering on the same keys, and the
- * left stick on the numpad, which a laptop keyboard does not have. The
+ * Laid out so the buttons are where their names say and the arrows drive
+ * (2026-10-21; the WASD layout of 2026-10-17 put A/B on J/K, which made
+ * menus confusing, and left the Switch's L/R unmapped). The d-pad -- songs
+ * and map in an MC3 race -- moves to I J K L so the arrows can steer. The
  * Windows build keeps its Z X A S scheme (xinput_device.c):
  *
- *   W / S         right / left trigger (gas / brake)
- *   A / D         left stick left / right (steer)
- *   J K U I       A B X Y            Space      X (MC3: e-brake?)
- *   arrows        d-pad              Enter      START
- *   Shift / Ctrl  white / black      Backspace  BACK
- *   Q / E         left / right thumb click
- *   numpad 4/6/8/2 or F/H/T/G       right stick (camera)
+ *   A B X Y       A B X Y                 Enter / Backspace  START / BACK
+ *   left / right  left stick (steer, menus)
+ *   up            right trigger (gas) + left stick up (menus)
+ *   down          left trigger (brake) + left stick down (menus)
+ *   I J K L       d-pad up / left / down / right
+ *   Q / E         white / black (the Switch's L / R; also Shift / Ctrl)
+ *   Z / C         left / right thumb click
+ *   T F G H or numpad 8 4 2 6           right stick (camera)
+ *   Space         A (MC3's handbrake: the Switch's A)
+ *   Tab           BACK too (select, reachable while driving)
  *
  * Keys arrive only while the game window has the focus; losing it releases
  * everything, so a key held while switching away does not stay down.
@@ -103,27 +105,31 @@ void xbox_sdl_keyboard_state(XBOX_INPUT_STATE *s)
     BYTE *an = s->Gamepad.bAnalogButtons;
     SHORT x;
 
-    if (s_down[SDL_SCANCODE_UP])        b |= XBOX_GAMEPAD_DPAD_UP;
-    if (s_down[SDL_SCANCODE_DOWN])      b |= XBOX_GAMEPAD_DPAD_DOWN;
-    if (s_down[SDL_SCANCODE_LEFT])      b |= XBOX_GAMEPAD_DPAD_LEFT;
-    if (s_down[SDL_SCANCODE_RIGHT])     b |= XBOX_GAMEPAD_DPAD_RIGHT;
+    if (s_down[SDL_SCANCODE_I])         b |= XBOX_GAMEPAD_DPAD_UP;
+    if (s_down[SDL_SCANCODE_K])         b |= XBOX_GAMEPAD_DPAD_DOWN;
+    if (s_down[SDL_SCANCODE_J])         b |= XBOX_GAMEPAD_DPAD_LEFT;
+    if (s_down[SDL_SCANCODE_L])         b |= XBOX_GAMEPAD_DPAD_RIGHT;
     if (s_down[SDL_SCANCODE_RETURN] || s_down[SDL_SCANCODE_KP_ENTER])
                                         b |= XBOX_GAMEPAD_START;
-    if (s_down[SDL_SCANCODE_BACKSPACE]) b |= XBOX_GAMEPAD_BACK;
-    if (s_down[SDL_SCANCODE_Q])         b |= XBOX_GAMEPAD_LEFT_THUMB;
-    if (s_down[SDL_SCANCODE_E])         b |= XBOX_GAMEPAD_RIGHT_THUMB;
+    if (s_down[SDL_SCANCODE_BACKSPACE] || s_down[SDL_SCANCODE_TAB])
+                                        b |= XBOX_GAMEPAD_BACK;
+    if (s_down[SDL_SCANCODE_Z])         b |= XBOX_GAMEPAD_LEFT_THUMB;
+    if (s_down[SDL_SCANCODE_C])         b |= XBOX_GAMEPAD_RIGHT_THUMB;
     s->Gamepad.wButtons |= b;
 
-    if (s_down[SDL_SCANCODE_J]) an[XBOX_BUTTON_A] = 255;
-    if (s_down[SDL_SCANCODE_K]) an[XBOX_BUTTON_B] = 255;
-    if (s_down[SDL_SCANCODE_U] || s_down[SDL_SCANCODE_SPACE]) an[XBOX_BUTTON_X] = 255;
-    if (s_down[SDL_SCANCODE_I]) an[XBOX_BUTTON_Y] = 255;
-    if (s_down[SDL_SCANCODE_LSHIFT] || s_down[SDL_SCANCODE_RSHIFT]) an[XBOX_BUTTON_WHITE] = 255;
-    if (s_down[SDL_SCANCODE_LCTRL] || s_down[SDL_SCANCODE_RCTRL])   an[XBOX_BUTTON_BLACK] = 255;
-    if (s_down[SDL_SCANCODE_S]) an[XBOX_BUTTON_LTRIGGER] = 255;
-    if (s_down[SDL_SCANCODE_W]) an[XBOX_BUTTON_RTRIGGER] = 255;
+    if (s_down[SDL_SCANCODE_A] || s_down[SDL_SCANCODE_SPACE]) an[XBOX_BUTTON_A] = 255;
+    if (s_down[SDL_SCANCODE_B]) an[XBOX_BUTTON_B] = 255;
+    if (s_down[SDL_SCANCODE_X]) an[XBOX_BUTTON_X] = 255;
+    if (s_down[SDL_SCANCODE_Y]) an[XBOX_BUTTON_Y] = 255;
+    if (s_down[SDL_SCANCODE_Q] || s_down[SDL_SCANCODE_LSHIFT] || s_down[SDL_SCANCODE_RSHIFT])
+        an[XBOX_BUTTON_WHITE] = 255;
+    if (s_down[SDL_SCANCODE_E] || s_down[SDL_SCANCODE_LCTRL] || s_down[SDL_SCANCODE_RCTRL])
+        an[XBOX_BUTTON_BLACK] = 255;
+    if (s_down[SDL_SCANCODE_DOWN]) an[XBOX_BUTTON_LTRIGGER] = 255;
+    if (s_down[SDL_SCANCODE_UP])   an[XBOX_BUTTON_RTRIGGER] = 255;
 
-    if ((x = axis(SDL_SCANCODE_A, SDL_SCANCODE_D)) != 0) s->Gamepad.sThumbLX = x;
+    if ((x = axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT)) != 0) s->Gamepad.sThumbLX = x;
+    if ((x = axis(SDL_SCANCODE_DOWN, SDL_SCANCODE_UP)) != 0)    s->Gamepad.sThumbLY = x;
     if ((x = axis2(SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6, SDL_SCANCODE_F, SDL_SCANCODE_H)) != 0)
         s->Gamepad.sThumbRX = x;
     if ((x = axis2(SDL_SCANCODE_KP_2, SDL_SCANCODE_KP_8, SDL_SCANCODE_G, SDL_SCANCODE_T)) != 0)
