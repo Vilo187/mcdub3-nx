@@ -1395,17 +1395,109 @@ static void listener_prune(uint32_t self, unsigned slot, const char *who)
     }
 }
 
+/* The broadcast itself, done safely. The crash came back with every entry
+ * valid before the call (2026-10-21, no [LISTEN] line; the loop pointer
+ * esi inside the list, a garbage object read): a listener's callback
+ * changes the list while the original loop walks it, so the loop reads an
+ * entry that was moved or freed. On the Xbox freed memory keeps its old
+ * contents and the game gets away with it. So: the current entry first
+ * (this+0x94), as the original, then every other entry from a copy taken
+ * before the calls, each called only if it is still in the list and valid
+ * at that moment. thiscall, one argument, callee pops it (ret 4). */
+static void listener_call(uint32_t obj, unsigned slot, uint32_t arg)
+{
+    uint32_t fn_va = MEM32(MEM32(obj) + slot);
+    recomp_func_t fn = recomp_lookup(fn_va);
+    if (!fn)
+        fn = recomp_lookup_manual(fn_va);
+    if (!fn) {
+        fprintf(stderr, "[LISTEN] method %08X of %08X not in dispatch: skipped\n", fn_va, obj);
+        return;
+    }
+    g_esp -= 4; MEM32(g_esp) = arg;
+    g_esp -= 4; MEM32(g_esp) = 0;              /* return address */
+    g_ecx = obj;
+    fn();                                      /* ret 4: pops both */
+}
+
+static int listener_live(uint32_t self, uint32_t obj, uint16_t id, uint32_t key)
+{
+    uint32_t e, begin = MEM32(self + 0x78), end = MEM32(self + 0x7C);
+    if (!listener_ram(begin) || end < begin || end - begin > 12u * 4096)
+        return 0;
+    for (e = begin; e + 12 <= end; e += 12)
+        if (MEM32(e + 8) == obj && MEM16(e) == id && MEM32(e + 4) == key)
+            return 1;
+    return 0;
+}
+
+#define LISTEN_MAX 512
+static void listener_broadcast(uint32_t self, unsigned slot, const char *who)
+{
+    static int changed_logged;
+    uint32_t begin, end, idx, n, i, arg = MEM32(g_esp + 4);
+    uint32_t cur_key = 0, saved_ebx = g_ebx, saved_esi = g_esi, saved_edi = g_edi, saved_ebp = g_ebp;
+    uint16_t cur_id = 0;
+    struct { uint16_t id; uint32_t key, obj; } snap[LISTEN_MAX];
+
+    listener_prune(self, slot, who);           /* drop what is invalid already */
+    begin = MEM32(self + 0x78);
+    end = MEM32(self + 0x7C);
+    idx = MEM32(self + 0x94);
+    n = (listener_ram(begin) && end >= begin) ? (end - begin) / 12 : 0;
+    if (n > LISTEN_MAX)
+        n = LISTEN_MAX;
+    for (i = 0; i < n; i++) {
+        uint32_t e = begin + 12 * i;
+        snap[i].id = MEM16(e); snap[i].key = MEM32(e + 4); snap[i].obj = MEM32(e + 8);
+    }
+    if (idx != 0xFFFFFFFFu) {
+        if (idx < n) {
+            cur_id = snap[idx].id; cur_key = snap[idx].key;
+            if (listener_valid(snap[idx].obj, slot))
+                listener_call(snap[idx].obj, slot, arg);
+        } else if (changed_logged++ < 20) {
+            fprintf(stderr, "[LISTEN] %s: current entry %u of %08X is past the list (%u entries): skipped\n",
+                    who, idx, self, n);
+        }
+    }
+    for (i = 0; i < n; i++) {
+        if (snap[i].id == cur_id && snap[i].key == cur_key)
+            continue;                          /* the current one: done above */
+        if (!listener_live(self, snap[i].obj, snap[i].id, snap[i].key)) {
+            if (changed_logged++ < 20)
+                fprintf(stderr, "[LISTEN] %s: entry %u of %08X (object %08X) left the list during "
+                                "the broadcast: not called\n", who, i, self, snap[i].obj);
+            continue;
+        }
+        if (listener_valid(snap[i].obj, slot))
+            listener_call(snap[i].obj, slot, arg);
+    }
+    g_ebx = saved_ebx; g_esi = saved_esi; g_edi = saved_edi; g_ebp = saved_ebp;
+    g_esp += 8;                                /* ret 4: return address and the argument */
+}
+
+static int listener_fix_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_LISTENER_CHECK");
+        on = !(e && e[0] == '0');
+    }
+    return on;
+}
+
 /* Written out, not by macro: tools/recomp/manual_scan.py reads the text. */
 extern void sub_00251CD0_gen(void);
 void sub_00251CD0(void)
 {
-    listener_prune(g_ecx, 0x28, "race result");
-    sub_00251CD0_gen();
+    if (!listener_fix_on()) { sub_00251CD0_gen(); return; }
+    listener_broadcast(g_ecx, 0x28, "race result");
 }
 
 extern void sub_00251D40_gen(void);
 void sub_00251D40(void)
 {
-    listener_prune(g_ecx, 0x2C, "race event");
-    sub_00251D40_gen();
+    if (!listener_fix_on()) { sub_00251D40_gen(); return; }
+    listener_broadcast(g_ecx, 0x2C, "race event");
 }
