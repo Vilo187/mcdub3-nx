@@ -19,7 +19,9 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 
 ## Installation
 
-Download from releases and extract to the root of your Nintendo Switch directory. Copy the game files to the `/game` directory within this folder.
+### Nintendo Switch
+
+Download from releases and extract to the root of your Nintendo Switch directory. Copy the game files to the `/game` directory within this folder. Install the .nsp to get a plug-and-play experience.
 
 ## Technical Overview
 
@@ -37,7 +39,7 @@ Download from releases and extract to the root of your Nintendo Switch directory
 ## ⚠️ &nbsp;Known Bugs
 
 * loading screen can hang sometimes with a restart required
-* intro menu navigation and rendering is slow
+* intro menu navigation rendering is slow
 
 ## Releases
 
