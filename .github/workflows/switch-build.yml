@@ -4,7 +4,8 @@
 #
 # The NRO is built from the lifted code of the disc's default.xbe, so the
 # build stage runs on a self-hosted runner that has the disc (labels
-# self-hosted, linux, mcdub3-disc; CONTRIBUTING.md, Releases). The disc and
+# self-hosted, mcdub3-disc: the Linux VM or the Mac, with Docker;
+# CONTRIBUTING.md, Releases). The disc and
 # the lifted C never leave that machine; only the finished NRO is uploaded.
 # Only workflow_dispatch: a pull request (from a fork) can never reach the
 # self-hosted runner.
@@ -32,7 +33,7 @@ jobs:
   build:
     name: NRO (${{ matrix.edition }})
     needs: tests
-    runs-on: [self-hosted, linux, mcdub3-disc]
+    runs-on: [self-hosted, mcdub3-disc]
     timeout-minutes: 240
     strategy:
       matrix:
