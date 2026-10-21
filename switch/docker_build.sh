@@ -24,7 +24,7 @@ docker info >/dev/null 2>&1 || DOCKER=(sudo docker)   # not in the docker group 
 
 ENVS=()
 SCRIPT="${1:-switch/build.sh}"
-for v in MC3_WORK MC3_GAME_DIR MC3_GEN_DIR MC3_APP MC3_SD_DIR SD_ROOT BUILD_DIR JOBS VULKAN LTO LTO_JOBS NO_GAME KEYS; do
+for v in MC3_WORK MC3_GAME_DIR MC3_GEN_DIR MC3_APP MC3_SD_DIR SD_ROOT BUILD_DIR JOBS VULKAN LTO LTO_JOBS NO_GAME KEYS HD; do
     [ -n "${!v:-}" ] && ENVS+=(-e "$v=${!v}")
 done
 

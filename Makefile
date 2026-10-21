@@ -20,11 +20,12 @@ NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
 export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
-       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS
+       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD
 
 .PHONY: help setup nsp check-vm extract lift regen relift \
         build build-vk build-debug run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
         switch switch-vk switch-lto send \
+        hd-dump hd-tools hd-upscale \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
 
 help:  ## Show this help
@@ -120,8 +121,20 @@ report:  ## Explain the snapshot in the newest run log (LOG=<file> for another)
 trap:  ## Run, stopping at the first untranslated instruction reached
 	RECOMP_UNIMPL_TRAP=1 bash tools/run_linux.sh
 
+## Texture packs (hd/ beside game/; xboxrecomp/src/nv2a_gl/hd_pack.c)
+
+hd-dump:  ## Run with every texture written once to hd/dump/<hash>.png (options as for run)
+	RECOMP_GL_TEX_DUMP=1 $(MAKE) run
+
+hd-tools:  ## Fetch the upscaler (Real-ESRGAN) for this OS into work/tools (macOS, x86-64 Linux)
+	bash tools/hd_tools.sh
+
+hd-upscale:  ## hd/dump -> hd/textures, new ones only (FACTOR=2|3|4, MIN=px, FILES="... " to redo some)
+	@mkdir -p $(LOGS)
+	bash tools/hd_upscale.sh $(or $(FACTOR),2) 2>&1 | tee $(LOGS)/hd_upscale_$(NOW).log
+
 ## Switch
-switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work/switch_sd; NATIVE=1: local devkitPro
+switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work/switch_sd; HD=1: with hd/textures; NATIVE=1: local devkitPro
 	@mkdir -p $(LOGS)
 	bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 

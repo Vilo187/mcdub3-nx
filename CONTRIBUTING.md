@@ -438,3 +438,29 @@ installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
   `StartupMovie.gif` (256x80) in `assets/logo/` (personal, gitignored), or
   NTON's are used. The NSP holds only the forwarder: a new game build needs
   only a new NRO.
+
+## Texture packs (HD)
+
+Replacement textures live in `hd/` beside `game/`, never inside it: the
+user's disc stays untouched, and deleting `hd/` brings the original look
+back. A texture in `hd/textures/<hash>.png` replaces the one with that
+content hash, at any size (the renderer adds mip levels); see
+`xboxrecomp/src/nv2a_gl/hd_pack.c`. `hd/` is gitignored: packs made from the
+game's own textures are the game's art, for your own use.
+
+Making or growing a pack:
+
+1. **Dump** (VM): `make hd-dump RECOMP_GL_SCALE=1.5` and play the scenes you
+   want. Every texture drawn is written once to `hd/dump/<hash>.png`; later
+   dumps only add new ones.
+2. **Upscale** (Mac: Real-ESRGAN has no ARM64 Linux build):
+   `make hd-tools` once, then `make hd-upscale` (FACTOR=2|3|4, MIN=<px>,
+   FILES="..." to redo some). Only textures not yet in `hd/textures/` are
+   done, so hand-edited ones are kept. Colour goes through the AI upscaler;
+   alpha is only resized, because MC3 keeps data there (gloss, window glow).
+3. **Linux**: `make run` uses the pack at once (log: `[GL] HD pack ...: N
+   replacement textures`).
+4. **Switch**: `make switch` builds the plain version (no pack staged, and a
+   previously staged one removed); `make switch HD=1` stages `hd/textures/`
+   to `work/switch_sd/switch/mcdub3-nx/hd/textures/`. Copy that folder to
+   the card, or delete `sdmc:/switch/mcdub3-nx/hd/` there to go back.
