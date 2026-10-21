@@ -158,38 +158,53 @@ int nv2a_gl_vsh_program(const uint32_t (*prog)[4], uint32_t slots,
         uint32_t omask = f(t, 3, 12, 4);
         uint32_t rd = f(t, 3, 20, 4);
 
-        emit(&o, "    { /* %u */\n        vec4 A = ", pc);
-        src(&o, t, 0, writes_consts);
-        emit(&o, ";\n        vec4 B = ");
-        src(&o, t, 1, writes_consts);
-        emit(&o, ";\n        vec4 C = ");
-        src(&o, t, 2, writes_consts);
-        emit(&o, ";\n        vec4 m = vec4(0.0), l = vec4(0.0);\n");
-
-        switch (mac) {
-        case 1:  emit(&o, "        m = A;\n"); break;
-        case 2:  emit(&o, "        m = A * B;\n"); break;
-        case 3:  emit(&o, "        m = A + C;\n"); break;
-        case 4:  emit(&o, "        m = A * B + C;\n"); break;
-        case 5:  emit(&o, "        m = vec4(dot(A.xyz, B.xyz));\n"); break;
-        case 6:  emit(&o, "        m = vec4(dot(A.xyz, B.xyz) + B.w);\n"); break;
-        case 7:  emit(&o, "        m = vec4(dot(A, B));\n"); break;
-        case 8:  emit(&o, "        m = vec4(1.0, A.y * B.y, A.z, B.w);\n"); break;
-        case 9:  emit(&o, "        m = min(A, B);\n"); break;
-        case 10: emit(&o, "        m = max(A, B);\n"); break;
-        case 11: emit(&o, "        m = vec4(lessThan(A, B));\n"); break;
-        case 12: emit(&o, "        m = vec4(greaterThanEqual(A, B));\n"); break;
-        default: break;
-        }
-        switch (ilu) {
-        case 1: emit(&o, "        l = C;\n"); break;
-        case 2: emit(&o, "        l = vec4(nv2a_rcp(C.x));\n"); break;
-        case 3: emit(&o, "        l = vec4(nv2a_rcc(C.x));\n"); break;
-        case 4: emit(&o, "        l = vec4(nv2a_rcp(sqrt(abs(C.x))));\n"); break;
-        case 5: emit(&o, "        l = nv2a_exp(C.x);\n"); break;
-        case 6: emit(&o, "        l = nv2a_log(C.x);\n"); break;
-        case 7: emit(&o, "        l = nv2a_lit(C);\n"); break;
-        default: break;
+        /* Only what this slot reads and writes: every slot used to declare
+         * and fill A, B, C, m and l whatever the operation, and the Switch's
+         * Mesa spent ~70 ms a program (vertex compile 22 ms, link 35 ms)
+         * parsing and optimising code it then threw away (2026-10-20). The
+         * MAC reads A (all), B (two-operand ops) and C (ADD, MAD); the ILU
+         * reads C. m / l exist when a write below uses them. */
+        {
+            int out_l = omask && f(t, 3, 2, 1);
+            int ref_m = (mac && mac != 13 && rd < 13) || (omask && !out_l);
+            int ref_l = (ilu && (mac ? 1u : rd) < 13) || out_l;
+            int mac_op = mac >= 1 && mac <= 12;
+            int need_a = (ref_m && mac_op) || mac == 13;
+            int need_b = ref_m && mac_op && mac != 1 && mac != 3;
+            int need_c = (ref_m && (mac == 3 || mac == 4)) || (ref_l && ilu);
+            emit(&o, "    { /* %u */\n", pc);
+            if (need_a) { emit(&o, "        vec4 A = "); src(&o, t, 0, writes_consts); emit(&o, ";\n"); }
+            if (need_b) { emit(&o, "        vec4 B = "); src(&o, t, 1, writes_consts); emit(&o, ";\n"); }
+            if (need_c) { emit(&o, "        vec4 C = "); src(&o, t, 2, writes_consts); emit(&o, ";\n"); }
+            if (ref_m) {
+                switch (mac_op ? mac : 0) {
+                case 1:  emit(&o, "        vec4 m = A;\n"); break;
+                case 2:  emit(&o, "        vec4 m = A * B;\n"); break;
+                case 3:  emit(&o, "        vec4 m = A + C;\n"); break;
+                case 4:  emit(&o, "        vec4 m = A * B + C;\n"); break;
+                case 5:  emit(&o, "        vec4 m = vec4(dot(A.xyz, B.xyz));\n"); break;
+                case 6:  emit(&o, "        vec4 m = vec4(dot(A.xyz, B.xyz) + B.w);\n"); break;
+                case 7:  emit(&o, "        vec4 m = vec4(dot(A, B));\n"); break;
+                case 8:  emit(&o, "        vec4 m = vec4(1.0, A.y * B.y, A.z, B.w);\n"); break;
+                case 9:  emit(&o, "        vec4 m = min(A, B);\n"); break;
+                case 10: emit(&o, "        vec4 m = max(A, B);\n"); break;
+                case 11: emit(&o, "        vec4 m = vec4(lessThan(A, B));\n"); break;
+                case 12: emit(&o, "        vec4 m = vec4(greaterThanEqual(A, B));\n"); break;
+                default: emit(&o, "        vec4 m = vec4(0.0);\n"); break;
+                }
+            }
+            if (ref_l) {
+                switch (ilu) {
+                case 1: emit(&o, "        vec4 l = C;\n"); break;
+                case 2: emit(&o, "        vec4 l = vec4(nv2a_rcp(C.x));\n"); break;
+                case 3: emit(&o, "        vec4 l = vec4(nv2a_rcc(C.x));\n"); break;
+                case 4: emit(&o, "        vec4 l = vec4(nv2a_rcp(sqrt(abs(C.x))));\n"); break;
+                case 5: emit(&o, "        vec4 l = nv2a_exp(C.x);\n"); break;
+                case 6: emit(&o, "        vec4 l = nv2a_log(C.x);\n"); break;
+                case 7: emit(&o, "        vec4 l = nv2a_lit(C);\n"); break;
+                default: emit(&o, "        vec4 l = vec4(0.0);\n"); break;
+                }
+            }
         }
 
         if (mac == 13) {

@@ -37,6 +37,7 @@
 #include "gl_api.h"
 #include "gl_psh.h"
 #include "gl_vsh.h"
+#include "hd_pack.h"
 #include "../kernel/nv2a_present.h"
 #include "../kernel/nv2a_backend.h"
 
@@ -416,8 +417,13 @@ typedef struct {
     uint32_t used, checked;
     uint32_t levels;                    /* mip levels the title gave it */
     uint32_t mips;                      /* levels the GL texture holds */
-    GLuint   hd;                        /* 2x copy for UI art (ui_upscale) */
-    uint32_t hd_hash;                   /* ... made from this content */
+    GLuint   hd;                        /* drawn instead: a pack texture or a UI 2x copy */
+    uint32_t hd_hash;                   /* ... made for this content */
+    uint32_t hd_checked;                /* content (hash) last looked up in the pack */
+    int      hd_seen;                   /* hd_checked is valid */
+    int      hd_mips;                   /* hd has mip levels (pack textures) */
+    uint64_t hd_key;                    /* pack texture requested for this content */
+    int      hd_pending;                /* ... on the worker, not here yet */
 } GlTex;
 
 #define GL_MAX_TEX 1024
@@ -697,9 +703,15 @@ static void tex_mips_generate(GlTex *t)
 }
 
 static GlTex *s_tex_cur;                     /* what tex_get returned last */
+static void tex_hd(GlTex *t);
 static GLuint tex_done(GlTex *t)
 {
     s_tex_cur = t;
+    /* The pack (hd_pack.c): look each distinct content up once. Images
+     * rewritten in place (movies, CPU-drawn: linear, with a pitch) are not
+     * looked up: their content changes every frame. */
+    if (!t->pitch && (!t->hd_seen || t->hd_checked != t->hash) && hd_pack_init())
+        tex_hd(t);
     return t->hd && t->hd_hash == t->hash ? t->hd : t->tex;
 }
 
@@ -872,6 +884,133 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
  * one mip level, not linear (movies, CPU-drawn images), 16..256 a side,
  * DXT only up to 64x64 (digits; bigger single-level DXT is world art).
  * Made before the draw binds its surface (stage_prepare). */
+/* ── Replacement textures and the texture dump (hd_pack.c) ───────────
+ *
+ * Key: FNV-1a 64 over the level-0 bytes the title wrote, its format and
+ * size, and for a palettised image its palette -- one key per distinct
+ * image, whatever address it was loaded at. A replacement may be any size;
+ * it gets a full mip chain, so a 4x image drawn small does not shimmer. */
+static uint64_t tex_full_hash(const GlTex *t)
+{
+    const uint8_t *p = (const uint8_t *)xbox_GetMemoryOffset() + t->va;
+    uint64_t h = 1469598103934665603ull;
+    uint32_t n, i;
+    /* Level 0's real size: tex_bytes is exact for DXT, an upper bound (4
+     * bytes a texel) otherwise, and bytes past a texture are not its own. */
+    switch (t->color) {
+    case 0x00: case 0x01: case 0x0B: case 0x19:                       /* L8 AY8 I8 A8 */
+        n = t->w * t->h; break;
+    case 0x02: case 0x03: case 0x04: case 0x05:                       /* 16-bit RGB */
+    case 0x1A: case 0x27: case 0x28: case 0x29:                       /* A8Y8 R6G5B5 G8B8 R8B8 */
+        n = t->w * t->h * 2; break;
+    default:
+        n = tex_bytes(t->color, t->w, t->h, 0); break;                /* DXT, 32-bit */
+    }
+    for (i = 0; i < n; i++)
+        h = (h ^ p[i]) * 1099511628211ull;
+    h = (h ^ t->color) * 1099511628211ull;
+    h = (h ^ ((uint64_t)t->w << 16 | t->h)) * 1099511628211ull;
+    if (t->color == 0x0B && s_palette_va) {
+        const uint8_t *pal = (const uint8_t *)xbox_GetMemoryOffset() + s_palette_va;
+        for (i = 0; i < 1024; i++)
+            h = (h ^ pal[i]) * 1099511628211ull;
+    }
+    return h;
+}
+
+static int s_hd_off;                         /* the driver refused compressed uploads */
+
+static void tex_hd(GlTex *t)
+{
+    uint64_t key;
+    t->hd_seen = 1;
+    t->hd_pending = 0;                       /* the content changed: an older request is moot */
+    t->hd_checked = t->hash;
+    key = tex_full_hash(t);
+    if (hd_pack_dumping() && s_decode && (size_t)t->w * t->h <= s_decode_cap) {
+        Nv2aTexture nt;
+        int ok;
+        memset(&nt, 0, sizeof nt);
+        nt.offset = t->va; nt.width = t->w; nt.height = t->h; nt.pitch = 0; nt.color = t->color;
+        nt.addr_u = nt.addr_v = 1;
+        ok = t->color == 0x0B ? decode_indexed(t->va, t->w, t->h, s_decode)
+                              : nv2a_backend_decode_texture(&nt, s_decode);
+        if (ok)
+            hd_pack_dump(key, s_decode, (int)t->w, (int)t->h);
+    }
+    if (!s_hd_off && hd_pack_has(key)) {
+        /* Decoded, mipmapped and compressed on hd_pack's worker; the
+         * original is drawn until hd_drain uploads the result. */
+        t->hd_key = key;
+        t->hd_pending = 1;
+        hd_pack_request(key);
+    }
+}
+
+
+/* Upload h as a new texture; 0 on failure. */
+static GLuint hd_upload(const HdTex *h, uint32_t *bytes)
+{
+    GLenum fmt = h->alpha ? GL_COMPRESSED_RGBA_S3TC_DXT5_EXT : GL_COMPRESSED_RGBA_S3TC_DXT1_EXT;
+    GLuint id = 0;
+    int l;
+    *bytes = 0;
+    glGenTextures(1, &id);
+    tex_param_forget(id);
+    glBindTexture(GL_TEXTURE_2D, id);
+    while (glGetError() != GL_NO_ERROR) { }
+    for (l = 0; l < h->levels; l++) {
+        glCompressedTexImage2D(GL_TEXTURE_2D, l, fmt, h->lw[l], h->lh[l], 0,
+                               (GLsizei)h->bytes[l], h->data[l]);
+        *bytes += h->bytes[l];
+    }
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, h->levels - 1);
+    tex_bind_forget();
+    if (glGetError() != GL_NO_ERROR) {
+        glDeleteTextures(1, &id);
+        return 0;
+    }
+    return id;
+}
+
+/* Once a frame (renderer thread): upload the replacements the worker
+ * finished -- a few a frame, so not even the upload is a hitch -- into
+ * every texture slot waiting for that content (each its own GL texture:
+ * a slot's eviction deletes its own). */
+static void hd_drain(void)
+{
+    static const int per_frame = 8;
+    int n, i;
+    for (n = 0; n < per_frame; n++) {
+        HdTex *h = hd_pack_poll();
+        if (!h)
+            break;
+        for (i = 0; i < GL_MAX_TEX && !s_hd_off; i++) {
+            GlTex *t = &s_tex[i];
+            uint32_t bytes;
+            GLuint id;
+            if (!t->tex || !t->hd_pending || t->hd_key != h->key
+                || t->hd_checked != t->hash)
+                continue;
+            if (!(id = hd_upload(h, &bytes))) {
+                fprintf(stderr, "  [GL] HD pack: compressed upload refused; pack off\n");
+                s_hd_off = 1;
+                break;
+            }
+            if (t->hd)
+                glDeleteTextures(1, &t->hd);         /* a UI 2x copy: the pack wins */
+            t->hd = id;
+            t->hd_hash = t->hash;
+            t->hd_mips = h->levels > 1;
+            t->hd_pending = 0;
+            tex_account(t, bytes);
+            s_new_obj = 1;
+        }
+        hd_pack_tex_free(h);
+    }
+}
+
 static GLuint compile(GLenum type, const char *const *src, int n);
 static GLuint s_ui_prog, s_ui_vao, s_ui_fbo;
 static GLint  s_ui_usz;
@@ -962,6 +1101,7 @@ static void ui_upscale(GlTex *t)
     float sz[4];
     if ((t->hd && t->hd_hash == t->hash) || !ui_eligible(t) || !ui_prog_init())
         return;
+    t->hd_mips = 0;
     ow = t->w * (uint32_t)s_ui_scale;
     oh = t->h * (uint32_t)s_ui_scale;
     if (!t->hd) {
@@ -1572,7 +1712,8 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
         rt_scale(w, h, zd->lw, zd->lh, zd->ax ? zd->ax : 1, zd->ay ? zd->ay : 1, scale);
     } else {
         tex = tex_get(va, color, w, h, pitch, (format >> 16) & 0xF);
-        mipped = s_tex_cur && s_tex_cur->tex == tex && s_tex_cur->mips > 1;
+        mipped = s_tex_cur && ((s_tex_cur->tex == tex && s_tex_cur->mips > 1)
+                               || (s_tex_cur->hd == tex && s_tex_cur->hd_mips));
     }
     bind_tex(tex);
     {
@@ -1588,10 +1729,15 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
         uint32_t key;
         /* A mipmapped filter on a texture that has its levels: trilinear
          * (nearest-based modes keep nearest texels), anisotropic. */
-        int mip = mipped && nmin >= 3 && nmin <= 6;
+        /* A pack texture (larger than the original, with its own levels) is
+         * filtered trilinearly whatever the title asked for: plain bilinear
+         * on a 4x image drawn small would shimmer. */
+        int pack = mipped && s_tex_cur && s_tex_cur->hd == tex;
+        int mip = mipped && ((nmin >= 3 && nmin <= 6) || (pack && nmin == 2));
         if (mip)
             min = (nmin == 3 || nmin == 5) ? 0x2702 /* NEAREST_MIPMAP_LINEAR */
                                            : GL_LINEAR_MIPMAP_LINEAR;
+        (void)pack;
         key = (addr & 0xF0F) | ((uint32_t)(mag == GL_NEAREST) << 16)
             | ((uint32_t)(min == GL_NEAREST) << 17) | ((uint32_t)mip << 18)
             | ((uint32_t)(min == 0x2702) << 19) | 0x80000000u;
@@ -1940,6 +2086,8 @@ void nv2a_gl_prewarm_start(void)
         s_pw_go = 1;
 }
 
+static void cs_report(const char *list_path);
+
 /* Up to `max` programs compiled (0: the rest); closes the list at its end. */
 static void prog_cache_prewarm_step(unsigned max)
 {
@@ -1977,10 +2125,12 @@ static void prog_cache_prewarm_step(unsigned max)
     s_prewarming = 0;
     clock_gettime(CLOCK_MONOTONIC, &t1);
     s_pw_ms += (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
-    if (!s_pw_file)
+    if (!s_pw_file) {
         fprintf(stderr, "  [GL] %u shader programs precompiled from %s in %.0f ms (%u from binaries)%s\n",
                 s_pw_done, prog_cache_path(), s_pw_ms, s_bin_hits,
                 s_pw_bad ? " (file ends in a bad record)" : "");
+        cs_report(prog_cache_path());
+    }
 }
 
 static int ct_start(const char *path, unsigned skip);
@@ -2038,6 +2188,81 @@ static void prog_cache_prewarm(void)
     }
 }
 
+/* Where a program's compile time goes (RECOMP_GL_COMPILE_STATS=1, or always
+ * reported with the precompiled list): vertex compile, fragment compile and
+ * link, summed; the three slowest programs' sources are written next to the
+ * list (<cache>-slowN.vs/.fs). The Switch's Mesa took ~75 ms a program for
+ * sources of ~7 KB + 3.5 KB (2026-10-20): something in them is expensive. */
+static double s_cs_vs, s_cs_fs, s_cs_link;
+static unsigned s_cs_n;
+static struct { double ms; char *vs, *fs; } s_cs_slow[3];
+
+static double cs_now(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1e3 + t.tv_nsec / 1e6;
+}
+
+static char *cs_join(const char *const *src, int n)
+{
+    size_t len = 1;
+    int i;
+    char *o;
+    for (i = 0; i < n; i++) len += strlen(src[i]);
+    if (!(o = malloc(len))) return NULL;
+    o[0] = 0;
+    for (i = 0; i < n; i++) strcat(o, src[i]);
+    return o;
+}
+
+static void cs_note(double vs, double fs, double link, const char *const *vsrc, int nvs,
+                    const char *fsrc)
+{
+    double ms = vs + fs + link;
+    int i, k = -1;
+    s_cs_vs += vs; s_cs_fs += fs; s_cs_link += link; s_cs_n++;
+    for (i = 0; i < 3; i++)
+        if (!s_cs_slow[i].vs || ms > s_cs_slow[i].ms) {
+            if (k < 0 || s_cs_slow[i].ms < s_cs_slow[k].ms || !s_cs_slow[i].vs)
+                k = i;
+            if (!s_cs_slow[i].vs) break;
+        }
+    if (k < 0 || (s_cs_slow[k].vs && ms <= s_cs_slow[k].ms))
+        return;
+    free(s_cs_slow[k].vs);
+    free(s_cs_slow[k].fs);
+    s_cs_slow[k].ms = ms;
+    s_cs_slow[k].vs = cs_join(vsrc, nvs);
+    s_cs_slow[k].fs = cs_join(&fsrc, 1);
+}
+
+/* Print the averages and write the slowest sources (once, after the list). */
+static void cs_report(const char *list_path)
+{
+    char path[600];
+    size_t n;
+    int i;
+    if (!s_cs_n)
+        return;
+    fprintf(stderr, "  [GL] compile time per program (avg of %u): vertex %.1f ms, fragment %.1f ms,"
+            " link %.1f ms\n", s_cs_n, s_cs_vs / s_cs_n, s_cs_fs / s_cs_n, s_cs_link / s_cs_n);
+    n = strlen(list_path);
+    if (n > 4 && !strcmp(list_path + n - 4, ".bin"))
+        n -= 4;
+    for (i = 0; i < 3; i++) {
+        FILE *f;
+        if (!s_cs_slow[i].vs)
+            continue;
+        snprintf(path, sizeof path, "%.*s-slow%d.vs", (int)n, list_path, i);
+        if ((f = fopen(path, "w"))) { fputs(s_cs_slow[i].vs, f); fclose(f); }
+        snprintf(path, sizeof path, "%.*s-slow%d.fs", (int)n, list_path, i);
+        if ((f = fopen(path, "w"))) { fputs(s_cs_slow[i].fs, f); fclose(f); }
+        fprintf(stderr, "  [GL]   slow program %d: %.0f ms -> %.*s-slow%d.vs/.fs\n",
+                i, s_cs_slow[i].ms, (int)n, list_path, i);
+    }
+}
+
 /* Generate, compile and link the program for (b, pk); 0 on failure. Any
  * thread with a current context sharing objects with the renderer's (the
  * compile thread uses its own buffers). bkey != 0: keep it retrievable. */
@@ -2048,6 +2273,7 @@ static GLuint prog_build(const Nv2aRawBatch *b, const Nv2aPshKey *pk, uint64_t v
     int nvs = 0;
     GLuint v, fr, prog;
     GLint ok = 0;
+    double t0, t1, t2;
     vs[nvs++] = nv2a_gl_vsh_prelude();
     if (vkey) {
         if (nv2a_gl_vsh_program(b->vp_program, b->vp_slots, b->vp_start, vbody, vcap) < 0)
@@ -2059,11 +2285,14 @@ static GLuint prog_build(const Nv2aRawBatch *b, const Nv2aPshKey *pk, uint64_t v
     }
     if (nv2a_gl_psh(pk, fsrc, fcap) < 0)
         return 0;
+    t0 = cs_now();
     v = compile(GL_VERTEX_SHADER, vs, nvs);
+    t1 = cs_now();
     {
         const char *fs[1] = { fsrc };
         fr = compile(GL_FRAGMENT_SHADER, fs, 1);
     }
+    t2 = cs_now();
     if (!v || !fr) {
         if (v) glDeleteShader(v);
         if (fr) glDeleteShader(fr);
@@ -2085,6 +2314,8 @@ static GLuint prog_build(const Nv2aRawBatch *b, const Nv2aPshKey *pk, uint64_t v
         glDeleteProgram(prog);
         return 0;
     }
+    if (s_prewarming)                        /* the list's programs, on the renderer thread */
+        cs_note(t1 - t0, t2 - t1, cs_now() - t2, vs, nvs, fsrc);
     return prog;
 }
 
@@ -3855,6 +4086,7 @@ static void gl_flip(void)
     if (s_pw_go && s_pw_file)
         prog_cache_prewarm_step(s_pw_per_frame);   /* the deferred list, a little a frame */
     ct_drain();                                    /* what the compile thread finished */
+    hd_drain();                                    /* pack textures the worker finished */
     {
         /* RECOMP_FPS_LOG=1: presented frames per 10 s on stderr (the Switch
          * build has its own [perf] report). */
