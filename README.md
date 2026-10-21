@@ -17,6 +17,12 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 | Mac             | ✅       | Sequoia 15.6 | M1              |
 | Windows         | ❌       | -            | -               |
 
+## Supported Editions
+
+| File             | Edition |
+| ---------------- | ------- |
+| nfsmw-nx-usa.nro | NTSC-U  |
+
 ## Installation
 
 ### Nintendo Switch
