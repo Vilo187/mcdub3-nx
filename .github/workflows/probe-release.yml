@@ -1,0 +1,20 @@
+# Temporary: which release step does GITHUB_TOKEN get refused? (removed after)
+name: Probe release permissions
+on: workflow_dispatch
+permissions:
+  contents: write
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Tag ref on HEAD
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" -f ref=refs/tags/probe-tag -f sha="$GITHUB_SHA" --jq .ref || echo "TAG FAILED"
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/probe-tag" || true
+      - name: Draft release on existing tag-less target
+        run: |
+          gh api -X POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name=probe-rel -f target_commitish="$GITHUB_SHA" -F draft=true --jq .id > id.txt || echo "RELEASE FAILED"
+          [ -s id.txt ] && gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$(cat id.txt)" || true
+          gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/probe-rel" 2>/dev/null || true
