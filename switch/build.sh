@@ -85,11 +85,19 @@ if [ "${HD:-0}" = "1" ]; then
 else
     rm -rf "$DEST/hd"
 fi
-# Runtime switches for the console (switch/<app>_env.txt), staged with the NRO.
+# Runtime switches for the console, staged with the NRO: your own
+# switch/<app>_env.txt (gitignored) if there is one, else the documented
+# template with every setting commented out (switch/<app>_env.example.txt).
+# The template also goes along as <app>_env.example.txt, the reference.
 if [ -f "$MC3_REPO/switch/${MC3_APP}_env.txt" ]; then
     cp "$MC3_REPO/switch/${MC3_APP}_env.txt" "$DEST/${MC3_APP}_env.txt"
-    echo "  settings: ${MC3_APP}_env.txt staged"
+    echo "  settings: switch/${MC3_APP}_env.txt staged"
+elif [ -f "$MC3_REPO/switch/${MC3_APP}_env.example.txt" ]; then
+    cp "$MC3_REPO/switch/${MC3_APP}_env.example.txt" "$DEST/${MC3_APP}_env.txt"
+    echo "  settings: the template staged (all defaults; copy it to switch/${MC3_APP}_env.txt to keep your own)"
 fi
+[ -f "$MC3_REPO/switch/${MC3_APP}_env.example.txt" ] \
+    && cp "$MC3_REPO/switch/${MC3_APP}_env.example.txt" "$DEST/${MC3_APP}_env.example.txt"
 echo
 echo "staged $DEST"
 echo "  $NRO_NAME.nro $(stat -c %s "$DEST/$NRO_NAME.nro") bytes, ELF kept as $ELF_KEEP"
