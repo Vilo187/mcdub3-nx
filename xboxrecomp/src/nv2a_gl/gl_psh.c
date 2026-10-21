@@ -92,6 +92,14 @@ static void input(Out *o, uint32_t b, int stage, int alpha_portion,
     int use_alpha = (b >> 4) & 1;
     uint32_t map = (b >> 5) & 7;
 
+    if (!strcmp(r, "ZERO")) {
+        /* The zero register through each mapping, as a literal: the same
+         * values, without max(ZERO.rgb, 0.0) and friends for the compiler. */
+        static const char *const v[8] = { "0.0", "1.0", "-1.0", "1.0", "-0.5", "0.5", "0.0", "0.0" };
+        if (alpha_portion) emit(o, "%s", v[map]);
+        else               emit(o, "vec3(%s)", v[map]);
+        return;
+    }
     if (alpha_portion)
         snprintf(val, sizeof val, "%s.%s", r, use_alpha ? "a" : "b");
     else if (use_alpha)
@@ -143,62 +151,88 @@ static void stage(Out *o, int i, const Nv2aPshKey *k)
 {
     uint32_t cicw = k->color_icw[i], cocw = k->color_ocw[i];
     uint32_t aicw = k->alpha_icw[i], aocw = k->alpha_ocw[i];
-    const char *d;
     char e[64];
 
-    emit(o, "    { /* stage %d */\n", i);
-    /* Colour inputs */
-    emit(o, "        vec3 cA = "); input(o, cicw >> 24, i, 0, k); emit(o, ";\n");
-    emit(o, "        vec3 cB = "); input(o, cicw >> 16, i, 0, k); emit(o, ";\n");
-    emit(o, "        vec3 cC = "); input(o, cicw >> 8, i, 0, k);  emit(o, ";\n");
-    emit(o, "        vec3 cD = "); input(o, cicw, i, 0, k);       emit(o, ";\n");
-    /* Alpha inputs */
-    emit(o, "        float aA = "); input(o, aicw >> 24, i, 1, k); emit(o, ";\n");
-    emit(o, "        float aB = "); input(o, aicw >> 16, i, 1, k); emit(o, ";\n");
-    emit(o, "        float aC = "); input(o, aicw >> 8, i, 1, k);  emit(o, ";\n");
-    emit(o, "        float aD = "); input(o, aicw, i, 1, k);       emit(o, ";\n");
+    /* Only what this stage's outputs use (2026-10-20: the Switch's Mesa
+     * spent ~70 ms a program, most of it on code computed and dropped). The
+     * sum/mux needs both products; blue-to-alpha reads AB or CD. Same order
+     * as before: products, sum, then scale/bias and clamp, then writes. */
+    {
+        const char *dAB = dst_name((cocw >> 4) & 0xF), *dCD = dst_name(cocw & 0xF);
+        const char *dS = dst_name((cocw >> 8) & 0xF);
+        const char *daAB = dst_name((aocw >> 4) & 0xF), *daCD = dst_name(aocw & 0xF);
+        const char *daS = dst_name((aocw >> 8) & 0xF);
+        int b2a_ab = (cocw & (1u << 19)) && dAB, b2a_cd = (cocw & (1u << 18)) && dCD;
+        int nAB = dAB || dS || b2a_ab, nCD = dCD || dS || b2a_cd;
+        int naAB = daAB || daS, naCD = daCD || daS;
+        const char *mux = (k->control & (1u << 8)) ? "(R0.a >= 0.5)"
+                                                   : "((int(R0.a * 255.0 + 0.5) & 1) != 0)";
+        emit(o, "    { /* stage %d */\n", i);
+        if (nAB) {
+            emit(o, "        vec3 cA = "); input(o, cicw >> 24, i, 0, k); emit(o, ";\n");
+            emit(o, "        vec3 cB = "); input(o, cicw >> 16, i, 0, k); emit(o, ";\n");
+            emit(o, "        vec3 cAB = %s;\n", (cocw & (1u << 13)) ? "vec3(dot(cA, cB))" : "cA * cB");
+        }
+        if (nCD) {
+            emit(o, "        vec3 cC = "); input(o, cicw >> 8, i, 0, k); emit(o, ";\n");
+            emit(o, "        vec3 cD = "); input(o, cicw, i, 0, k);      emit(o, ";\n");
+            emit(o, "        vec3 cCD = %s;\n", (cocw & (1u << 12)) ? "vec3(dot(cC, cD))" : "cC * cD");
+        }
+        if (dS) {
+            if (cocw & (1u << 14)) emit(o, "        vec3 cS = %s ? cCD : cAB;\n", mux);
+            else                   emit(o, "        vec3 cS = cAB + cCD;\n");
+        }
+        if (naAB) {
+            emit(o, "        float aA = "); input(o, aicw >> 24, i, 1, k); emit(o, ";\n");
+            emit(o, "        float aB = "); input(o, aicw >> 16, i, 1, k); emit(o, ";\n");
+            emit(o, "        float aAB = aA * aB;\n");
+        }
+        if (naCD) {
+            emit(o, "        float aC = "); input(o, aicw >> 8, i, 1, k); emit(o, ";\n");
+            emit(o, "        float aD = "); input(o, aicw, i, 1, k);      emit(o, ";\n");
+            emit(o, "        float aCD = aC * aD;\n");
+        }
+        if (daS) {
+            if (aocw & (1u << 14)) emit(o, "        float aS = %s ? aCD : aAB;\n", mux);
+            else                   emit(o, "        float aS = aAB + aCD;\n");
+        }
 
-    emit(o, "        vec3 cAB = %s;\n", (cocw & (1u << 13)) ? "vec3(dot(cA, cB))" : "cA * cB");
-    emit(o, "        vec3 cCD = %s;\n", (cocw & (1u << 12)) ? "vec3(dot(cC, cD))" : "cC * cD");
-    if (cocw & (1u << 14))
-        emit(o, "        vec3 cS = %s ? cCD : cAB;\n",
-             (k->control & (1u << 8)) ? "(R0.a >= 0.5)"
-                                      : "((int(R0.a * 255.0 + 0.5) & 1) != 0)");
-    else
-        emit(o, "        vec3 cS = cAB + cCD;\n");
-    emit(o, "        float aAB = aA * aB, aCD = aC * aD;\n");
-    if (aocw & (1u << 14))
-        emit(o, "        float aS = %s ? aCD : aAB;\n",
-             (k->control & (1u << 8)) ? "(R0.a >= 0.5)"
-                                      : "((int(R0.a * 255.0 + 0.5) & 1) != 0)");
-    else
-        emit(o, "        float aS = aAB + aCD;\n");
+        /* Scale/bias, clamp to the signed range: what is written. */
+        if (dAB || b2a_ab) {
+            snprintf(e, sizeof e, scale_bias((cocw >> 15) & 7), "cAB");
+            emit(o, "        cAB = clamp(%s, -1.0, 1.0);\n", e);
+        }
+        if (dCD || b2a_cd) {
+            snprintf(e, sizeof e, scale_bias((cocw >> 15) & 7), "cCD");
+            emit(o, "        cCD = clamp(%s, -1.0, 1.0);\n", e);
+        }
+        if (dS) {
+            snprintf(e, sizeof e, scale_bias((cocw >> 15) & 7), "cS");
+            emit(o, "        cS = clamp(%s, -1.0, 1.0);\n", e);
+        }
+        if (daAB) {
+            snprintf(e, sizeof e, scale_bias((aocw >> 15) & 7), "aAB");
+            emit(o, "        aAB = clamp(%s, -1.0, 1.0);\n", e);
+        }
+        if (daCD) {
+            snprintf(e, sizeof e, scale_bias((aocw >> 15) & 7), "aCD");
+            emit(o, "        aCD = clamp(%s, -1.0, 1.0);\n", e);
+        }
+        if (daS) {
+            snprintf(e, sizeof e, scale_bias((aocw >> 15) & 7), "aS");
+            emit(o, "        aS = clamp(%s, -1.0, 1.0);\n", e);
+        }
 
-    /* Scale/bias, clamp to the signed range, write. */
-    snprintf(e, sizeof e, scale_bias((cocw >> 15) & 7), "cAB");
-    emit(o, "        cAB = clamp(%s, -1.0, 1.0);\n", e);
-    snprintf(e, sizeof e, scale_bias((cocw >> 15) & 7), "cCD");
-    emit(o, "        cCD = clamp(%s, -1.0, 1.0);\n", e);
-    snprintf(e, sizeof e, scale_bias((cocw >> 15) & 7), "cS");
-    emit(o, "        cS = clamp(%s, -1.0, 1.0);\n", e);
-    snprintf(e, sizeof e, scale_bias((aocw >> 15) & 7), "aAB");
-    emit(o, "        aAB = clamp(%s, -1.0, 1.0);\n", e);
-    snprintf(e, sizeof e, scale_bias((aocw >> 15) & 7), "aCD");
-    emit(o, "        aCD = clamp(%s, -1.0, 1.0);\n", e);
-    snprintf(e, sizeof e, scale_bias((aocw >> 15) & 7), "aS");
-    emit(o, "        aS = clamp(%s, -1.0, 1.0);\n", e);
-
-    if ((d = dst_name((cocw >> 4) & 0xF)) != NULL) emit(o, "        %s.rgb = cAB;\n", d);
-    if ((d = dst_name(cocw & 0xF)) != NULL)        emit(o, "        %s.rgb = cCD;\n", d);
-    if ((d = dst_name((cocw >> 8) & 0xF)) != NULL) emit(o, "        %s.rgb = cS;\n", d);
-    if ((d = dst_name((aocw >> 4) & 0xF)) != NULL) emit(o, "        %s.a = aAB;\n", d);
-    if ((d = dst_name(aocw & 0xF)) != NULL)        emit(o, "        %s.a = aCD;\n", d);
-    if ((d = dst_name((aocw >> 8) & 0xF)) != NULL) emit(o, "        %s.a = aS;\n", d);
-    /* Blue-to-alpha replaces the alpha written to the AB / CD destination. */
-    if ((cocw & (1u << 19)) && (d = dst_name((cocw >> 4) & 0xF)) != NULL)
-        emit(o, "        %s.a = cAB.b;\n", d);
-    if ((cocw & (1u << 18)) && (d = dst_name(cocw & 0xF)) != NULL)
-        emit(o, "        %s.a = cCD.b;\n", d);
+        if (dAB)  emit(o, "        %s.rgb = cAB;\n", dAB);
+        if (dCD)  emit(o, "        %s.rgb = cCD;\n", dCD);
+        if (dS)   emit(o, "        %s.rgb = cS;\n", dS);
+        if (daAB) emit(o, "        %s.a = aAB;\n", daAB);
+        if (daCD) emit(o, "        %s.a = aCD;\n", daCD);
+        if (daS)  emit(o, "        %s.a = aS;\n", daS);
+        /* Blue-to-alpha replaces the alpha written to the AB / CD destination. */
+        if (b2a_ab) emit(o, "        %s.a = cAB.b;\n", dAB);
+        if (b2a_cd) emit(o, "        %s.a = cCD.b;\n", dCD);
+    }
     emit(o, "    }\n");
 }
 
