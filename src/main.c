@@ -24,12 +24,23 @@
 #include <stdbool.h>
 #include <string.h>
 
+/* Version and build, from switch/app.env (CMake: MC3_VERSION, MC3_BUILD_ID;
+ * CI sets the build ID to the run), so a log names exactly what ran. */
+#ifndef MC3_VERSION
+#  define MC3_VERSION "dev"
+#endif
+#ifndef MC3_BUILD_ID
+#  define MC3_BUILD_ID "local"
+#endif
 #include <xbox/xboxrecomp.h>
 
 #if __has_include("xbe_facts.h")
 #  include "xbe_facts.h"            /* config/, written by tools/first_lift.sh */
 #else
 #  error "config/xbe_facts.h is missing: run tools/first_lift.sh on the extracted disc"
+#endif
+#ifndef MC3_EDITION
+#  define MC3_EDITION "unknown"   /* facts from before 2026-10-21: make lift */
 #endif
 
 #ifndef MC3_SD_DIR
@@ -428,6 +439,43 @@ static void fatal(const char *msg)
 #endif
 }
 
+/* The lifted code fits one XBE, byte for byte: config/xbe_facts.h records
+ * its size and FNV-1a 64 (tools/first_lift.sh). Another edition of the game
+ * (PAL, NTSC-J) or a patched one would boot into code that is not its own
+ * and crash somewhere far away; say so instead, naming this build's
+ * edition (the NRO is mcdub3-nx-<edition>.nro). MC3_XBE_CHECK=0 skips it,
+ * for a developer's own experiments. */
+static int xbe_matches_lift(const void *data, size_t size)
+{
+#if defined(MC3_XBE_SIZE) && defined(MC3_XBE_FNV64)
+    const char *e = getenv("MC3_XBE_CHECK");
+    const unsigned char *p = data;
+    uint64_t h = 0xcbf29ce484222325ull;
+    size_t i;
+    char msg[512];
+    if (e && e[0] == '0')
+        return 1;
+    if (size == MC3_XBE_SIZE) {
+        for (i = 0; i < size; i++)
+            h = (h ^ p[i]) * 0x100000001b3ull;
+        if (h == MC3_XBE_FNV64)
+            return 1;
+    }
+    snprintf(msg, sizeof msg,
+             "This build is for Midnight Club 3: DUB Edition, edition \"%s\" "
+             "(default.xbe of %u bytes). The default.xbe found is %zu bytes%s: "
+             "another edition or a modified file. Use the build for your "
+             "edition, or the original disc files.",
+             MC3_EDITION, (unsigned)MC3_XBE_SIZE, size,
+             size == MC3_XBE_SIZE ? " with other contents" : "");
+    fatal(msg);
+    return 0;
+#else
+    (void)data; (void)size;
+    return 1;
+#endif
+}
+
 static uint32_t apu_mmio_rd(void *opaque, uint32_t off, unsigned size)
 {
     return (uint32_t)mcpx_apu_mmio_read((MCPXAPUState *)opaque, off, size);
@@ -506,6 +554,7 @@ static int game_main(void)
     setvbuf(stderr, NULL, _IONBF, 0);
 #endif
     printf("=== " MC3_XBE_TITLE_NAME " (Xbox) - static recompilation ===\n");
+    printf("mcdub3-nx %s, edition %s, %s\n", MC3_VERSION, MC3_EDITION, MC3_BUILD_ID);
     install_crash_reporter();
     set_runtime_defaults();
     log_settings();
@@ -536,6 +585,10 @@ static int game_main(void)
         return 1;
     }
     printf("XBE %s: %zu bytes\n", xbe_path, xbe_size);
+    if (!xbe_matches_lift(xbe_data, xbe_size)) {
+        free(xbe_data);
+        return 1;
+    }
 
     if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
         fatal("Failed to initialise the Xbox memory layout "

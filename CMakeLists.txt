@@ -63,6 +63,12 @@ endif()
 add_executable(${PROJECT_NAME} ${MC3_SOURCES} ${MC3_GEN_SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)
 target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_APP="${MC3_APP}" MC3_SD_DIR="${MC3_SD_DIR}")
+# Version (switch/app.env) and build ID (CI: the run; locally "local"),
+# printed at boot so a log names exactly what ran.
+set(MC3_VERSION "dev" CACHE STRING "Release version (switch/app.env APP_VERSION)")
+set(MC3_BUILD_ID "local" CACHE STRING "Build identifier (CI run, commit)")
+set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
+    MC3_VERSION="${MC3_VERSION}" MC3_BUILD_ID="${MC3_BUILD_ID}")
 if(MC3_VULKAN)
     target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_VULKAN=1)
 endif()
