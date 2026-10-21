@@ -525,6 +525,56 @@ installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
   NTON's are used. The NSP holds only the forwarder: a new game build needs
   only a new NRO.
 
+## Releases (Switch)
+
+Official builds are Switch NROs, one per edition of the game, published as
+GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
+
+| Stage | Workflow | Runs on | Started by |
+|---|---|---|---|
+| Tests | `ci.yml` | GitHub | every push and pull request; first stage of a build |
+| Build | `switch-build.yml` | the self-hosted runner with the disc | you: Actions > Switch build > Run workflow |
+| Release | `switch-release.yml` | GitHub, `release` environment (approval) | you: Actions > Switch release > Run workflow |
+
+**To release a version**
+
+1. Set `APP_VERSION` in `switch/app.env` (e.g. `0.2.0`).
+2. Write its notes in `RELEASE_NOTES.md` under `## v0.2.0`. Commit and push.
+3. Actions > **Switch build** > Run workflow, with an optional description.
+   It runs the tests, then builds `mcdub3-nx-<edition>.nro` on the runner.
+   The run's summary shows its run ID.
+4. Try the NRO from the run's artifact on the console.
+5. Actions > **Switch release** > Run workflow with that run ID (pre-release
+   or not). A reviewer approves the `release` environment; the workflow tags
+   `v0.2.0` on the built commit and publishes the NROs with the notes.
+
+**One-time set-up**
+
+- *Approval gate*: Settings > Environments > New environment `release` >
+  Required reviewers (yourself and anyone else who may approve). Optionally
+  limit it to the `main` branch.
+- *Fork pull requests*: Settings > Actions > General > "Require approval for
+  all outside collaborators". The build workflow only starts by hand, so a
+  pull request cannot reach the runner, but keep this on for a public repo.
+- *The runner* (the Linux VM, with Docker as for `make switch`): Settings >
+  Actions > Runners > New self-hosted runner > Linux, ARM64; follow the
+  commands, and give it the extra label `mcdub3-disc`. In the runner's
+  folder, `.env` sets where the discs are, one folder per edition:
+
+  ```sh
+  # actions-runner/.env
+  MC3_DISCS=/home/<you>/mcdub3-discs      # contains usa/default.xbe ...
+  ```
+
+  Run it as a service (`sudo ./svc.sh install && sudo ./svc.sh start`). Each
+  build lifts the disc again in a work folder beside the checkout
+  (`mcdub3-work-<edition>`, kept between runs: Python venv, build trees).
+- *Editions*: `config/xbe_facts.h` names the edition this lift is for
+  (`MC3_EDITION`, from the XBE's region) and its size and hash; the NRO
+  refuses any other `default.xbe` with a message. A second edition needs a
+  disc folder on the runner, an entry in the build matrix, and its own lift
+  configuration (ADR 0005).
+
 ## Texture packs (HD)
 
 Replacement textures live in `hd/` beside `game/`, never inside it: the

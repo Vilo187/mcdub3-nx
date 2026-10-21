@@ -1,0 +1,108 @@
+# Switch build: tests, then the NRO for each edition, as a versioned
+# artifact. Started by hand (Actions > Switch build > Run workflow); release
+# a build with switch-release.yml.
+#
+# The NRO is built from the lifted code of the disc's default.xbe, so the
+# build stage runs on a self-hosted runner that has the disc (labels
+# self-hosted, linux, mcdub3-disc; CONTRIBUTING.md, Releases). The disc and
+# the lifted C never leave that machine; only the finished NRO is uploaded.
+# Only workflow_dispatch: a pull request (from a fork) can never reach the
+# self-hosted runner.
+name: Switch build
+
+on:
+  workflow_dispatch:
+    inputs:
+      description:
+        description: "What this build is (shown with the artifact and the release)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: switch-build
+  cancel-in-progress: false
+
+jobs:
+  tests:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: NRO (${{ matrix.edition }})
+    needs: tests
+    runs-on: [self-hosted, linux, mcdub3-disc]
+    timeout-minutes: 240
+    strategy:
+      matrix:
+        # One entry per edition of the game. The runner keeps each disc in
+        # $MC3_DISCS/<edition>/ (CONTRIBUTING.md, Releases); a new edition
+        # also needs its own lift configuration (docs/decisions/0005).
+        edition: [usa]
+    env:
+      # Kept between runs on the runner: the Python venv and build trees.
+      MC3_WORK: ${{ github.workspace }}/../mcdub3-work-${{ matrix.edition }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          clean: true
+
+      - name: Version
+        id: version
+        run: |
+          source switch/app.env
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "build_id=$APP_VERSION+${{ github.run_number }}.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "Building mcdub3-nx $APP_VERSION (${{ matrix.edition }})"
+
+      - name: Disc
+        run: |
+          : "${MC3_DISCS:?the runner needs MC3_DISCS in its .env (CONTRIBUTING.md, Releases)}"
+          test -f "$MC3_DISCS/${{ matrix.edition }}/default.xbe" \
+            || { echo "no disc for ${{ matrix.edition }} in $MC3_DISCS"; exit 1; }
+          echo "MC3_GAME_DIR=$MC3_DISCS/${{ matrix.edition }}" >> "$GITHUB_ENV"
+
+      - name: Python for the lift
+        run: |
+          if ! "$MC3_WORK/venv/bin/python3" -c 'import capstone' 2>/dev/null; then
+            python3 -m venv "$MC3_WORK/venv"
+            "$MC3_WORK/venv/bin/pip" install -q capstone
+          fi
+
+      - name: Lift
+        run: |
+          make lift
+          # The committed facts must describe this disc: same lift, same
+          # boot check (src/main.c).
+          git diff --exit-code config/xbe_facts.h \
+            || { echo "config/xbe_facts.h differs for this disc: run make lift locally and commit it"; exit 1; }
+
+      - name: Build
+        env:
+          DESCRIPTION: ${{ inputs.description }}       # as data, never as script
+          BUILD_ID: ${{ steps.version.outputs.build_id }}
+        run: |
+          make switch NO_GAME=1 RELEASE_DIR="$RUNNER_TEMP/release" MC3_BUILD_ID="$BUILD_ID"
+          printf '%s\n' "$DESCRIPTION" > "$RUNNER_TEMP/release/description.txt"
+          ls -l "$RUNNER_TEMP/release"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mcdub3-nx-${{ steps.version.outputs.version }}-${{ matrix.edition }}
+          path: ${{ runner.temp }}/release/
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Summary
+        env:
+          DESCRIPTION: ${{ inputs.description }}
+        run: |
+          {
+            echo "### mcdub3-nx ${{ steps.version.outputs.version }} (${{ matrix.edition }})"
+            echo
+            echo "Build \`${{ steps.version.outputs.build_id }}\`, run ID \`${{ github.run_id }}\`."
+            if [ -n "$DESCRIPTION" ]; then echo; echo "$DESCRIPTION"; fi
+            echo
+            echo "Release it: Actions > Switch release > Run workflow, build run ID \`${{ github.run_id }}\`."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -39,6 +39,14 @@ Download from releases and extract to the root of your Nintendo Switch directory
 * loading screen can hang sometimes with a restart required
 * intro menu navigation and rendering is slow
 
+## Releases
+
+Switch builds are published on the [releases page](https://github.com/laureladastra/mcdub3-nx/releases):
+one NRO per edition of the game (`mcdub3-nx-usa.nro` for NTSC-U), with the
+notes from [RELEASE_NOTES.md](RELEASE_NOTES.md). They contain no game data:
+copy your own extracted disc to `sdmc:/switch/mcdub3-nx/game/`. How
+releases are made: [CONTRIBUTING.md](CONTRIBUTING.md#releases-switch).
+
 ## Settings
 
 Several settings can be configured for the runtime environment. These settings are `KEY=VALUE` pairs and can be configured by defining them in a text file and saving the file as `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` on the Switch, one setting per line, with `#` starting a comment and excluding the setting from execution.

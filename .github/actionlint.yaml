@@ -1,0 +1,4 @@
+# The self-hosted runner with the disc (CONTRIBUTING.md, Releases).
+self-hosted-runner:
+  labels:
+    - mcdub3-disc

@@ -1,0 +1,125 @@
+# Switch release: publish a finished Switch build as a GitHub release.
+# Started by hand (Actions > Switch release > Run workflow) with the run ID
+# of a successful "Switch build". The job runs in the "release" environment:
+# with required reviewers set on it (Settings > Environments > release), it
+# waits for approval before anything is published.
+#
+# The release notes are the "## v<version>" section of RELEASE_NOTES.md, as
+# committed in the build's commit; the version is switch/app.env's
+# APP_VERSION at that commit. The tag v<version> is created on that commit.
+name: Switch release
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_run_id:
+        description: "Run ID of the Switch build to release (in its summary)"
+        required: true
+      prerelease:
+        description: "Mark as a pre-release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write     # tag and release
+  actions: read       # the build's artifacts
+
+concurrency:
+  group: switch-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Release
+    runs-on: ubuntu-24.04
+    environment: release
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RUN_ID: ${{ inputs.build_run_id }}
+    steps:
+      - name: The build
+        id: build
+        run: |
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || { echo "build_run_id must be a number"; exit 1; }
+          read -r name conclusion sha < <(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID" \
+            --jq '[.name, .conclusion, .head_sha] | @tsv')
+          [ "$name" = "Switch build" ] || { echo "run $RUN_ID is '$name', not a Switch build"; exit 1; }
+          [ "$conclusion" = "success" ] || { echo "run $RUN_ID did not succeed ($conclusion)"; exit 1; }
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "Releasing Switch build $RUN_ID at $sha"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.build.outputs.sha }}
+
+      - name: Version and notes
+        id: notes
+        run: |
+          source switch/app.env
+          tag="v$APP_VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "release $tag exists already: raise APP_VERSION in switch/app.env"; exit 1
+          fi
+          # The section of RELEASE_NOTES.md from "## v<version>" to the next "## ".
+          awk -v h="## $tag" '
+            $0 == h || index($0, h " ") == 1 { on = 1; next }
+            on && /^## / { exit }
+            on { print }' RELEASE_NOTES.md > "$RUNNER_TEMP/notes.md"
+          if ! grep -q '[^[:space:]]' "$RUNNER_TEMP/notes.md"; then
+            echo "RELEASE_NOTES.md has no notes under '## $tag' in ${{ steps.build.outputs.sha }}"; exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ github.token }}
+          pattern: mcdub3-nx-*
+          path: ${{ runner.temp }}/build
+
+      - name: Check the artifacts
+        run: |
+          cd "$RUNNER_TEMP/build"
+          ls -R
+          n=0
+          for info in */*.buildinfo; do
+            v=$(sed -n 's/^version=//p' "$info")
+            [ "$v" = "${{ steps.notes.outputs.version }}" ] \
+              || { echo "$info is version $v, not ${{ steps.notes.outputs.version }}"; exit 1; }
+            nro="${info%.buildinfo}.nro"
+            want=$(sed -n 's/^nro_sha256=//p' "$info")
+            echo "$want  $nro" | sha256sum -c -
+            n=$((n + 1))
+          done
+          [ "$n" -gt 0 ] || { echo "no NRO in build $RUN_ID"; exit 1; }
+
+      - name: Publish
+        env:
+          TAG: ${{ steps.notes.outputs.tag }}
+          SHA: ${{ steps.build.outputs.sha }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          cd "$RUNNER_TEMP/build"
+          {
+            desc=$(cat ./*/description.txt 2>/dev/null | sed '/^$/d' | sort -u)
+            [ -n "$desc" ] && printf '%s\n\n' "$desc"
+            cat "$RUNNER_TEMP/notes.md"
+            echo
+            echo "---"
+            echo
+            echo "| File | Edition | SHA-256 |"
+            echo "|---|---|---|"
+            for info in */*.buildinfo; do
+              f=$(basename "${info%.buildinfo}.nro")
+              echo "| \`$f\` | $(sed -n 's/^edition=//p' "$info") | \`$(sed -n 's/^nro_sha256=//p' "$info")\` |"
+            done
+            echo
+            echo "Build $(sed -n 's/^build=//p' ./*/*.buildinfo | head -1), commit $SHA."
+          } > "$RUNNER_TEMP/body.md"
+          flags=()
+          [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
+          gh release create "$TAG" ./*/*.nro \
+            --repo "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "mcdub3-nx $TAG" --notes-file "$RUNNER_TEMP/body.md" "${flags[@]}"
+          echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"
