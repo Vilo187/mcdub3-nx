@@ -10,8 +10,7 @@
   a folder                  an extracted save: a folder holding <name>.mc3
                             (+ SaveMeta.xbx), or a UDATA/54540079 folder
   <name>.mc3                a bare profile; SaveMeta.xbx is written for it
-  .max                      an Action Replay MAX PS2 save (read and checked
-                            only: see below)
+  .max                      an Action Replay MAX PS2 save (see below)
 
 Each profile is re-signed for the port and copied to
 <udata>/54540079/<save folder>/ (default: $MC3_GAME_DIR/UDATA). The port's
@@ -24,17 +23,23 @@ real Xbox's profile "damaged" (2026-10-22). Re-signed, they load. No
 Microsoft key is involved; the reverse (a port save on a real Xbox) would
 need one and is not done.
 
-PS2 saves: MC3 profiles start with a format stamp. The Xbox game writes
-0x02F59447; the PS2 Remix (SLUS-21355) writes 0x00512C4D and lays out
-about half its fields differently (more cities, cars, events), so a Remix
-profile is refused. A PS2 save with the Xbox stamp would be imported.
+PS2 saves: MC3 profiles start with a format stamp; the Xbox game writes
+0x02F59447. Whether the PS2 release of the same game (not Remix) writes
+the same format is not known yet (no such save seen): a PS2 profile with
+the Xbox stamp is imported -- with the signature appended when it is 20
+bytes short (the PS2 has none), as is when it has the Xbox size -- and
+anything else is refused. The PS2 Remix (SLUS-21355) writes 0x00512C4D
+and about half its fields differ (more cities, cars, events): a
+different game version, refused (2026-10-22).
 """
-import argparse, gzip, hashlib, hmac, os, shutil, struct, sys, time
+import argparse, gzip, re, hashlib, hmac, os, shutil, struct, sys, time
 
 TITLE_ID = '54540079'
 XBOX_STAMP = 0x02F59447
 KNOWN_STAMPS = {0x00512C4D: 'the PS2 Remix (SLUS-21355)'}
 SIG_LEN = 20
+XBOX_SIZE = 99162                 # every Xbox profile seen, signature included
+PS2_CODE = re.compile(r'^B[A-Z]+-\d{5}')   # a PS2 save folder: BASLUS-21355<name>
 
 
 def port_signature(body):
@@ -241,7 +246,7 @@ def load(path):
 
 
 def profiles(files):
-    """[(save folder name or None, profile name, .mc3 bytes, SaveMeta bytes or None)]"""
+    """[(save folder name or None, profile name, .mc3 bytes, SaveMeta bytes or None, from a PS2)]"""
     out = []
     for p, data in sorted(files.items()):
         parts = p.replace('\\', '/').split('/')
@@ -249,8 +254,9 @@ def profiles(files):
             continue                                  # PS2: the profile is named after its folder
         folder = parts[-2] if len(parts) > 1 and parts[-2] != TITLE_ID else None
         meta = files.get('/'.join(parts[:-1] + ['SaveMeta.xbx']))
-        name = parts[-1][:-4] if parts[-1].lower().endswith('.mc3') else parts[-1]
-        out.append((folder, name, data, meta))
+        ps2 = not parts[-1].lower().endswith('.mc3')
+        name = PS2_CODE.sub('', parts[-1]) or parts[-1] if ps2 else parts[-1][:-4]
+        out.append((None if ps2 else folder, name, data, meta, ps2))
     return out
 
 
@@ -289,18 +295,26 @@ def main():
         raise SystemExit(f'{a.file}: no MC3 profile in it (files: {", ".join(sorted(files)) or "none"})')
 
     todo = []
-    for folder, name, data, meta in found:
+    for folder, name, data, meta, ps2 in found:
+        origin = 'PS2' if ps2 else 'Xbox'
         stamp = struct.unpack_from('<I', data)[0] if len(data) >= 4 else None
         if stamp != XBOX_STAMP:
-            what = KNOWN_STAMPS.get(stamp, 'an unknown version')
-            print(f'  {name}: a profile from {what} (format 0x{stamp or 0:08X}), not the Xbox game\'s '
-                  f'(0x{XBOX_STAMP:08X}): it cannot be converted, skipped')
+            what = KNOWN_STAMPS.get(stamp, 'a format this tool does not know')
+            print(f'  {name}: {origin} profile in format 0x{stamp or 0:08X} ({what}); the Xbox game '
+                  f'reads 0x{XBOX_STAMP:08X}: not imported')
             continue
-        signed = port_signature(data[:-SIG_LEN]) == data[-SIG_LEN:]
+        if ps2 and len(data) == XBOX_SIZE - SIG_LEN:
+            body, how = data, 'no signature (PS2): signed'
+        elif len(data) == XBOX_SIZE:
+            body = data[:-SIG_LEN]
+            how = 'signed for the port' if port_signature(body) == data[-SIG_LEN:] else 'signed by an Xbox: re-signed'
+        else:
+            print(f'  {name}: {origin} profile in the Xbox format but {len(data)} bytes, not {XBOX_SIZE}: '
+                  f'not imported (worth a closer look)')
+            continue
         dest = folder_name(folder, name)
-        print(f'  {name}: Xbox profile, {len(data)} bytes, '
-              f'{"signed for the port" if signed else "signed by an Xbox: re-signed"} -> {TITLE_ID}/{dest}/')
-        todo.append((dest, name, data[:-SIG_LEN] + port_signature(data[:-SIG_LEN]), meta or save_meta(name)))
+        print(f'  {name}: {origin} profile, {len(data)} bytes, {how} -> {TITLE_ID}/{dest}/')
+        todo.append((dest, name, body + port_signature(body), meta or save_meta(name)))
     if a.list or not todo:
         return 0 if todo or a.list else 1
 

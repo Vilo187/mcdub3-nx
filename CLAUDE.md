@@ -253,9 +253,12 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   zero, so its key is all zeros and a real Xbox's profile reads "damaged".
   `make import-save FILE=` (tools/save_import.py: .gsx = gzip + 128-byte
   GSXM header + FATX memory unit with 16 KB clusters; folders; .mc3; .max)
-  re-signs and installs, backing up first; verified in game. PS2 Remix
-  (SLUS-21355, .max = LZARI) profiles carry stamp 0x00512C4D and about
-  half their fields differ: refused, no converter.
+  re-signs and installs, backing up first; verified in game. PS2 (.max =
+  LZARI; profile named BxSLUS-nnnnn<name>, no signature): open whether the
+  same game's PS2 release writes the Xbox format -- the tool imports one
+  with the Xbox stamp (signature appended); untested on a real one. The
+  PS2 Remix (SLUS-21355) writes stamp 0x00512C4D, about half its fields
+  differ: refused.
 
 ### First lift (2026-10-14)
 
