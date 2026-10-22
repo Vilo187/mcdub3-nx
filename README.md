@@ -105,9 +105,9 @@ Profiles live where the Xbox kept them, in `UDATA/54540079/` inside the game fol
 make import-save FILE=~/Downloads/midnight-club-3-dub-edition.gsx
 ```
 
-It takes a `.gsx` or raw memory unit dump, an extracted save folder, a bare `.mc3` or a PS2 `.max`. Your saves are backed up to `work/saves-backup/` first, and an existing profile is never overwritten (`REPLACE=1` to do so). `LIST=1` only shows what is in the file. `UDATA=<folder>` installs elsewhere, for example the Mac app's folder. For the Switch, import on a computer and copy the new folder to the SD card.
+It takes a `.gsx` or raw memory unit dump, an extracted save folder, a bare `.mc3`, or a PS2 save (`.max`, `.sps`, `.xps`) to check. Your saves are backed up to `work/saves-backup/` first, and an existing profile is never overwritten (`REPLACE=1` to do so). `LIST=1` only shows what is in the file. `UDATA=<folder>` installs elsewhere, for example the Mac app's folder. For the Switch, import on a computer and copy the new folder to the SD card.
 
-**PS2 saves** are still an open question. Whether the PS2 release of the same game stores its profiles in the Xbox format hasn't been checked yet. If it does, `make import-save` imports them. Saves from the PS2 *Remix*, a later version of the game, are in a different format and are refused. Saves made by this port won't load on a real Xbox.
+**PS2 saves can't be used.** The PS2 release of the same game (SLUS-21029) stores its profiles in its own layout, about a third smaller than the Xbox's and with most fields elsewhere; the PS2 *Remix* has yet another one. `make import-save` reads PS2 saves and says which version they are. Saves made by this port won't load on a real Xbox.
 
 ## Technical Overview
 

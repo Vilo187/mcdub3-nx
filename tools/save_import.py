@@ -10,7 +10,8 @@
   a folder                  an extracted save: a folder holding <name>.mc3
                             (+ SaveMeta.xbx), or a UDATA/54540079 folder
   <name>.mc3                a bare profile; SaveMeta.xbx is written for it
-  .max                      an Action Replay MAX PS2 save (see below)
+  .max / .sps / .xps        a PS2 save from Action Replay MAX or SharkPort
+                            (see below)
 
 Each profile is re-signed for the port and copied to
 <udata>/54540079/<save folder>/ (default: $MC3_GAME_DIR/UDATA). The port's
@@ -24,19 +25,19 @@ Microsoft key is involved; the reverse (a port save on a real Xbox) would
 need one and is not done.
 
 PS2 saves: MC3 profiles start with a format stamp; the Xbox game writes
-0x02F59447. Whether the PS2 release of the same game (not Remix) writes
-the same format is not known yet (no such save seen): a PS2 profile with
-the Xbox stamp is imported -- with the signature appended when it is 20
-bytes short (the PS2 has none), as is when it has the Xbox size -- and
-anything else is refused. The PS2 Remix (SLUS-21355) writes 0x00512C4D
-and about half its fields differ (more cities, cars, events): a
-different game version, refused (2026-10-22).
+0x02F59447 (99,162 bytes). The PS2 release of the same game (SLUS-21029)
+writes 0x02F6DC47 and only ~61 KB of data, about a third of its fields
+in line with the Xbox's; the PS2 Remix (SLUS-21355) writes 0x00512C4D,
+about half its fields differ. Neither can be used as is: both are
+refused, named (2026-10-22). A PS2 profile with the Xbox stamp would be
+imported (the signature appended when it is 20 bytes short).
 """
 import argparse, gzip, re, hashlib, hmac, os, shutil, struct, sys, time
 
 TITLE_ID = '54540079'
 XBOX_STAMP = 0x02F59447
-KNOWN_STAMPS = {0x00512C4D: 'the PS2 Remix (SLUS-21355)'}
+KNOWN_STAMPS = {0x02F6DC47: 'the PS2 release, SLUS-21029: a different layout',
+                0x00512C4D: 'the PS2 Remix, SLUS-21355: a different layout'}
 SIG_LEN = 20
 XBOX_SIZE = 99162                 # every Xbox profile seen, signature included
 PS2_CODE = re.compile(r'^B[A-Z]+-\d{5}')   # a PS2 save folder: BASLUS-21355<name>
@@ -219,6 +220,26 @@ def max_files(d):
     return files
 
 
+def sharkport_files(d):
+    """{path: bytes} of a SharkPort save (.sps/.xps), under its PS2 folder name."""
+    o = 4 + struct.unpack_from('<I', d)[0] + 4          # magic, then a version word
+    for _ in range(3):                                   # title, two descriptions
+        o += 4 + struct.unpack_from('<I', d, o)[0]
+    o += 4                                               # total size
+    hl = struct.unpack_from('<H', d, o)[0]               # the folder: 250-byte header
+    dirname = d[o + 2:o + 66].split(b'\0')[0].decode('latin1')
+    count = struct.unpack_from('<I', d, o + 0x42)[0]     # entries, with . and ..
+    o += hl
+    files = {}
+    for _ in range(count - 2):
+        hl = struct.unpack_from('<H', d, o)[0]
+        name = d[o + 2:o + 66].split(b'\0')[0].decode('latin1')
+        size = struct.unpack_from('<I', d, o + 0x42)[0]
+        files[f'{dirname}/{name}'] = d[o + hl:o + hl + size]
+        o += hl + size
+    return files
+
+
 # --- Input ------------------------------------------------------------------
 
 def load(path):
@@ -239,10 +260,15 @@ def load(path):
         return fatx_files(d)
     if d[:12] == b'Ps2PowerSave':
         return max_files(d)
+    if d[4:17] == b'SharkPortSave':
+        return sharkport_files(d)
+    if d[:4] == b'CFU\0':
+        raise SystemExit(f'{path}: a CodeBreaker save (.cbs, encrypted): not read; PS2 profiles are '
+                         f'another format anyway (see make import-save LIST=1 on a .max/.sps)')
     if path.lower().endswith('.mc3'):
         parent = os.path.basename(os.path.dirname(os.path.abspath(path)))
         return {f'{parent}/{os.path.basename(path)}': d}   # its save folder's name, if it has one
-    raise SystemExit(f'{path}: not a save this tool knows (memory unit dump, .gsx, .max, .mc3 or a folder)')
+    raise SystemExit(f'{path}: not a save this tool knows (memory unit dump, .gsx, .max, .sps/.xps, .mc3 or a folder)')
 
 
 def profiles(files):
