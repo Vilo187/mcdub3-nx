@@ -28,6 +28,7 @@ Nothing here has been sent yet.
 | 5e | Lifter: a jcc after a join of cmp/test of different widths lifts as `if (_flags)`, never taken | `77dc676` | xboxrecomp + nfsu2-sw | yes, both |
 | 5f | Devices: heap and contiguous-window bus addresses collide; the APU played window bytes for heap PCM. RAM tagged (bit 26) by MmGetPhysicalAddress | `f2f903f` | nfsu2-sw (kernel, apu, executor, ohci) | not checked |
 | 5g | APU: GP/EP DSP memory read as 0, so DirectSound reset both DSPs from every check (10 ms stall each, half-speed audio). Now storage, stub EP reads alive | `10d9044` | nfsu2-sw (apu_core.c) | not checked |
+| 5h | Lifter: an unresolved branch target that is a shared epilogue (pops, then `ret N`) became a stub doing only the `ret`, skipping the pops: callee-saved registers and esp corrupt on that path. Straight runs to a ret are now lifted | `f70b367` | xboxrecomp + nfsu2-sw (translator.py) | yes, both |
 | 5h | Executor: viewport scale/offset not mirrored into vertex-program constants c[-38]/c[-37]; D3D vertex shaders put every vertex at (0,0) | `b351443` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
 | 5i | Renderers: a narrower clip at a surface's address rebuilt (and wiped) the surface; reuse when it fits, in both dimensions | `3616927` | nfsu2-sw (nv2a_gl, nv2a_vk) | not checked |
 | 5j | Disassembler: `push ecx` + register save not a prologue, so a seed after a data table was rejected | `881259a` | xboxrecomp + nfsu2-sw | not checked |
