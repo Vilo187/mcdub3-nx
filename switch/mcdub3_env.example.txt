@@ -38,6 +38,11 @@
 # (default: keep the aspect ratio).
 #RECOMP_GL_ASPECT=
 
+# Trim this many percent off each edge of the picture, as a TV of the time
+# did (overscan). Hides the seam of the motion blur, a thin line near the
+# right and bottom edges when driving fast. 0 = the whole picture.
+#RECOMP_GL_OVERSCAN=1.5
+
 # Anti-aliasing of edges (FXAA), applied to the final picture.
 #RECOMP_GL_FXAA=1
 
