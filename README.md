@@ -1,4 +1,5 @@
 <p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="400"></p>
+<p align="center"><img src="assets/preview.png" alt="Midnight Club 3: DUB Edition"></p>
 
 The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux and macOS without requirement of emulation.
 
@@ -130,13 +131,13 @@ default, is [switch/mcdub3_env.example.txt](switch/mcdub3_env.example.txt). The 
 | `RECOMP_GL_FILL`     | `1`                        | Menus and videos laid out for 4:3 fill the whole width instead of showing black side bands.                                                                         |
 | `MC3_FILL_SKIP`      | `rockstar,sdlogo,mc3intro` | Movies that keep their original 4:3 framing (names from `game/video/`, without `.bik`).                                                                             |
 | `RECOMP_GL_ASPECT`   | *(unset)*                  | `fill` stretches the picture to the whole screen, whatever its shape.                                                                                               |
-| `RECOMP_GL_OVERSCAN` | `1.5` | Trims this many percent off each edge, as a TV of the time did: hides the motion-blur seam near the right and bottom edges. `0` shows the whole picture. |
+| `RECOMP_GL_OVERSCAN` | `1.5`                      | Trims this many percent off each edge, as a TV of the time did: hides the motion-blur seam near the right and bottom edges. `0` shows the whole picture.            |
 | `RECOMP_GL_FXAA`     | `1`                        | Smooths jagged edges.                                                                                                                                               |
 | `RECOMP_GL_SHARPEN`  | `0.5`                      | Sharpening strength, from 0 (off) to 1.                                                                                                                             |
 | `RECOMP_GL_MIPS`     | `1`                        | Smoother textures in the distance, with less shimmering.                                                                                                            |
 | `RECOMP_GL_ANISO`    | `16`                       | Keeps road textures sharp at shallow angles. 1 is off, 16 the maximum.                                                                                              |
 | `RECOMP_GL_LOD_BIAS` | `-0.25`                    | Texture detail: negative is sharper, positive softer.                                                                                                               |
-| `RECOMP_GL_UI_SCALE` | `2`                        | Draws menu and HUD art this many times larger: 1 (off) to 5, whole numbers.                                                                                     |
+| `RECOMP_GL_UI_SCALE` | `2`                        | Draws menu and HUD art this many times larger: 1 (off) to 5, whole numbers.                                                                                         |
 
 ### Input and controllers
 
