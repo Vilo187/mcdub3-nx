@@ -425,6 +425,7 @@ typedef struct {
     int      hd_mips;                   /* hd has mip levels (pack textures) */
     uint64_t hd_key;                    /* pack texture requested for this content */
     int      hd_pending;                /* ... on the worker, not here yet */
+    int      rewrites;                  /* content changes at this address */
 } GlTex;
 
 #define GL_MAX_TEX 1024
@@ -752,6 +753,8 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
         t->used = t->checked = s_frame;
         return tex_done(t);
     }
+    if (t)
+        t->rewrites++;                       /* same image, new content */
     if (!t) {
         t = victim;
         if (t->tex) {
@@ -1028,6 +1031,17 @@ static int ui_eligible(const GlTex *t)
     }
     if (s_ui_scale <= 1 || t->levels > 1 || t->pitch)       /* pitch: linear */
         return 0;
+    /* Rewritten in place more than a few times: text or a gauge the title
+     * draws into the image while it is shown. The 2x copy lags it or mixes
+     * old and new: MC3's tutorial line under the race results came out as
+     * scrambled letters (2026-10-22). Upscaled art is static art. */
+    if (t->rewrites > 4) {
+        static int logged;
+        if (logged++ < 10)
+            fprintf(stderr, "  [GL] UI upscale: 0x%08X (format 0x%02X %ux%u) changes while shown: "
+                            "kept as drawn\n", t->va, t->color, t->w, t->h);
+        return 0;                            /* the old copy: hash differs, unused */
+    }
     if (t->w < 16 || t->h < 16 || t->w > 256 || t->h > 256)
         return 0;
     if ((t->color == 0x0C || t->color == 0x0E || t->color == 0x0F) && t->w * t->h > 64 * 64)
