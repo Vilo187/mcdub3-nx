@@ -26,7 +26,7 @@ export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WI
 .PHONY: help setup nsp check-vm extract lift regen relift \
         build build-vk build-debug mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
         switch switch-vk switch-lto send \
-        hd-dump hd-tools hd-upscale \
+        hd-dump hd-tools hd-upscale import-save \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
 
 help:  ## Show this help
@@ -160,6 +160,10 @@ switch-lto:  ## Switch build with link-time optimisation
 send:  ## Send the NRO over nxlink (hbmenu, press Y) and log the game to work/logs/switch_*.log; SWITCH_IP=a.b.c.d, NATIVE=1
 	@mkdir -p $(LOGS)
 	bash switch/send.sh 2>&1 | tee $(LOGS)/switch_run_$(NOW).log
+
+import-save:  ## Import an Xbox MC3 profile: make import-save FILE=<.gsx | memory unit dump | save folder | .mc3> (UDATA=<dir>, REPLACE=1, LIST=1)
+	@test -n "$(FILE)" || { echo "usage: make import-save FILE=<save file or folder>"; exit 2; }
+	python3 tools/save_import.py "$(FILE)" $(if $(UDATA),--udata "$(UDATA)") $(if $(REPLACE),--replace) $(if $(LIST),--list)
 
 ## Housekeeping
 log:  ## Show the end of the newest log in work/logs
