@@ -271,12 +271,45 @@ static GlSurf *surf_get(uint32_t va, uint32_t w, uint32_t h,
     s->aa_sx = aa_sx; s->aa_sy = aa_sy;
     {
         double kx = s_scale, ky = s_scale;
+        /* Small offscreen buffers (MC3's motion-blur trails: 256x256,
+         * 64x64, 512x512) stay at the title's size: the title draws into
+         * them with a half-pixel offset that covers every pixel at 1x but
+         * left a thin undrawn border once stored k times larger, and each
+         * enlarged trail copy showed it as a seam -- vertical and
+         * horizontal lines near the edges at RECOMP_GL_SCALE > 1
+         * (2026-10-22). A blurred trail gains nothing from the extra
+         * resolution. RECOMP_GL_SCALE_SMALL=1 scales them too. */
+        {
+            static int small = -1;
+            if (small < 0) {
+                const char *e = getenv("RECOMP_GL_SCALE_SMALL");
+                small = e && *e == '1';
+            }
+            if (!small && !(w >= 512 && h >= 400 && w > h)) {
+                kx = 1.0;
+                ky = 1.0;
+            }
+        }
         if (s_square < 0) {
             const char *e = getenv("RECOMP_GL_SQUARE");
             s_square = !(e && *e == '0') && xbox_video_widescreen();
         }
-        if (s_square && aa_sx <= 1 && w >= 512 && h >= 400 && h <= 576)
+        /* The screen-shaped frame only (wider than tall): MC3's 512x512
+         * blur buffer matched the size test, was widened by 4/3 to a
+         * fractional 3413.33 stored columns, and the never-drawn sliver
+         * at its edge showed as a thin line (2026-10-22). */
+        if (s_square && aa_sx <= 1 && w >= 512 && w > h && h >= 400 && h <= 576) {
+            /* Rounded so the columns the title draws (720 of a 768 pitch,
+             * or 640) end on a whole stored pixel: 720 x 32/27 x k ended
+             * mid-pixel (4266.67 at k=5, 853.33 at k=1), the title's motion
+             * blur reads its frame back as a 720-wide texture, and every
+             * enlarged copy brought the never-drawn sliver along as a thin
+             * vertical line near the right edge -- several, one per copy,
+             * black in the flythrough, white in races (2026-10-22). */
+            double drawn = w > 640 ? 720.0 : 640.0;
             kx *= w > 640 ? 32.0 / 27.0 : 4.0 / 3.0;
+            kx = floor(drawn * kx + 0.5) / drawn;
+        }
         if (w * kx > (double)s_max_size) kx = (double)s_max_size / w;
         if (h * ky > (double)s_max_size) ky = (double)s_max_size / h;
         s->pw = (uint32_t)(w * kx + 0.5); s->ph = (uint32_t)(h * ky + 0.5);
@@ -1684,7 +1717,7 @@ static float tex_lod_bias(void)
 }
 
 /* Bind stage `i` from the method shadow; returns the texcoord scale. */
-static void bind_stage(const uint32_t *regs, int i, float scale[2])
+static void bind_stage(const uint32_t *regs, int i, float scale[2], float tmax[2])
 {
     uint32_t base = (0x1B00u + (uint32_t)i * 0x40u) / 4;
     uint32_t control0 = regs[base + 3];
@@ -1696,6 +1729,7 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
     int mipped = 0;
 
     scale[0] = scale[1] = 1.0f;
+    tmax[0] = tmax[1] = 1e9f;
     active_unit(i);
     if (!(control0 & 0x40000000u) || !regs[base]) {
         bind_tex(0);
@@ -1722,15 +1756,46 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
     rt = surf_find(va);
     if (rt) {
         tex = rt->tex;
+        {
+            static int rtt = -1, n;
+            if (rtt < 0) rtt = getenv("RECOMP_GL_RT_TRACE") != NULL;
+            if (rtt && n++ < 200000)
+                fprintf(stderr, "  [GL] surface 0x%08X sampled as %ux%u (format 0x%02X, rect %d): "
+                        "surface %ux%u drawn %u, stored %ux%u\n", va, w, h, color,
+                        !tex_size_from_format(color), rt->w, rt->h, rt->vw, rt->pw, rt->ph);
+        }
         /* The image the title samples is the logical one; the FBO holds it
          * at the anti-aliased size. Normalised coordinates cover both. */
         rt_scale(w, h, rt->w, rt->h, rt->aa_sx, rt->aa_sy, scale);
+        {
+            /* The title samples part of the surface (a 720-wide texture
+             * on a 768-pitch frame): clamp at that part's edge, half a
+             * stored texel in, as a texture of that size would. Filtering
+             * pulled in the never-drawn column beyond it, and MC3's motion
+             * blur, which reads its frame back this way and lays enlarged
+             * copies of it, showed one thin vertical line per copy near
+             * the right edge (2026-10-22). */
+            uint32_t lw = rt->w / (rt->aa_sx ? rt->aa_sx : 1);
+            uint32_t lh = rt->h / (rt->aa_sy ? rt->aa_sy : 1);
+            if (w < lw)
+                tmax[0] = (float)w / (float)lw - 0.5f / (float)rt->pw;
+            if (h < lh)
+                tmax[1] = (float)h / (float)lh - 0.5f / (float)rt->ph;
+        }
     } else if (s_movie_tex[i]) {          /* an upscaled movie frame (movie_prepare) */
         tex = s_movie_tex[i];
     } else if (s_depth_tex[i]) {          /* a zeta buffer (depth_as_color) */
         const GlDepth *zd = s_depth_tex[i];
         tex = zd->rgba;
         rt_scale(w, h, zd->lw, zd->lh, zd->ax ? zd->ax : 1, zd->ay ? zd->ay : 1, scale);
+        {   /* the same edge clamp as a surface's part (below): the blur
+             * weights by depth, read as 720 of a 768-wide buffer */
+            uint32_t lw = zd->lw / (zd->ax ? zd->ax : 1), lh = zd->lh / (zd->ay ? zd->ay : 1);
+            if (w < lw && zd->pw)
+                tmax[0] = (float)w / (float)lw - 0.5f / (float)zd->pw;
+            if (h < lh && zd->ph)
+                tmax[1] = (float)h / (float)lh - 0.5f / (float)zd->ph;
+        }
     } else {
         tex = tex_get(va, color, w, h, pitch, (format >> 16) & 0xF);
         mipped = s_tex_cur && ((s_tex_cur->tex == tex && s_tex_cur->mips > 1)
@@ -1787,7 +1852,7 @@ typedef struct {
     GLuint     prog;
     GLint      u_c, u_surf, u_snapy, u_aa, u_m, u_vpoff, u_xform;
     GLint      u_mv, u_fogplane, u_fog0, u_fog1;   /* fixed-function fog */
-    GLint      u_t[4], u_tscale, u_c0, u_c1, u_fc0, u_fc1, u_fogcolor, u_afunc, u_aref;
+    GLint      u_t[4], u_tscale, u_tmax, u_c0, u_c1, u_fc0, u_fc1, u_fogcolor, u_afunc, u_aref;
     uint32_t   used;
     int        vpc_valid;       /* vpc holds what this program's "c" was given */
     uint32_t   vpc_gen;         /* ... as of the executor's constant version */
@@ -1797,7 +1862,7 @@ typedef struct {
     float      vpc[192][4];
     int        uni_valid;       /* uni holds the rest of its uniforms */
     struct GlUni {
-        float surf[4], aa[2], m[16], vpoff[4], tscale[4][2];
+        float surf[4], aa[2], m[16], vpoff[4], tscale[4][2], tmax[4][2];
         float c0[8][4], c1[8][4], fog[4], fc[2][4], aref;
         float mv[16], fogplane[4], fog0[4], fog1[4], snapy;
         int   xform, afunc;
@@ -2398,6 +2463,7 @@ static GlProg *prog_register(uint64_t vkey, const Nv2aPshKey *pk, GLuint prog)
     p->u_fog0 = glGetUniformLocation(p->prog, "u_fog0");
     p->u_fog1 = glGetUniformLocation(p->prog, "u_fog1");
     p->u_tscale = glGetUniformLocation(p->prog, "u_tscale");
+    p->u_tmax = glGetUniformLocation(p->prog, "u_tmax");
     p->u_c0 = glGetUniformLocation(p->prog, "u_c0");
     p->u_c1 = glGetUniformLocation(p->prog, "u_c1");
     p->u_fogcolor = glGetUniformLocation(p->prog, "u_fogcolor");
@@ -3220,7 +3286,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
     uint32_t n, a, i;
     GLintptr idx_at;
     GLenum mode, idx_type = GL_UNSIGNED_INT;
-    float tscale[4][2], c0[8][4], c1[8][4], fog[4], surf[4], aa[2], m[16], snapy;
+    float tscale[4][2], tmax[4][2], c0[8][4], c1[8][4], fog[4], surf[4], aa[2], m[16], snapy;
 
     if (!ready())
         return;
@@ -3276,7 +3342,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
         uint32_t texs = s_hz_texs;
         uint64_t t0 = hz_now();
         for (i = 0; i < 4; i++)
-            bind_stage(r, (int)i, tscale[i]);
+            bind_stage(r, (int)i, tscale[i], tmax[i]);
         if (s_hz_texs != texs)
             s_hz_tex_ns += hz_now() - t0;
     }
@@ -3333,6 +3399,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
         memcpy(u.m, m, sizeof u.m);
         memcpy(u.vpoff, b->vp_offset, sizeof u.vpoff);
         memcpy(u.tscale, tscale, sizeof u.tscale);
+        memcpy(u.tmax, tmax, sizeof u.tmax);
         memcpy(u.c0, c0, sizeof u.c0);
         memcpy(u.c1, c1, sizeof u.c1);
         memcpy(u.fog, fog, sizeof u.fog);
@@ -3357,6 +3424,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
             if (p->u_fog0 >= 0) glUniform4fv(p->u_fog0, 1, u.fog0);
             if (p->u_fog1 >= 0) glUniform4fv(p->u_fog1, 1, u.fog1);
             if (p->u_tscale >= 0) glUniform2fv(p->u_tscale, 4, &u.tscale[0][0]);
+            if (p->u_tmax >= 0) glUniform2fv(p->u_tmax, 4, &u.tmax[0][0]);
             if (p->u_c0 >= 0) glUniform4fv(p->u_c0, 8, &u.c0[0][0]);
             if (p->u_c1 >= 0) glUniform4fv(p->u_c1, 8, &u.c1[0][0]);
             if (p->u_fogcolor >= 0) glUniform4fv(p->u_fogcolor, 1, u.fog);
@@ -4086,19 +4154,16 @@ static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
     }
     {
         /* RECOMP_GL_OVERSCAN=<percent> trims that much of each edge of a
-         * full-screen picture (a 4:3 screen filled to 16:9 is trimmed
-         * already, by its own rectangle). A TV of the time hid a border of
-         * the picture (overscan) and titles drew there freely: MC3's motion
-         * blur lays a slightly enlarged copy of the last frame over the
-         * picture, and its seam shows as a thin line about 4 title pixels
-         * in from the right and bottom edges whenever the camera moves
-         * fast -- black in the flythrough, white in races (2026-10-22).
-         * In 33.png the bottom seam sat 1.1% up. Default 1.5 (7 of 480
-         * lines), 0 = the whole picture, up to 10. */
+         * full-screen picture, as a TV of the time did (a 4:3 screen
+         * filled to 16:9 is trimmed already, by its own rectangle).
+         * Default 0: the thin lines near the right and bottom edges that
+         * this was first meant to hide were the motion blur's small
+         * buffers stored at the scaled size (see surf_get), not overscan
+         * content (2026-10-22). Up to 10. */
         static float k = -1.0f;
         if (k < 0.0f) {
             const char *e = getenv("RECOMP_GL_OVERSCAN");
-            k = e ? (float)atof(e) / 100.0f : 0.015f;
+            k = e ? (float)atof(e) / 100.0f : 0.0f;
             k = k < 0.0f ? 0.0f : k > 0.10f ? 0.10f : k;
             if (k > 0.0f)
                 fprintf(stderr, "  [GL] overscan trimmed: %g%% of each edge (RECOMP_GL_OVERSCAN)\n",
