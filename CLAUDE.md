@@ -234,16 +234,17 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   `release`, approval). NROs are mcdub3-nx-<edition>.nro; the boot check
   (MC3_XBE_SIZE / MC3_XBE_FNV64 in config/xbe_facts.h) refuses another XBE.
 
-- Career race crash (found 2026-10-21, Switch "starting a specific race",
-  Mac after ~8 min; same chain): mcPgCareer::ReportRaceResult (sub_0024F8C0)
-  -> sub_00251CD0 calls listeners from a list of 12-byte entries at
-  this+0x78..+0x7C (vtable slot 0x28; sub_00251D40: 0x2C), and one entry
-  went bad while the loop walked it: with every entry valid beforehand the
-  crash stayed, so a listener's callback changes the list mid-broadcast
-  (the Xbox gets away with reading the freed memory). src/recomp_manual.c
-  replaces both broadcasts: current entry first, then the others from a
-  copy, each only if still listed and valid; `[LISTEN]` logs what was
-  skipped (MC3_LISTENER_CHECK=0: the original loop).
+- Career race crash (found 2026-10-21, fixed 2026-10-22; every career race,
+  every host): the race-event listener sub_0023D630 leaves through `jne`
+  onto `pop edi; pop esi; ret 4` at 0x23D72D, bytes the detector left in a
+  falsely split neighbour (gap_prologue at 0x23D71F), so the target was a
+  ret-only stub that skipped both pops. The broadcast loop (sub_00251CD0,
+  called by mcPgCareer::ReportRaceResult sub_0024F8C0) then walked on with
+  a garbage esi into a null call. The translator now lifts such epilogues
+  (21 in MC3; test_stub_epilogue.py). Found with src/recomp_manual.c's
+  broadcast replacement, which checks every listener call for a broken
+  calling convention (`[LISTEN]`, MC3_LISTEN_TRACE=1; MC3_LISTENER_CHECK=0
+  runs the game's own loop).
 
 ### First lift (2026-10-14)
 
