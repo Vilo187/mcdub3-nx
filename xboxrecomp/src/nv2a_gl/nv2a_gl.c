@@ -738,15 +738,21 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
             if (!c->tex) { if (!victim || victim->tex) victim = c; }
             else if (!victim || (victim->tex && c->used < victim->used)) victim = c;
         }
-    /* Once per frame per texture is enough to notice an update. */
-    if (t && t->checked == s_frame) {
+    /* Once per frame per texture is enough to notice an update -- for
+     * textures that never changed. One the title has rewritten before
+     * (t->rewrites) is checked at every use and in full: MC3 writes text
+     * into a swizzled texture between draws, and a once-a-frame, sampled
+     * check showed the letters of an older string (the tutorial line under
+     * the race results, scrambled, 2026-10-22). */
+    if (t && t->checked == s_frame && !t->rewrites) {
         t->used = s_frame;
         return tex_done(t);
     }
     /* Linear images (movies, UI, CPU-drawn) in full; swizzled ones, mostly
-     * static game textures, sampled. */
-    hash = tex_size_from_format(color) ? bytes_hash(va, tex_bytes(color, w, h, pitch))
-                                       : bytes_hash_full(va, tex_bytes(color, w, h, pitch));
+     * static game textures, sampled -- in full once they have changed. */
+    hash = tex_size_from_format(color) && !(t && t->rewrites)
+               ? bytes_hash(va, tex_bytes(color, w, h, pitch))
+               : bytes_hash_full(va, tex_bytes(color, w, h, pitch));
     if (color == 0x0B)                       /* the palette is content too */
         hash ^= bytes_hash(s_palette_va, 1024) * 31u;
     if (t && t->hash == hash) {
@@ -1026,7 +1032,7 @@ static int ui_eligible(const GlTex *t)
         const char *e = getenv("RECOMP_GL_UI_SCALE");
         s_ui_scale = e ? atoi(e) : 2;
         if (s_ui_scale < 1) s_ui_scale = 1;
-        if (s_ui_scale > 4) s_ui_scale = 4;
+        if (s_ui_scale > 5) s_ui_scale = 5;
         fprintf(stderr, "  [GL] UI art upscaled %dx (RECOMP_GL_UI_SCALE)\n", s_ui_scale);
     }
     if (s_ui_scale <= 1 || t->levels > 1 || t->pitch)       /* pitch: linear */
@@ -2731,7 +2737,7 @@ static int ready(void)
         GLint mt = 0, mr = 0;
         double k = e ? strtod(e, NULL) : 1.0;
         if (!(k > 0.0)) k = 1.0;                    /* unset, 0 or garbage */
-        s_scale = k < 0.5 ? 0.5 : k > 4.0 ? 4.0 : k;
+        s_scale = k < 0.5 ? 0.5 : k > 5.0 ? 5.0 : k;   /* 5: 3600x2400, a 4K screen */
         glGetIntegerv(0x0D33, &mt);                 /* GL_MAX_TEXTURE_SIZE */
         glGetIntegerv(0x84E8, &mr);                 /* GL_MAX_RENDERBUFFER_SIZE */
         s_max_size = mt > 0 && mr > 0 ? (mt < mr ? mt : mr) : 4096;
