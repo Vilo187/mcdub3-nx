@@ -1448,6 +1448,44 @@ class FunctionTranslator:
                     return 0
         return 0
 
+    def _stub_epilogue_end(self, addr, max_insns=16):
+        """End address of a straight run from `addr` to a `ret`, or None.
+
+        A stub stands in for a branch target the detector did not place,
+        and it only reproduces the final `ret` (see _stub_ret_bytes). That
+        is wrong whenever the bytes before the ret do work. MSVC's shared
+        epilogues are exactly that: MC3's race-event listener sub_0023D630
+        leaves through `jne 0x23D72D` onto `pop edi; pop esi; ret 4`, those
+        bytes sat inside a falsely split neighbour, and the stub skipped
+        both pops. Every race event then returned with esi and edi wrong and
+        esp off, the broadcast loop walked on with a garbage esi into a null
+        call, and the game crashed starting any career race (2026-10-21).
+
+        Here such a run is lifted for real: only when every instruction up
+        to the ret falls through (no branch, call or jump of any kind), so
+        the translated function is the bytes, not a guess.
+        """
+        offset = va_to_file_offset(addr)
+        if offset is None or not self.xbe_data:
+            return None
+        window = self.xbe_data[offset:offset + max_insns * 15]
+        try:
+            decoded = self.disasm._cs.disasm(window, addr)
+        except Exception:
+            return None
+        for count, insn in enumerate(decoded):
+            if count >= max_insns:
+                return None
+            mnemonic = insn.mnemonic.lower()
+            if mnemonic in ("ret", "retn"):
+                return insn.address + insn.size if count > 0 else None
+            if (mnemonic.startswith("j") or mnemonic.startswith("call")
+                    or mnemonic.startswith("loop") or mnemonic in (
+                        "int", "int3", "into", "iret", "iretd", "hlt",
+                        "ud2", "syscall", "sysenter")):
+                return None
+        return None
+
     def _read_local_jump_table(self, table_va, lower, upper,
                                max_entries=256, min_entry_va=None):
         """Read the contiguous pointer cluster around an indexed-jump base."""
@@ -3300,13 +3338,32 @@ class BatchTranslator:
             stub_lines.append(
                 " * esp off by N on every call. */")
             stub_lines.append("")
+            lifted_epilogues = 0
             for addr in sorted(unresolved):
+                # A straight run to a ret (a shared epilogue: pops, then
+                # ret N) is lifted for real; a stub would skip its pops.
+                end = self.translator._stub_epilogue_end(addr)
+                if end:
+                    code = self.translator.translate_function(
+                        addr, {"start": f"0x{addr:08X}", "end": end,
+                               "size": end - addr, "_addr": addr,
+                               "name": unresolved[addr]})
+                    if code:
+                        stub_lines.append(
+                            f"/* 0x{addr:08X}: a branch target's epilogue, "
+                            f"lifted (not a stub) */")
+                        stub_lines.append(code)
+                        lifted_epilogues += 1
+                        continue
                 popped = self.translator._stub_ret_bytes(addr)
                 note = (f"ret {popped}" if popped else "not detected")
                 stub_lines.append(
                     f"void {unresolved[addr]}(void) {{ g_esp += {4 + popped}; "
                     f"/* 0x{addr:08X}: {note} */ }}"
                 )
+            if lifted_epilogues and verbose:
+                print(f"  {lifted_epilogues} unresolved target(s) lifted as "
+                      f"epilogues instead of stubbed", file=sys.stderr)
             stub_lines.append("")
 
             write_if_changed(stub_path, "\n".join(stub_lines))
