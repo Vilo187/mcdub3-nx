@@ -124,7 +124,7 @@ default, is [switch/mcdub3_env.example.txt](switch/mcdub3_env.example.txt). The 
 
 | Setting              | Default                    | What it does                                                                                                                                                        |
 | -------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `RECOMP_GL_SCALE`    | `1`                        | Rendering resolution as a multiple of the Xbox's 720x480 (0.5 to 4). `1.5` gives 1280x720, the best match for a 720p screen; higher costs frame rate on the Switch. |
+| `RECOMP_GL_SCALE`    | `1`                        | Rendering resolution as a multiple of the Xbox's 720x480 (0.5 to 5). `1.5` gives 1280x720, the best match for a 720p screen; higher costs frame rate on the Switch. |
 | `RECOMP_WIDESCREEN`  | `1`                        | Tells the game the TV is widescreen, so it renders 16:9 itself.                                                                                                     |
 | `RECOMP_GL_SQUARE`   | `1`                        | Shows the widescreen picture at its true shape (square pixels).                                                                                                     |
 | `RECOMP_GL_FILL`     | `1`                        | Menus and videos laid out for 4:3 fill the whole width instead of showing black side bands.                                                                         |
@@ -135,7 +135,7 @@ default, is [switch/mcdub3_env.example.txt](switch/mcdub3_env.example.txt). The 
 | `RECOMP_GL_MIPS`     | `1`                        | Smoother textures in the distance, with less shimmering.                                                                                                            |
 | `RECOMP_GL_ANISO`    | `16`                       | Keeps road textures sharp at shallow angles. 1 is off, 16 the maximum.                                                                                              |
 | `RECOMP_GL_LOD_BIAS` | `-0.25`                    | Texture detail: negative is sharper, positive softer.                                                                                                               |
-| `RECOMP_GL_UI_SCALE` | `2`                        | Draws menu and HUD art this many times larger. Whole numbers only; 1 is off.                                                                                        |
+| `RECOMP_GL_UI_SCALE` | `2`                        | Draws menu and HUD art this many times larger: 1 (off) to 5, whole numbers.                                                                                     |
 
 ### Input and controllers
 
