@@ -183,7 +183,7 @@ the path layer are identical on both.
 Profiles (`game_dir/UDATA/54540079/<12 hex>/`) are signed with the port's
 all-zero key, so they move freely between Linux, Mac and Switch. Profiles
 from a real Xbox are signed with its key and need `make import-save FILE=…`
-(tools/save_import.py: reads memory unit dumps, `.gsx`, folders, `.mc3`, PS2 `.max`;
+(tools/save_import.py: reads memory unit dumps, `.gsx`, folders, `.mc3`; PS2 `.max`/`.sps` read and refused, another format;
 re-signs; backs up to `work/saves-backup/`). Details in CLAUDE.md, Saves.
 
 ## Project layout
