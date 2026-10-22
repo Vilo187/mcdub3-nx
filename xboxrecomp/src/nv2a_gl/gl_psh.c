@@ -309,13 +309,7 @@ static void tex_fetch(Out *o, int t, uint32_t mode, const Nv2aPshKey *k)
     default: {                                       /* 2D (+ the rest, for now) */
         emit(o, "    vec2 tc%d = (abs(vT%d.w) > 1e-8 && %d == 1) ? vT%d.xy / vT%d.w : vT%d.xy;\n",
              t, t, mode == 1 ? 1 : 0, t, t, t);
-        /* GL: clamped to u_tmax, the edge of the part of a surface the
-         * stage samples (nv2a_gl bind_stage); 1e9 for everything else. */
-        if (nv2a_shader_vk)
-            emit(o, "    vec4 T%d = texture(t%d, tc%d * u_tscale[%d]);\n", t, t, t, t);
-        else
-            emit(o, "    vec4 T%d = texture(t%d, min(tc%d * u_tscale[%d], u_tmax[%d]));\n",
-                 t, t, t, t, t);
+        emit(o, "    vec4 T%d = texture(t%d, tc%d * u_tscale[%d]);\n", t, t, t, t);
         break;
     }
     }
@@ -361,7 +355,6 @@ int nv2a_gl_psh(const Nv2aPshKey *k, char *buf, size_t cap)
         "uniform sampler2D t0; uniform sampler2D t1;\n"
         "uniform sampler2D t2; uniform sampler2D t3;\n"
         "uniform vec2 u_tscale[4];\n"
-        "uniform vec2 u_tmax[4];\n"
         "uniform vec4 u_c0[8]; uniform vec4 u_c1[8];\n"
         "uniform vec4 u_fc0; uniform vec4 u_fc1;\n"
         "uniform vec4 u_fogcolor;\n"
