@@ -1,6 +1,6 @@
 <p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="360"></p>
 
-The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Switch, Linux and macOS without requirement of emulation.
+The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux and macOS without requirement of emulation.
 
 Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-sw), whose Switch layer has been a great inspiration for this engine.
 
@@ -29,15 +29,13 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 
 Download from releases and extract to the root of your Nintendo Switch directory. Copy the game files to the `/game` directory within this folder. Install the .nsp to get a plug-and-play experience.
 
-### Mac (Apple Silicon)
+### Mac
 
-The Mac version is built on your own Mac from your own copy of the game:
-the build turns the game's code into native code, so it needs the disc.
+The Mac application can be packaged and installed by following these instructions:
 
 1. Install the Xcode command line tools (`xcode-select --install`) and
    [Homebrew](https://brew.sh).
-2. Get the code and install what the build needs (Homebrew packages and a
-   Python environment in `work/`):
+2. Clone the repository and install the requirements for building the game:
 
    ```sh
    git clone https://github.com/laureladastra/mcdub3-nx.git
@@ -45,8 +43,12 @@ the build turns the game's code into native code, so it needs the disc.
    make setup
    ```
 
-3. Put the extracted disc in `game/`: `default.xbe` and all the other files
-   from the disc, not the ISO. From an ISO: `make extract ISO=<file.iso>`.
+3. Put your extracted disc in `game/`: `default.xbe` and all the other files
+   from the disc, not the ISO. A disc extraction utility is bundled with this rape. To extract your disc you can run:
+
+   ```sh
+   make extract ISO=<file.iso>
+   ```
 4. Lift the game's code to C, once per disc (10 to 20 minutes):
 
    ```sh
@@ -59,22 +61,13 @@ the build turns the game's code into native code, so it needs the disc.
    make mac-app SCALE=1.5 GAME=$PWD/game
    ```
 
-   It lands in `work/mac_app/Midnight Club 3.app`; drag it to
-   Applications. `SCALE` sets the resolution (`1.5` = 1280x720, `2` and up
-   for sharper), `HD=1` adds your texture pack, and `GAME=$PWD/game` lets
-   the app use the disc from the repo. Without `GAME`, the first start
-   opens the folder where the app wants the disc:
-   `~/Library/Application Support/mcdub3/game/`. Settings, saves and the
-   log live in that `mcdub3` folder too.
+   The application file lands in `work/mac_app/Midnight Club 3.app`. Drag it to your `Applications folder`. `SCALE` sets the resolution (`1.5` = 1280x720, `2` and up for sharper). Without `GAME`, the first start opens the folder where the app wants the disc: `~/Library/Application Support/mcdub3/game/`. Settings, saves and the log live in that `mcdub3` folder too.
 
-To play without making an app: `make build run` builds and starts the game
-from the repo, with its log in `work/logs/`.
+You can also play the game without making the app by running `make build run`
 
 ### Linux
 
-On Ubuntu or Debian (ARM64 or x86-64), from your own copy of the game:
-
-1. Get the code and install what the build needs (asks for `sudo`):
+1. Get the code and install what the build needs:
 
    ```sh
    git clone https://github.com/laureladastra/mcdub3-nx.git
@@ -82,45 +75,33 @@ On Ubuntu or Debian (ARM64 or x86-64), from your own copy of the game:
    make setup
    ```
 
-2. Put the extracted disc in `game/` (`make extract ISO=<file.iso>` from an
-   ISO).
-3. Lift the game's code to C, once per disc (10 to 20 minutes), then build
-   and play:
+2. Put the extracted disc in `game/` (`make extract ISO=<file.iso>` from an ISO).
+3. Lift the game's code to C, then build and play:
 
    ```sh
    make lift
    make build run
    ```
-
-   Settings go on the command line, for example
-   `make run RECOMP_GL_SCALE=2`. The keyboard plays as player 1 and SDL game
-   controllers (Xbox, DualSense) work too. Logs land in `work/logs/`.
+   
+   Settings go on the command line, for example `make run RECOMP_GL_SCALE=2`. The keyboard plays as player 1 and SDL game controllers (Xbox, DualSense) are supported.
 
 ## Technical Overview
 
-| Area          | State                                                                                                                                                               |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lift          | 21,585 functions, 2.98 M lines of C                                                                                                                                 |
-| Movies        | Bink decoded natively with FFmpeg, sound in sync, upscaled on the GPU                                                                                               |
-| Audio         | XACT sound effects and the WMA music                                                                                                                                |
-| Graphics      | OpenGL renderer: up to 3x resolution, square pixels in 16:9, 4:3 screens filled to widescreen, mipmaps and 16x anisotropic filtering, FXAA, sharpening, motion blur |
-| Texture packs | Optional HD replacements. Dumped from the game, upscaled (Real-ESRGAN), loaded in the background and DXT-compressed.                                                |
-| Input         | Switch controllers; on Mac/Linux the keyboard and SDL pads (DualSense, Xbox)                                                                                        |
-| Saves         | create, load and delete profiles                                                                                                                                    |
-| Switch        | NRO and NSP forwarder                                                                                                                                               |
+| Area            | State                                                                                                                                                               |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lift            | 21,585 functions, 2.98 M lines of C                                                                                                                                 |
+| Movies          | Bink decoded natively with FFmpeg, sound in sync, upscaled on the GPU                                                                                               |
+| Audio           | XACT sound effects and the WMA music                                                                                                                                |
+| Graphics        | OpenGL renderer: up to 3x resolution, square pixels in 16:9, 4:3 screens filled to widescreen, mipmaps and 16x anisotropic filtering, FXAA, sharpening, motion blur |
+| Texture packs   | Optional HD replacements. Dumped from the game, upscaled (Real-ESRGAN), loaded in the background and DXT-compressed.                                                |
+| Input           | Nintendo Switch controllers; on Mac/Linux the keyboard and SDL pads (DualSense, Xbox). Vibration supported.                                                         |
+| Nintendo Switch | NRO and NSP forwarder                                                                                                                                               |
 
 ## ⚠️ &nbsp;Known Bugs
 
 * loading screen can hang sometimes with a restart required
 * intro menu navigation rendering is slow
-
-## Releases
-
-Switch builds are published on the [releases page](https://github.com/laureladastra/mcdub3-nx/releases):
-one NRO per edition of the game (`mcdub3-nx-usa.nro` for NTSC-U), with the
-notes from [RELEASE_NOTES.md](RELEASE_NOTES.md). They contain no game data:
-copy your own extracted disc to `sdmc:/switch/mcdub3-nx/game/`. How
-releases are made: [CONTRIBUTING.md](CONTRIBUTING.md#releases-switch).
+* we're currently at v0.1.0, expect craches and latency
 
 ## Settings
 
