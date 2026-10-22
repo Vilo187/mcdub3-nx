@@ -34,6 +34,8 @@
  *                                    per zeta address (the old behaviour)
  */
 #include "nv2a_gl.h"
+#include <sys/stat.h>
+#include <unistd.h>
 #include "gl_api.h"
 #include "gl_psh.h"
 #include "gl_vsh.h"
@@ -1149,6 +1151,65 @@ static int ui_prog_init(void)
 }
 
 /* t was just looked up for a draw: make or refresh its upscaled copy. */
+static void dump_bmp(const char *path, const uint8_t *bgra, uint32_t w, uint32_t h);
+int stbi_write_png(char const *filename, int w, int h, int comp, const void *data,
+                   int stride_in_bytes);                 /* hd_pack.c */
+
+/* RECOMP_GL_UI_DUMP=<dir>: every texture the UI upscale handles, once per
+ * content, written as <dir>/ui_<va>_<format>_<w>x<h>_<hash>_orig.png and
+ * _up.png -- to find the one whose 2x copy comes out wrong (MC3's
+ * tutorial line under the race results, 2026-10-22). */
+static void ui_dump(const GlTex *t, uint32_t ow, uint32_t oh)
+{
+    static int on = -1;
+    static char dir[256];
+    static uint32_t seen[4096];
+    static unsigned nseen;
+    unsigned i;
+    uint8_t *buf;
+    char path[400];
+    if (on < 0) {
+        const char *e = getenv("RECOMP_GL_UI_DUMP");
+        on = e && *e;
+        if (on) {
+            char cwd[256];
+            snprintf(dir, sizeof dir, "%s", e);
+            mkdir(dir, 0755);                /* a relative path is from the run's folder */
+            fprintf(stderr, "  [GL] UI upscale dump: %s%s%s\n",
+                    dir[0] == '/' ? "" : (getcwd(cwd, sizeof cwd) ? cwd : "."),
+                    dir[0] == '/' ? "" : "/", dir);
+        }
+    }
+    if (!on)
+        return;
+    for (i = 0; i < nseen; i++)
+        if (seen[i] == t->hash)
+            return;
+    if (nseen < 4096)
+        seen[nseen++] = t->hash;
+    buf = (uint8_t *)malloc((size_t)ow * oh * 4);
+    if (!buf)
+        return;
+    /* read back through the upscale's own framebuffer (no glGetTexImage
+     * in the loader); PNG keeps the alpha, where font pages keep their
+     * letters */
+    glBindFramebuffer(GL_FRAMEBUFFER, s_ui_fbo);
+    glPixelStorei(GL_PACK_ALIGNMENT, 4);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->tex, 0);
+    glReadPixels(0, 0, (GLsizei)t->w, (GLsizei)t->h, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    snprintf(path, sizeof path, "%s/ui_%08X_%02X_%ux%u_%08X_orig.png", dir, t->va, t->color,
+             t->w, t->h, t->hash);
+    stbi_write_png(path, (int)t->w, (int)t->h, 4, buf, (int)t->w * 4);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->hd, 0);
+    glReadPixels(0, 0, (GLsizei)ow, (GLsizei)oh, GL_RGBA, GL_UNSIGNED_BYTE, buf);
+    snprintf(path, sizeof path, "%s/ui_%08X_%02X_%ux%u_%08X_up.png", dir, t->va, t->color,
+             t->w, t->h, t->hash);
+    stbi_write_png(path, (int)ow, (int)oh, 4, buf, (int)ow * 4);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    free(buf);
+    state_dirty();
+}
+
 static void ui_upscale(GlTex *t)
 {
     uint32_t ow, oh;
@@ -1180,8 +1241,14 @@ static void ui_upscale(GlTex *t)
     s_cur_prog = s_ui_prog;
     sz[0] = (float)ow; sz[1] = (float)oh; sz[2] = (float)t->w; sz[3] = (float)t->h;
     glUniform4fv(s_ui_usz, 1, sz);
-    active_unit(0);
-    bind_tex(t->tex);
+    /* Bound for real, not through the binding cache: the cache could
+     * believe t->tex was on unit 0 when another texture was, and the 2x
+     * copy was then made from that one -- MC3's tutorial line under the
+     * race results drew from another font page, scrambled letters
+     * (2026-10-22, found with RECOMP_GL_UI_DUMP). */
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, t->tex);
+    tex_bind_forget();
     glBindVertexArray(s_ui_vao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
     glBindVertexArray(s_vao);
@@ -1189,6 +1256,7 @@ static void ui_upscale(GlTex *t)
     state_dirty();
     t->hd_hash = t->hash;
     s_new_obj = 1;
+    ui_dump(t, ow, oh);
 }
 
 static GLint wrap_mode(uint32_t m)
