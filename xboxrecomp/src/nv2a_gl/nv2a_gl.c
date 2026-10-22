@@ -2685,9 +2685,18 @@ static void gl_make_window(void *unused)
     SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
 #endif
     SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
-    s_win = SDL_CreateWindow("NV2A", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
-                             1280, 720, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
-                             | SDL_WINDOW_ALLOW_HIGHDPI);
+    {
+        /* RECOMP_GL_WINDOW=<w>x<h>: the window's size (default 1280x720);
+         * for reproducing what a player's screen shows (a 1600x900 monitor
+         * in full screen, 2026-10-22). */
+        int ww = 1280, wh = 720;
+        const char *e = getenv("RECOMP_GL_WINDOW");
+        if (e && sscanf(e, "%dx%d", &ww, &wh) != 2) { ww = 1280; wh = 720; }
+        if (ww < 320 || wh < 200) { ww = 1280; wh = 720; }
+        s_win = SDL_CreateWindow("NV2A", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                 ww, wh, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE
+                                 | SDL_WINDOW_ALLOW_HIGHDPI);
+    }
     if (!s_win) {
         fprintf(stderr, "  [GL] window: %s\n", SDL_GetError());
         return;
@@ -4078,14 +4087,18 @@ static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
     {
         /* RECOMP_GL_OVERSCAN=<percent> trims that much of each edge of a
          * full-screen picture (a 4:3 screen filled to 16:9 is trimmed
-         * already, by its own rectangle). A
-         * TV of the time hid a border of the picture (overscan) and titles
-         * drew there freely: MC3's race view shows thin lines near the
-         * right and bottom edges (2026-10-21). Default 0, up to 10. */
+         * already, by its own rectangle). A TV of the time hid a border of
+         * the picture (overscan) and titles drew there freely: MC3's motion
+         * blur lays a slightly enlarged copy of the last frame over the
+         * picture, and its seam shows as a thin line about 4 title pixels
+         * in from the right and bottom edges whenever the camera moves
+         * fast -- black in the flythrough, white in races (2026-10-22).
+         * In 33.png the bottom seam sat 1.1% up. Default 1.5 (7 of 480
+         * lines), 0 = the whole picture, up to 10. */
         static float k = -1.0f;
         if (k < 0.0f) {
             const char *e = getenv("RECOMP_GL_OVERSCAN");
-            k = e ? (float)atof(e) / 100.0f : 0.0f;
+            k = e ? (float)atof(e) / 100.0f : 0.015f;
             k = k < 0.0f ? 0.0f : k > 0.10f ? 0.10f : k;
             if (k > 0.0f)
                 fprintf(stderr, "  [GL] overscan trimmed: %g%% of each edge (RECOMP_GL_OVERSCAN)\n",
@@ -4269,6 +4282,46 @@ static void gl_flip(void)
     }
 swap:
     gl_step_done("present");
+    {
+        /* RECOMP_GL_DUMP_SCREEN=<prefix>[,every]: the presented window as
+         * BMP (RECOMP_GL_DUMP writes the title's surface, before the
+         * present pass crops, fills, sharpens and scales it). */
+        static int every = -1;
+        static char prefix[256];
+        static uint8_t *buf;
+        static size_t cap;
+        if (every < 0) {
+            const char *d = getenv("RECOMP_GL_DUMP_SCREEN");
+            every = 0;
+            if (d && *d) {
+                const char *comma = strchr(d, ',');
+                size_t n = comma ? (size_t)(comma - d) : strlen(d);
+                if (n >= sizeof prefix) n = sizeof prefix - 1;
+                memcpy(prefix, d, n);
+                prefix[n] = 0;
+                every = comma ? atoi(comma + 1) : 60;
+                if (every <= 0) every = 60;
+            }
+        }
+        if (every && (s_frame % (uint32_t)every) == 0) {
+            int sw2 = 0, sh2 = 0;
+            if (!nv2a_gl_screen_size(&sw2, &sh2) || sw2 <= 0 || sh2 <= 0)
+                SDL_GL_GetDrawableSize(s_win, &sw2, &sh2);
+            if ((size_t)sw2 * sh2 * 4 > cap) {
+                free(buf);
+                cap = (size_t)sw2 * sh2 * 4;
+                buf = (uint8_t *)malloc(cap);
+            }
+            if (buf) {
+                char path[320];
+                glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
+                glPixelStorei(GL_PACK_ALIGNMENT, 4);
+                glReadPixels(0, 0, sw2, sh2, GL_BGRA, GL_UNSIGNED_BYTE, buf);
+                snprintf(path, sizeof path, "%s%05u.bmp", prefix, s_frame);
+                dump_bmp(path, buf, (uint32_t)sw2, (uint32_t)sh2);
+            }
+        }
+    }
     SDL_GL_SwapWindow(s_win);
     gl_step_done("swap");
     tex_bind_forget();
