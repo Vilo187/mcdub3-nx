@@ -47,14 +47,16 @@ mc3_mac_native() {
 # project venv (vm/setup-ubuntu.sh) or the system. Scripts call mc3_python.
 mc3_python() {
     local py
-    for py in "$MC3_WORK/venv/bin/python3" python3; do
+    # work/venv: Linux (vm/setup-ubuntu.sh); work/macvenv: macOS
+    # (tools/setup_mac.sh). A shared work/ may hold both.
+    for py in "$MC3_WORK/venv/bin/python3" "$MC3_WORK/macvenv/bin/python3" python3; do
         if "$py" -c 'import capstone' >/dev/null 2>&1; then
             MC3_PYTHON="$py"
             return 0
         fi
     done
     echo "error: no Python with capstone (the x86 disassembler the lift needs)" >&2
-    echo "  - re-run the setup, which creates work/venv:  bash vm/setup-ubuntu.sh" >&2
+    echo "  - run the setup, which creates the venv:      make setup" >&2
     echo "  - or install it for your user:                python3 -m pip install --user capstone" >&2
     exit 1
 }

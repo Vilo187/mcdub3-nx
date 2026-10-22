@@ -35,8 +35,8 @@ help:  ## Show this help
 	@echo
 
 ## Setup (once)
-setup:  ## Install build deps, devkitPro, Python venv (VM)
-	bash vm/setup-ubuntu.sh
+setup:  ## Install build deps and the Python venv (Ubuntu: also Docker for the Switch; macOS: Homebrew packages)
+	@if [ "$$(uname -s)" = Darwin ]; then bash tools/setup_mac.sh; else bash vm/setup-ubuntu.sh; fi
 
 check-vm:  ## Print the VM checks (CPU, page size, RAM, disk, OpenGL)
 	@uname -m; echo "page size: $$(getconf PAGESIZE)"; echo "cores: $$(nproc)"

@@ -1,8 +1,8 @@
-<p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="560"></p>
+<p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="360"></p>
 
 The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Switch, Linux and macOS without requirement of emulation.
 
-Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-sw), whose Switch layer has been a great inspiration for this toolkit.
+Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-sw), whose Switch layer has been a great inspiration for this engine.
 
 > [!WARNING]
 > **No game data is included.** You need your own copy of the Xbox disc.
@@ -28,6 +28,73 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 ### Nintendo Switch
 
 Download from releases and extract to the root of your Nintendo Switch directory. Copy the game files to the `/game` directory within this folder. Install the .nsp to get a plug-and-play experience.
+
+### Mac (Apple Silicon)
+
+The Mac version is built on your own Mac from your own copy of the game:
+the build turns the game's code into native code, so it needs the disc.
+
+1. Install the Xcode command line tools (`xcode-select --install`) and
+   [Homebrew](https://brew.sh).
+2. Get the code and install what the build needs (Homebrew packages and a
+   Python environment in `work/`):
+
+   ```sh
+   git clone https://github.com/laureladastra/mcdub3-nx.git
+   cd mcdub3-nx
+   make setup
+   ```
+
+3. Put the extracted disc in `game/`: `default.xbe` and all the other files
+   from the disc, not the ISO. From an ISO: `make extract ISO=<file.iso>`.
+4. Lift the game's code to C, once per disc (10 to 20 minutes):
+
+   ```sh
+   make lift
+   ```
+
+5. Build the app:
+
+   ```sh
+   make mac-app SCALE=1.5 GAME=$PWD/game
+   ```
+
+   It lands in `work/mac_app/Midnight Club 3.app`; drag it to
+   Applications. `SCALE` sets the resolution (`1.5` = 1280x720, `2` and up
+   for sharper), `HD=1` adds your texture pack, and `GAME=$PWD/game` lets
+   the app use the disc from the repo. Without `GAME`, the first start
+   opens the folder where the app wants the disc:
+   `~/Library/Application Support/mcdub3/game/`. Settings, saves and the
+   log live in that `mcdub3` folder too.
+
+To play without making an app: `make build run` builds and starts the game
+from the repo, with its log in `work/logs/`.
+
+### Linux
+
+On Ubuntu or Debian (ARM64 or x86-64), from your own copy of the game:
+
+1. Get the code and install what the build needs (asks for `sudo`):
+
+   ```sh
+   git clone https://github.com/laureladastra/mcdub3-nx.git
+   cd mcdub3-nx
+   make setup
+   ```
+
+2. Put the extracted disc in `game/` (`make extract ISO=<file.iso>` from an
+   ISO).
+3. Lift the game's code to C, once per disc (10 to 20 minutes), then build
+   and play:
+
+   ```sh
+   make lift
+   make build run
+   ```
+
+   Settings go on the command line, for example
+   `make run RECOMP_GL_SCALE=2`. The keyboard plays as player 1 and SDL game
+   controllers (Xbox, DualSense) work too. Logs land in `work/logs/`.
 
 ## Technical Overview
 
