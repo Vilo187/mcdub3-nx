@@ -4159,28 +4159,6 @@ static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
             fill = 1;
         }
     }
-    {
-        /* RECOMP_GL_OVERSCAN=<percent> trims that much of each edge of a
-         * full-screen picture (a 4:3 screen filled to 16:9 is trimmed
-         * already, by its own rectangle). A
-         * TV of the time hid a border of the picture (overscan) and titles
-         * drew there freely: MC3's race view shows thin lines near the
-         * right and bottom edges (2026-10-21). Default 0, up to 10. */
-        static float k = -1.0f;
-        if (k < 0.0f) {
-            const char *e = getenv("RECOMP_GL_OVERSCAN");
-            k = e ? (float)atof(e) / 100.0f : 0.0f;
-            k = k < 0.0f ? 0.0f : k > 0.10f ? 0.10f : k;
-            if (k > 0.0f)
-                fprintf(stderr, "  [GL] overscan trimmed: %g%% of each edge (RECOMP_GL_OVERSCAN)\n",
-                        (double)(k * 100.0f));
-        }
-        if (k > 0.0f && !held43) {               /* u_full: frames shown whole */
-            float du = (full[1] - full[0]) * k, dv = (full[3] - full[2]) * k;
-            full[0] += du; full[1] -= du;
-            full[2] += dv; full[3] -= dv;
-        }
-    }
     mx[0] = ((float)sw - 0.5f) / (float)s->pw;
     mx[1] = ((float)s->ph - 0.5f) / (float)s->ph;
     glUniform2fv(s_fx_rcp, 1, rcp);
