@@ -461,6 +461,7 @@ typedef struct {
     uint64_t hd_key;                    /* pack texture requested for this content */
     int      hd_pending;                /* ... on the worker, not here yet */
     int      rewrites;                  /* content changes at this address */
+    int      hd_ui;                     /* hd is the UI upscale's own RGBA copy */
 } GlTex;
 
 #define GL_MAX_TEX 1024
@@ -644,6 +645,8 @@ static void tex_account(GlTex *t, uint32_t bytes)
         if (!lru)
             break;                      /* everything left is in use this frame */
         glDeleteTextures(1, &lru->tex);
+        if (lru->hd)
+            glDeleteTextures(1, &lru->hd);   /* its upscaled or pack copy too */
         tex_bind_forget();
         s_tex_bytes -= lru->bytes;
         tex_index_del(lru);
@@ -1046,6 +1049,7 @@ static void hd_drain(void)
             if (t->hd)
                 glDeleteTextures(1, &t->hd);         /* a UI 2x copy: the pack wins */
             t->hd = id;
+            t->hd_ui = 0;
             t->hd_hash = t->hash;
             t->hd_mips = h->levels > 1;
             t->hd_pending = 0;
@@ -1219,6 +1223,17 @@ static void ui_upscale(GlTex *t)
     t->hd_mips = 0;
     ow = t->w * (uint32_t)s_ui_scale;
     oh = t->h * (uint32_t)s_ui_scale;
+    /* Only ever render into a copy made here. t->hd can be an HD pack
+     * replacement (hd_drain: DXT, other content), and rendering into a
+     * compressed texture does nothing: the pack texture of another font
+     * page was then taken as this content's copy, and MC3's tutorial line
+     * under the race results showed another page's letters (2026-10-22,
+     * with a texture pack installed). */
+    if (t->hd && !t->hd_ui) {
+        glDeleteTextures(1, &t->hd);
+        t->hd = 0;
+        tex_bind_forget();
+    }
     if (!t->hd) {
         glGenTextures(1, &t->hd);
         tex_param_forget(t->hd);
@@ -1227,6 +1242,7 @@ static void ui_upscale(GlTex *t)
                      GL_BGRA, GL_UNSIGNED_BYTE, NULL);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
         tex_account(t, ow * oh * 4);
+        t->hd_ui = 1;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, s_ui_fbo);
     glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->hd, 0);
