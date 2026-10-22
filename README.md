@@ -19,9 +19,9 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 
 ## Supported Editions
 
-| File             | Edition |
-| ---------------- | ------- |
-| nfsmw-nx-usa.nro | NTSC-U  |
+| File              | Edition |
+| ----------------- | ------- |
+| mcdub3-nx-usa.nro | NTSC-U  |
 
 ## Installation
 
