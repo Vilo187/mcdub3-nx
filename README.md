@@ -27,7 +27,16 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 
 ### Nintendo Switch
 
-Download from releases and extract to the root of your Nintendo Switch directory. Copy the game files to the `/game` directory within this folder. Install the .nsp to get a plug-and-play experience.
+Visit the [installation](https://laureladastra.github.io/mcdub3-homepage/) page for a guided experience or manually package the folder by downloading the files from our [releases](https://github.com/laureladastra/mcdub3-nx/releases) and organise the folder according to the following hiërarchy:
+
+```
+sdmc:/switch/mcdub3-nx/
+├── mcdub3-nx-usa.nro       the downloaded NRO
+├── mcdub3_env.txt          optional settings                            
+└── /game                   the extracted disc (not the ISO)
+```
+
+Copy the game files to the `/game` directory within this folder. Move this folder to `sdmc:/switch/mcdub3-nx/` on the Nintendo Switch. Install the .nsp to get a plug-and-play experience.
 
 ### Mac
 
