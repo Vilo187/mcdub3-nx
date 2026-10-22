@@ -95,6 +95,20 @@ You can also play the game without making the app by running `make build run`
    
    Settings go on the command line, for example `make run RECOMP_GL_SCALE=2`. The keyboard plays as player 1 and SDL game controllers (Xbox, DualSense) are supported.
 
+## Saves
+
+Profiles live where the Xbox kept them, in `UDATA/54540079/` inside the game folder: `game/` on Mac/Linux, `sdmc:/switch/mcdub3-nx/game/` on the Switch, `~/Library/Application Support/mcdub3/game/` for the Mac app. Each profile is a folder with `<name>.mc3` and `SaveMeta.xbx`. The same folder works on every platform.
+
+**Importing a save from a real Xbox.** Profiles from an original Xbox, such as a memory unit dump (`.gsx`) from a save site, need re-signing first: the game calls them "damaged" otherwise. One command does both:
+
+```sh
+make import-save FILE=~/Downloads/midnight-club-3-dub-edition.gsx
+```
+
+It takes a `.gsx` or raw memory unit dump, an extracted save folder or a bare `.mc3`. Your saves are backed up to `work/saves-backup/` first, and an existing profile is never overwritten (`REPLACE=1` to do so). `LIST=1` only shows what is in the file. `UDATA=<folder>` installs elsewhere, for example the Mac app's folder. For the Switch, import on a computer and copy the new folder to the SD card.
+
+PS2 saves can't be used: the PS2 *Remix* stores its profiles in a different format, and `make import-save` says so. Saves made by this port won't load on a real Xbox.
+
 ## Technical Overview
 
 | Area            | State                                                                                                                                                               |

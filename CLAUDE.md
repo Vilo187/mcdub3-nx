@@ -246,6 +246,17 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   calling convention (`[LISTEN]`, MC3_LISTEN_TRACE=1; MC3_LISTENER_CHECK=0
   runs the game's own loop).
 
+- Saves (2026-10-22): a profile is UDATA/54540079/<12 hex>/<name>.mc3
+  (99,162 bytes) + SaveMeta.xbx (UTF-16 "Name=<name>"). The .mc3 starts
+  with a format stamp (Xbox 0x02F59447) and ends with HMAC-SHA1 of the
+  rest under the kernel's XboxSignatureKey-derived key; the port's keys are
+  zero, so its key is all zeros and a real Xbox's profile reads "damaged".
+  `make import-save FILE=` (tools/save_import.py: .gsx = gzip + 128-byte
+  GSXM header + FATX memory unit with 16 KB clusters; folders; .mc3; .max)
+  re-signs and installs, backing up first; verified in game. PS2 Remix
+  (SLUS-21355, .max = LZARI) profiles carry stamp 0x00512C4D and about
+  half their fields differ: refused, no converter.
+
 ### First lift (2026-10-14)
 
 21,585 functions, 0 failed, 2.98 M lines of C in 87 chunks (`--split 250`).

@@ -180,6 +180,12 @@ the development machine and set the Linux folders; `switch/build.sh` stages the
 same layout on the SD card (`work/switch_sd/switch/mcdub3-nx/`); the game code and
 the path layer are identical on both.
 
+Profiles (`game_dir/UDATA/54540079/<12 hex>/`) are signed with the port's
+all-zero key, so they move freely between Linux, Mac and Switch. Profiles
+from a real Xbox are signed with its key and need `make import-save FILE=…`
+(tools/save_import.py: reads memory unit dumps, `.gsx`, folders, `.mc3`;
+re-signs; backs up to `work/saves-backup/`). Details in CLAUDE.md, Saves.
+
 ## Project layout
 
 What sits where, who writes it, and whether git tracks it. Every path is
