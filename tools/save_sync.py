@@ -139,7 +139,7 @@ def connect_or_explain(cls, host, port):
             # without the permission: "No route to host" on the same Wi-Fi.
             hint = ('On a Mac this is usually the Local Network permission: System Settings > '
                     'Privacy & Security > Local Network > allow the app you run make in '
-                    '(Terminal, iTerm, VS Code), then restart it. Otherwise: same network '
+                    '(Terminal, iTerm, VS Code, VSCodium: it is per app), then restart it. Otherwise: same network '
                     '(not a guest one), and does ping ' + host + ' answer?')
         raise SystemExit(f'cannot reach {host}:{port}: {e.strerror or e}. {hint}')
 
