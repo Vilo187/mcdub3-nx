@@ -32,6 +32,9 @@ set "SFX=%TEMP%\msys2-base-latest.sfx.exe"
 curl.exe -L --fail -o "%SFX%" https://github.com/msys2/msys2-installer/releases/latest/download/msys2-base-x86_64-latest.sfx.exe
 if errorlevel 1 goto :fail
 for %%D in ("%MSYS2_ROOT%\..") do set "MSYS2_PARENT=%%~fD"
+rem A drive root is "C:\": a backslash before the closing quote escapes it
+rem (7-Zip got C:"\). "C:\." is the same folder.
+if "%MSYS2_PARENT:~-1%"=="\" set "MSYS2_PARENT=%MSYS2_PARENT%."
 "%SFX%" -y -o"%MSYS2_PARENT%"
 if errorlevel 1 goto :fail
 del "%SFX%"
