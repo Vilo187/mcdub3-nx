@@ -77,7 +77,7 @@ The Mac application can be packaged and installed by following these instruction
    make mac-app GAME=$PWD/game
    ```
 
-   The application file lands in `work/mac_app/Midnight Club 3.app`. Drag it to your `Applications folder`. The app renders at `SCALE` 5 by default (3600x2400, sharp on any screen); a slower Mac plays more smoothly with `make mac-app SCALE=2` or `SCALE=1.5` (1280x720). Without `GAME`, the first start opens the folder where the app wants the disc: `~/Library/Application Support/mcdub3/game/`. Settings, saves and the log live in that `mcdub3` folder too.
+   The application file lands in `work/mac_app/Midnight Club 3.app`. Drag it to your `Applications folder`. The app renders at `SCALE` 5 by default (3600x2400, sharp on any screen); a slower Mac plays more smoothly with `make mac-app SCALE=2` or `SCALE=1.5` (1280x720). `SETTINGS` bakes in any other setting from the [Settings](#settings) tables as a default, space-separated: `make mac-app SETTINGS="RECOMP_GL_UI_SCALE=3 RECOMP_GL_SHARPEN=0.3"`. Without `GAME`, the first start opens the folder where the app wants the disc: `~/Library/Application Support/mcdub3/game/`. Settings, saves and the log live in that `mcdub3` folder too.
 
 You can also play the game without making the app by running `make build run`
 
@@ -114,7 +114,7 @@ The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\ms
 
 The game itself lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe`, its DLLs and `run_mcdub3.bat`, which the shortcut starts. Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line, for example `RECOMP_GL_SCALE=2`: every option is listed there, commented out. The game renders at scale 5 by default (3600x2400); on a PC with integrated graphics, `RECOMP_GL_SCALE=1.5` plays more smoothly. The keyboard plays as player 1 and SDL game controllers are supported.
 
-For developers: `make` and the other tools come with MSYS2 and only work in its own shell, not in Command Prompt or PowerShell. Start **MSYS2 CLANG64** from the Start menu (**MSYS2 CLANGARM64** on Windows on ARM), go to the repo and use the same commands as on Mac and Linux: `make setup`, `make lift`, `make build run`, `make run RECOMP_GL_SCALE=2`.
+For developers: `make` and the other tools come with MSYS2 and only work in its own shell, not in Command Prompt or PowerShell (there, "make" is not recognised). Double-click **`tools\windows\shell.bat`**: it opens that shell in the repo folder, for x86-64 or ARM as your PC needs (by hand: `C:\msys64\msys2_shell.cmd -clang64 -here`, or `-clangarm64` on Windows on ARM). Then the same commands as on Mac and Linux: `make setup`, `make lift`, `make build run`, `make run RECOMP_GL_SCALE=2`.
 
 ## Upscaling
 
