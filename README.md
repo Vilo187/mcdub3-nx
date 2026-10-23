@@ -137,14 +137,14 @@ A setting in `mcdub3_env.txt` always wins over what the app was built with.
 
 Profiles live where the Xbox kept them, in `UDATA/54540079/` inside the game folder: `game/` on Mac/Linux, `sdmc:/switch/mcdub3-nx/game/` on the Switch, `~/Library/Application Support/mcdub3/game/` for the Mac app. Each profile is a folder with `<name>.mc3` and `SaveMeta.xbx`. The same folder works on every platform.
 
-**Between the Switch and a computer.** With an FTP server running on the Switch (ftpd or sphaira, port 5000) and both on the same network:
+**Between the Switch and a computer.** With an FTP server running on the Switch (ftpd, sphaira, ...) and both on the same network:
 
 ```sh
 make save-sync-down HOST_IP=192.168.1.20   # Switch -> computer
 make save-sync-up   HOST_IP=192.168.1.20   # computer -> Switch
 ```
 
-`HOST_IP` is the Switch's address (shown by its FTP server). Profiles are added or replaced, never deleted, and the receiving side is backed up to `work/saves-backup/` first. `PROFILE=<folder>` syncs one profile, `LIST=1` only shows both sides, `PORT=` for another port, `FTP_USER=`/`FTP_PASS=` if the server asks for a login. The Mac app keeps its saves elsewhere: add `UDATA="$HOME/Library/Application Support/mcdub3/game/UDATA"`.
+`HOST_IP` is the Switch's address, shown by its FTP server. The port is 21 by default; for another, add it after the IP: `HOST_IP=192.168.1.20:5000`. Profiles are added or replaced, never deleted, and the receiving side is backed up to `work/saves-backup/` first. `PROFILE=<folder>` syncs one profile, `LIST=1` only shows both sides, `FTP_USER=`/`FTP_PASS=` if the server asks for a login (a server that requires encryption, FTPS, works too). The Mac app keeps its saves elsewhere: add `UDATA="$HOME/Library/Application Support/mcdub3/game/UDATA"`.
 
 **Importing a save from a real Xbox.** Profiles from an original Xbox, such as a memory unit dump (`.gsx`) from a save site, need re-signing first: the game calls them "damaged" otherwise. One command does both:
 
