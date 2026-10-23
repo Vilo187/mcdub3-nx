@@ -11,7 +11,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 [ "$MC3_HOST" = windows ] || mc3_fail "this is the Windows setup (MSYS2)"
 
-P="${MINGW_PACKAGE_PREFIX:?run this in MSYS2's CLANG64 or CLANGARM64 shell}"
+P="${MINGW_PACKAGE_PREFIX:?run this in the MSYS2 CLANG64 or CLANGARM64 shell}"
 echo "== MSYS2 packages for $MSYSTEM"
 pacman -S --needed --noconfirm make git \
     "$P-clang" "$P-cmake" "$P-ninja" "$P-pkgconf" "$P-SDL2" "$P-ffmpeg" \

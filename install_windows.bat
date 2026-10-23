@@ -14,7 +14,7 @@ setlocal
 title Midnight Club 3 - Windows install
 pushd "%~dp0"
 if not exist "work\logs" mkdir "work\logs"
-set "LOG=%CD%\work\logs\install_windows.log"
+set "LOG=%~dp0work\logs\install_windows.log"
 
 rem x86-64 or ARM64 (a 32-bit window on a 64-bit Windows reports the real one here)
 set "MC3_MSYSTEM=CLANG64"
