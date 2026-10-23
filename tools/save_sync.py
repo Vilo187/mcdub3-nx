@@ -17,6 +17,8 @@
                  tool logs in anonymously, or not at all if the server
                  needs no login; a user without a password sends an empty one
   --list         only show what is on both sides
+  --yes          copy without asking (it asks otherwise, showing the
+                 direction and which profiles are created or overwritten)
 
 The receiving side is copied to work/saves-backup/<time>-<direction>/ first,
 so nothing is lost by syncing the wrong way. Profiles move as they are: the
@@ -189,6 +191,40 @@ def resolve_profile(want, profiles, side):
     raise SystemExit(f'no profile {want!r} {side}. There: {listing}')
 
 
+def confirm(a, local, remote, here, there, folder, names):
+    """Show the direction and what each profile will undergo; ask unless --yes."""
+    src, dst = (there, here) if a.direction == 'down' else (here, there)
+    if not src:
+        return True                      # the caller reports there is nothing to copy
+    if a.direction == 'down':
+        print(f'\nDirection: Switch {a.host}:{a.port}  ->  this computer')
+        print(f'  from  {remote}\n  to    {local}')
+    else:
+        print(f'\nDirection: this computer  ->  Switch {a.host}:{a.port}')
+        print(f'  from  {local}\n  to    {remote}')
+
+    def top(files):
+        return {k.split('/')[0] for k in files if folder or '/' in k}
+    if folder:                           # paths are inside the one profile
+        what = [('overwrite' if dst else 'create', folder)]
+    else:
+        what = [('overwrite' if p in top(dst) else 'create', p) for p in sorted(top(src))]
+    for action, p in what:
+        name = names.get(p)
+        print(f'  {action:<9}  {p}' + (f' ({name})' if name else ''))
+    print('  (nothing is deleted; the receiving side is backed up first)')
+    if a.yes:
+        return True
+    if not sys.stdin.isatty():
+        print('not asked (no terminal to answer in): add YES=1 (make) or --yes to copy')
+        return False
+    try:
+        answer = input('Copy? Type y to continue [y/N]: ')
+    except EOFError:
+        return False
+    return answer.strip().lower() in ('y', 'yes')
+
+
 def local_walk(root):
     out = {}
     for top, _, files in os.walk(root):
@@ -217,6 +253,7 @@ def main():
     ap.add_argument('--udata')
     ap.add_argument('--remote', default='/switch/mcdub3-nx/game/UDATA')
     ap.add_argument('--list', action='store_true')
+    ap.add_argument('--yes', action='store_true')
     a = ap.parse_args()
     a.host, a.port = parse_host(a.host)
 
@@ -241,12 +278,12 @@ def main():
         print('  (encrypted connection: FTPS)')
 
     folder = None
+    # The sending side's profiles, {folder: name}: to find one by name, and to
+    # name them in the confirmation.
+    names = profiles_remote(ftp, remote) if a.direction == 'down' else profiles_local(local)
     if a.profile:
         # Resolved on the sending side, by folder or by name.
-        if a.direction == 'down':
-            folder = resolve_profile(a.profile, profiles_remote(ftp, remote), 'on the Switch')
-        else:
-            folder = resolve_profile(a.profile, profiles_local(local), 'here')
+        folder = resolve_profile(a.profile, names, 'on the Switch' if a.direction == 'down' else 'here')
         if folder != a.profile:
             print(f'  profile {a.profile!r}: folder {folder}')
         local, remote = os.path.join(local, folder), posixpath.join(remote, folder)
@@ -258,6 +295,11 @@ def main():
     if a.list:
         ftp.quit()
         return 0
+
+    if not confirm(a, local, remote, here, there, folder, names):
+        ftp.quit()
+        print('nothing copied')
+        return 1
 
     stamp = time.strftime('%Y%m%d_%H%M%S')
     backup = os.path.join(os.environ.get('MC3_WORK') or os.path.join(REPO, 'work'),
