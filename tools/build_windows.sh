@@ -44,6 +44,21 @@ fi
 
 TYPE=RelWithDebInfo
 [ "${DEBUG:-0}" = "1" ] && TYPE=Debug
+
+# The icon (cover art, rounded like a Windows 11 app icon) and the release
+# version, both embedded in mcdub3.exe. No Pillow: no icon, still a build.
+ICON="$MC3_WORK/mcdub3.ico"
+if [ ! -f "$ICON" ] || [ "$MC3_REPO/assets/cover-art.jpg" -nt "$ICON" ]; then
+    ICON_OK=""
+    for IPY in "$MC3_WORK/macvenv/bin/python3" "$MC3_WORK/venv/bin/python3" "$PY"; do
+        [ -x "$IPY" ] || command -v "$IPY" >/dev/null || continue
+        "$IPY" "$MC3_REPO/tools/windows/win_icon.py" "$MC3_REPO/assets/cover-art.jpg" "$ICON" 2>/dev/null \
+            && { ICON_OK=1; break; }
+    done
+    [ -n "$ICON_OK" ] || { echo "  (no icon: no Python with Pillow)"; ICON=""; }
+fi
+APP_VERSION=$(sed -n 's/^APP_VERSION="\(.*\)"/\1/p' "$MC3_REPO/switch/app.env")
+ARGS+=(-DMC3_WIN_ICON="$ICON" -DMC3_VERSION="${APP_VERSION:-dev}")
 # Native (MSYS2) and cross builds keep separate trees: work/ may be shared
 # between the Mac and a Windows VM, and CMake refuses a tree configured at
 # another path (the first install stopped there, 2026-10-23).

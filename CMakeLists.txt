@@ -75,6 +75,49 @@ set(MC3_VERSION "dev" CACHE STRING "Release version (switch/app.env APP_VERSION)
 set(MC3_BUILD_ID "local" CACHE STRING "Build identifier (CI run, commit)")
 set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
     MC3_VERSION="${MC3_VERSION}" MC3_BUILD_ID="${MC3_BUILD_ID}")
+
+# Windows: the icon (MC3_WIN_ICON, made by tools/windows/win_icon.py) and
+# the version Explorer shows, as a resource in mcdub3.exe -- the desktop
+# shortcut takes its icon from there. Skipped without a resource compiler.
+if(WIN32)
+    include(CheckLanguage)
+    check_language(RC)
+    if(CMAKE_RC_COMPILER)
+        enable_language(RC)
+        string(REGEX MATCHALL "[0-9]+" _v "${MC3_VERSION}.0.0.0.0")
+        list(SUBLIST _v 0 4 _v)
+        string(REPLACE ";" "," _vnum "${_v}")
+        set(_rc "${CMAKE_BINARY_DIR}/mcdub3.rc")
+        set(_rc_text "")
+        if(MC3_WIN_ICON AND EXISTS "${MC3_WIN_ICON}")
+            string(APPEND _rc_text "1 ICON \"${MC3_WIN_ICON}\"\n")
+        endif()
+        string(APPEND _rc_text
+"1 VERSIONINFO
+FILEVERSION ${_vnum}
+PRODUCTVERSION ${_vnum}
+BEGIN
+  BLOCK \"StringFileInfo\"
+  BEGIN
+    BLOCK \"040904B0\"
+    BEGIN
+      VALUE \"FileDescription\", \"Midnight Club 3: DUB Edition (mcdub3-nx)\"
+      VALUE \"ProductName\", \"mcdub3-nx\"
+      VALUE \"ProductVersion\", \"${MC3_VERSION}\"
+      VALUE \"FileVersion\", \"${MC3_VERSION}\"
+      VALUE \"OriginalFilename\", \"mcdub3.exe\"
+    END
+  END
+  BLOCK \"VarFileInfo\"
+  BEGIN
+    VALUE \"Translation\", 0x409, 1200
+  END
+END
+")
+        file(WRITE "${_rc}" "${_rc_text}")
+        target_sources(${PROJECT_NAME} PRIVATE "${_rc}")
+    endif()
+endif()
 if(MC3_VULKAN)
     target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_VULKAN=1)
 endif()
