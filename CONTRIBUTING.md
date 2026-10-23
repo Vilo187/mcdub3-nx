@@ -380,9 +380,11 @@ it needs (tools/windows/copy_dlls.py reads the import tables) and
   for ARM), tools/build_windows.sh with llvm-mingw (a release unpacked in
   `work/tools/`) and tools/windows/toolchain.cmake; tools/win_deps.py
   fetches MSYS2's packages and their dependencies into
-  `work/win-sysroot/<arch>/` (Python 3.14+ for zstd). Fast for build
-  errors; run the result on Windows (Parallels: the repo is
-  `\\Mac\Home\...`).
+  `work/win-sysroot/<arch>/` (Python 3.14+ for zstd). Its tree is
+  `work/build-wincross-<arch>/`, apart from the native one: a `work/`
+  shared with a Windows VM would otherwise hold one CMake tree for two
+  paths. Fast for build errors; run the result on Windows (Parallels: the
+  repo is `\\Mac\Home\...`).
 
 How it runs: the toolkit's Windows path was Direct3D 11, XAudio2, XInput
 and page-fault MMIO (VEH). With `XBOXRECOMP_WIN_SDL_GL` (MC3 turns it on)

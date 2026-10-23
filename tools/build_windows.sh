@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Build the Windows binary (mcdub3.exe), into work/build-windows-<arch>/dist/
-# with the DLLs it needs and a launcher (run_mcdub3.bat).
+# (natively) or work/build-wincross-<arch>/dist/ (cross) with the DLLs it
+# needs and a launcher (run_mcdub3.bat).
 #
 # On Windows (MSYS2's CLANG64 or CLANGARM64 shell; make build there, or
 # install_windows.bat for everything): MSYS2's clang and libraries, the
@@ -43,7 +44,14 @@ fi
 
 TYPE=RelWithDebInfo
 [ "${DEBUG:-0}" = "1" ] && TYPE=Debug
-BUILD="${BUILD_DIR:-$MC3_WORK/build-windows-$ARCH}"
+# Native (MSYS2) and cross builds keep separate trees: work/ may be shared
+# between the Mac and a Windows VM, and CMake refuses a tree configured at
+# another path (the first install stopped there, 2026-10-23).
+if [ "$MC3_HOST" = windows ]; then
+    BUILD="${BUILD_DIR:-$MC3_WORK/build-windows-$ARCH}"
+else
+    BUILD="${BUILD_DIR:-$MC3_WORK/build-wincross-$ARCH}"
+fi
 cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja -DCMAKE_BUILD_TYPE="$TYPE" ${ARGS[@]+"${ARGS[@]}"} \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" -DMC3_VULKAN=OFF \
     -DMC3_GEN_DEBUGINFO=OFF >/dev/null
