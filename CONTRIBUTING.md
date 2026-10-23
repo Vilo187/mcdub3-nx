@@ -375,8 +375,9 @@ it needs (tools/windows/copy_dlls.py reads the import tables) and
   (tools/setup_windows.sh, pacman: clang, cmake, ninja, SDL2, FFmpeg,
   Python with capstone and Pillow), an ISO in `game\` unpacked, `make lift`
   if needed, `make build`, a desktop shortcut. Re-runnable.
-- **Developers on Windows:** the CLANG64 / CLANGARM64 shell, then the usual
-  `make setup`, `make lift`, `make build run`.
+- **Developers on Windows:** the CLANG64 / CLANGARM64 shell (`tools\windows\shell.bat`
+  opens the right one in the repo; the installer's MSYS2 has no Start menu
+  entries), then the usual `make setup`, `make lift`, `make build run`.
 - **Cross build from macOS or Linux:** `make windows` (`WIN_ARCH=aarch64`
   for ARM), tools/build_windows.sh with llvm-mingw (a release unpacked in
   `work/tools/`) and tools/windows/toolchain.cmake; tools/win_deps.py
