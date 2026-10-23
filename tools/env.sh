@@ -139,13 +139,15 @@ mc3_check_lift_fresh() {
         mc3_fail "config/seed_functions.json is newer than the lifted C: run make regen first (make regen build)"
     fi
     local now
-    if ! now=$(mc3_manual_overrides); then
+    if ! now=$(mc3_manual_overrides | tr -d '\r'); then
         echo "warning: no Python to scan src/recomp_manual.c; override check skipped" >&2
         return 0
     fi
-    if [ "$now" != "$(cat "$stamp" 2>/dev/null)" ]; then
+    # Without CRs: Windows' Python writes CRLF, and a work/ shared with a
+    # Windows VM then failed the check both ways (2026-10-23).
+    if [ "$now" != "$(tr -d '\r' < "$stamp" 2>/dev/null)" ]; then
         echo "error: the overrides in src/recomp_manual.c differ from the last lift:" >&2
-        diff <(cat "$stamp" 2>/dev/null) <(echo "$now") | grep '^[<>]' \
+        diff <(tr -d '\r' < "$stamp" 2>/dev/null) <(echo "$now") | grep '^[<>]' \
             | sed 's/^</  gone since the lift: /; s/^>/  new since the lift:  /' >&2
         mc3_fail "run make relift first (make relift build)"
     fi

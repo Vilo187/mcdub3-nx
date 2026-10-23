@@ -78,7 +78,7 @@ fi
 # The trace wrappers are compiled with the lifted code (CMake globs gen/*.c).
 [ -n "${TRACE:-}" ] && cp "$MC3_WORK/trace/trace_wrappers.c" "$TRACE_C"
 # What the build checks the overrides against (mc3_check_lift_fresh).
-mc3_manual_overrides > "$MC3_GEN_DIR/.manual_overrides" || true
+mc3_manual_overrides | tr -d '\r' > "$MC3_GEN_DIR/.manual_overrides" || true   # LF everywhere
 
 echo
 echo "lifted C in $MC3_GEN_DIR: $(find "$MC3_GEN_DIR" -name '*.c' | wc -l) files, $(du -sh "$MC3_GEN_DIR" | cut -f1)"
