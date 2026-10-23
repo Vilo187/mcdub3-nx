@@ -26,7 +26,7 @@ export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WI
 .PHONY: help setup nsp check-vm extract lift regen relift \
         build build-vk build-debug windows mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
         switch switch-vk switch-lto send \
-        hd-dump hd-tools hd-upscale import-save \
+        hd-dump hd-tools hd-upscale import-save save-sync-up save-sync-down \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
 
 help:  ## Show this help
@@ -175,6 +175,14 @@ send:  ## Send the NRO over nxlink (hbmenu, press Y) and log the game to work/lo
 import-save:  ## Import an Xbox MC3 profile: make import-save FILE=<.gsx | memory unit dump | save folder | .mc3> (UDATA=<dir>, REPLACE=1, LIST=1)
 	@test -n "$(FILE)" || { echo "usage: make import-save FILE=<save file or folder>"; exit 2; }
 	python3 tools/save_import.py "$(FILE)" $(if $(UDATA),--udata "$(UDATA)") $(if $(REPLACE),--replace) $(if $(LIST),--list)
+
+save-sync-down:  ## Switch -> here: the profiles over FTP (HOST_IP=<switch ip>; PROFILE=<folder>, PORT=5000, GAME_ID=54540079, LIST=1)
+	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-down HOST_IP=<the Switch's IP> (an FTP server running on it)"; exit 2; }
+	python3 tools/save_sync.py down --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(PORT),--port $(PORT)) $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list)
+
+save-sync-up:  ## Here -> Switch: the profiles over FTP (HOST_IP=<switch ip>; PROFILE=<folder>, PORT=5000, GAME_ID=54540079, LIST=1)
+	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-up HOST_IP=<the Switch's IP> (an FTP server running on it)"; exit 2; }
+	python3 tools/save_sync.py up --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(PORT),--port $(PORT)) $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list)
 
 ## Housekeeping
 log:  ## Show the end of the newest log in work/logs
