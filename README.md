@@ -118,27 +118,14 @@ For developers: `make` and the other tools come with MSYS2 and only work in its 
 
 ## Upscaling
 
-There are two kinds, and they combine:
+The game draws at a multiple of the Xbox's 720×480. `RECOMP_GL_SCALE` sets it (0.5 to 5: `1.5` = 1280×720, `2` = 1440×960, `3` and up for 1440p and 4K screens). `RECOMP_GL_UI_SCALE` (1 to 5, default `2`) does the same for menu and HUD art. Higher costs frame rate; on the Switch stay at `1.5` or below.
 
-- **Resolution:** the game draws at a multiple of the Xbox's 720×480. `RECOMP_GL_SCALE` sets it (0.5 to 5: `1.5` = 1280×720, `2` = 1440×960, `3` and up for 1440p and 4K screens). `RECOMP_GL_UI_SCALE` (1 to 5, default `2`) does the same for menu and HUD art. Higher costs frame rate; on the Switch stay at `1.5` or below.
-- **HD textures:** a texture pack replaces the game's textures with upscaled versions. You make it from your own copy of the game (below); it isn't shipped, because it's the game's art.
-
-| Platform | Resolution | HD textures |
-| --- | --- | --- |
-| Nintendo Switch | `RECOMP_GL_SCALE=1.5` in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` | `hd/textures/` in `sdmc:/switch/mcdub3-nx/` (`make switch HD=1` stages it) |
-| Mac app | `make mac-app SCALE=2`, other settings with `SETTINGS="RECOMP_GL_UI_SCALE=3"`; later in `~/Library/Application Support/mcdub3/mcdub3_env.txt` | `make mac-app HD=1` puts the pack inside the app; or `hd/textures/` in `~/Library/Application Support/mcdub3/` |
-| Mac or Linux, from the repo | `make run RECOMP_GL_SCALE=2` | `hd/textures/` in the repo, beside `game/`: used automatically |
-| Windows | `RECOMP_GL_SCALE=2` in `mcdub3_env.txt` beside `mcdub3.exe` | `hd\textures\` in the repo, beside `game\`: used automatically |
-
-**Making a texture pack** (once, then grow it as you play more of the game):
-
-```sh
-make hd-dump RECOMP_GL_SCALE=1.5   # play the scenes you want; every texture lands in hd/dump/
-make hd-tools                      # once: fetches the upscaler (Real-ESRGAN)
-make hd-upscale                    # hd/dump -> hd/textures (FACTOR=2, 3 or 4)
-```
-
-Dumping works on every computer platform. The upscaler runs on a Mac or an x86-64 Linux PC only; on Windows or an ARM Linux machine, upscale on a Mac and copy `hd/textures/` over. The log says how many replacements were found: `[GL] HD pack ...: N replacement textures`. Delete `hd/` to go back to the original look.
+| Platform | Where to set it |
+| --- | --- |
+| Nintendo Switch | `RECOMP_GL_SCALE=1.5` in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` |
+| Mac app | `make mac-app SCALE=2`, other settings with `SETTINGS="RECOMP_GL_UI_SCALE=3"`; later in `~/Library/Application Support/mcdub3/mcdub3_env.txt` |
+| Mac or Linux, from the repo | `make run RECOMP_GL_SCALE=2` |
+| Windows | `RECOMP_GL_SCALE=2` in `mcdub3_env.txt` beside `mcdub3.exe` |
 
 ## Saves
 
