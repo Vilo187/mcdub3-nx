@@ -20,7 +20,7 @@ NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
 export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
-       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE SETTINGS GAME \
+       MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE UI_SCALE SETTINGS GAME \
        RELEASE_DIR MC3_BUILD_ID EDITION WIN_ARCH
 
 .PHONY: help setup nsp check-vm extract lift regen relift \
@@ -77,7 +77,7 @@ lift-report:  ## Summarise the last lift (functions, stubs, unimplemented)
 	    || echo "no lift yet: make lift"
 
 ## Linux (the debug loop)
-build:  ## Build the desktop binary (OpenGL): Linux, macOS, or Windows in MSYS2 (Windows: SCALE=, SETTINGS= as defaults, like mac-app)
+build:  ## Build the desktop binary (OpenGL): Linux, macOS, or Windows in MSYS2 (Windows: SCALE=5, UI_SCALE=5, SETTINGS= as defaults, like mac-app)
 	@mkdir -p $(LOGS)
 	@case "$$(uname -s)" in \
 	   MINGW*|MSYS*|CYGWIN*) bash tools/build_windows.sh ;; \
@@ -135,7 +135,7 @@ trap:  ## Run, stopping at the first untranslated instruction reached
 
 ## macOS app
 
-mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=5 default, SETTINGS="K=V ...", HD=1, GAME=<disc dir>)
+mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=5, UI_SCALE=5 by default, SETTINGS="K=V ...", HD=1, GAME=<disc dir>)
 	@mkdir -p $(LOGS)
 	$(MAKE) build
 	bash tools/mac_app.sh 2>&1 | tee $(LOGS)/mac_app_$(NOW).log

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Everything after MSYS2 for a Windows install, run by install_windows.bat in
 # MSYS2's CLANG64 / CLANGARM64 shell: packages, the disc, the lift, the build
-# and a desktop shortcut. Safe to re-run: each step is skipped when done.
+# (which also makes the desktop shortcut). Safe to re-run: each step is skipped when done.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 [ "$MC3_HOST" = windows ] || mc3_fail "this is the Windows install (MSYS2); elsewhere: make setup lift build"
@@ -35,10 +35,6 @@ fi
 step "4/4 Build (20-60 minutes the first time)"
 make build
 
-DIST="$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist"
-BAT="$(cygpath -w "$DIST/run_mcdub3.bat")"
-ICON="$(cygpath -w "$DIST/mcdub3.exe")"
-powershell.exe -NoProfile -Command "\$s = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\\Midnight Club 3.lnk'); \$s.TargetPath = '$BAT'; \$s.WorkingDirectory = '$(cygpath -w "$DIST")'; \$s.IconLocation = '$ICON'; \$s.Save()" \
-    && echo "desktop shortcut: Midnight Club 3" || echo "(no desktop shortcut; start $BAT)"
 echo
-echo "done. Start the game with the 'Midnight Club 3' shortcut on the desktop, or $BAT"
+echo "done. Start the game with the 'Midnight Club 3' shortcut on the desktop"
+echo "(or $(cygpath -w "$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist/mcdub3.exe"))."

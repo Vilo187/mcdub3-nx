@@ -65,6 +65,9 @@ set(MC3_SOURCES
 if(NINTENDO_SWITCH)
     list(APPEND MC3_SOURCES src/switch_nx.c)
 endif()
+if(WIN32)
+    list(APPEND MC3_SOURCES src/windows_host.c)   # settings, disc, log when double-clicked
+endif()
 
 add_executable(${PROJECT_NAME} ${MC3_SOURCES} ${MC3_GEN_SOURCES})
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)

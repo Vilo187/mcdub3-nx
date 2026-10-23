@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Package the macOS build as an app: work/mac_app/Midnight Club 3.app
 #
-#   make mac-app [SCALE=5] [SETTINGS="KEY=VALUE ..."] [HD=1]
+#   make mac-app [SCALE=5] [UI_SCALE=5] [SETTINGS="KEY=VALUE ..."] [HD=1]
 #
 # The app is self-contained (its Homebrew libraries are copied in with
 # dylibbundler) and keeps everything else where a Mac app keeps it, laid out
@@ -21,6 +21,7 @@
 # from the documented template (switch/mcdub3_env.example.txt), so the full
 # list sits beside your settings.
 #   SCALE=<f>     rendering resolution, default 5 (3600x2400); 1.5 = 1280x720
+#   UI_SCALE=<n>  menu and HUD art, default 5 (1 = as drawn)
 #   SETTINGS=...  any other defaults, space-separated KEY=VALUE pairs
 #   HD=1          the texture pack from hd/textures inside the app (else the
 #                 app reads hd/ from Application Support, if there is one)
@@ -53,6 +54,7 @@ echo "  libraries: $(ls "$APP/Contents/libs" | wc -l | tr -d ' ') bundled"
     echo "# Defaults built into the app (make mac-app). Your settings in"
     echo "# ~/Library/Application Support/mcdub3/mcdub3_env.txt override these."
     echo "RECOMP_GL_SCALE=${SCALE:-5}"            # 5 by default (2026-10-23)
+    echo "RECOMP_GL_UI_SCALE=${UI_SCALE:-5}"      # 5 by default; SETTINGS below can override
     for kv in ${SETTINGS:-}; do echo "$kv"; done
     [ "${HD:-0}" = "1" ] && echo "RECOMP_GL_HD_DIR=@RESOURCES@/hd"
     true

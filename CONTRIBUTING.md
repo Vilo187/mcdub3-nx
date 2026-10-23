@@ -16,7 +16,7 @@ make lift         # parse the XBE, write config/xbe_facts.h, lift to C
 make build run    # Linux or macOS build + run in a window
 make switch       # Switch NRO + SD staging in work/switch_sd (HD=1: with the texture pack)
 make nsp          # NSP forwarder for the home menu
-make mac-app      # Mac app (SCALE=5 default, SETTINGS="K=V ...", HD=1): work/mac_app/
+make mac-app      # Mac app (SCALE=5, UI_SCALE=5 by default, SETTINGS="K=V ...", HD=1): work/mac_app/
 make hd-dump      # texture packs: dump, then make hd-tools hd-upscale
 make              # every target, grouped
 ```
@@ -348,8 +348,8 @@ it), `hd/textures/`, `save/`, `mcdub3_env.txt` (settings, written from the
 documented template on first launch), `mcdub3_log.txt`.
 
 ```sh
-make mac-app                                             # default resolution: scale 5 (3600x2400)
-make mac-app SCALE=1.5                                   # 1280x720, for a slower Mac
+make mac-app                                             # defaults: SCALE=5 (3600x2400), UI_SCALE=5
+make mac-app SCALE=1.5 UI_SCALE=2                        # 1280x720, for a slower Mac
 make mac-app SCALE=2 SETTINGS="RECOMP_GL_SHARPEN=0.3 MC3_MOVIE_VOLUME=80"
 make mac-app HD=1                                        # texture pack inside the app
 make mac-app GAME=$PWD/game                              # link this disc on first launch
@@ -364,9 +364,13 @@ SETTINGS, HD), then `mcdub3_env.txt` in Application Support. Every
 Windows builds the same lifted C with MSYS2's clang: x86-64 in the CLANG64
 environment, Windows on ARM in CLANGARM64. Trees are
 `work/build-windows-<arch>/`; `dist/` in there holds `mcdub3.exe`, the DLLs
-it needs (tools/windows/copy_dlls.py reads the import tables) and
-`run_mcdub3.bat` (finds `game\` beside the exe or the repo's, logs to
-`work\logs\windows_run.log`).
+it needs (tools/windows/copy_dlls.py reads the import tables), the
+settings (`mcdub3_defaults.txt` from SCALE / UI_SCALE / SETTINGS, rewritten
+by each build; `mcdub3_env.txt`, the player's, kept) and `run_mcdub3.bat`.
+The exe needs no launcher (src/windows_host.c): started on its own it reads
+both settings files, finds `game\` beside it or the repo's, writes its log
+to `work\logs\windows_run_<time>.log` and closes its console; a native
+build makes or refreshes the desktop shortcut to it.
 
 - **Players:** `install_windows.bat` in the repo root, double-clicked
   (README, Installation). It unpacks MSYS2 into `C:\msys64` if missing
