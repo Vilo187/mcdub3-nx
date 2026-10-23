@@ -101,6 +101,19 @@ You can also play the game without making the app by running `make build run`
    
    Settings go on the command line, for example `make run RECOMP_GL_SCALE=2`. The keyboard plays as player 1 and SDL game controllers (Xbox, DualSense) are supported.
 
+### Windows
+
+> [!NOTE]
+> Windows support is new and still being tested.
+
+1. Download the code: **Code → Download ZIP** on this page, and unzip it (or `git clone https://github.com/laureladastra/mcdub3-nx.git`). Choose a folder without spaces in its path, for example `C:\Games\mcdub3-nx`.
+2. Put the extracted disc (`default.xbe` and the rest) in its `game` folder. The disc's `.iso` works too: the installer unpacks it.
+3. Double-click **`install_windows.bat`**.
+
+The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it isn't there, lifts the game's code, builds it, and puts a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and needs an internet connection; after updating the code, run it again. It works on x86-64 PCs and on Windows on ARM, and writes its log to `work\logs\install_windows.log`.
+
+Settings are environment variables, as on the other platforms: set them before starting `run_mcdub3.bat`, or for developers `make run RECOMP_GL_SCALE=2` in MSYS2's CLANG64 shell. The keyboard plays as player 1 and SDL game controllers are supported.
+
 ## Saves
 
 Profiles live where the Xbox kept them, in `UDATA/54540079/` inside the game folder: `game/` on Mac/Linux, `sdmc:/switch/mcdub3-nx/game/` on the Switch, `~/Library/Application Support/mcdub3/game/` for the Mac app. Each profile is a folder with `<name>.mc3` and `SaveMeta.xbx`. The same folder works on every platform.

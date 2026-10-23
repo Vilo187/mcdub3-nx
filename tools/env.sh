@@ -27,8 +27,21 @@ export MC3_GEN_DIR="${MC3_GEN_DIR:-$MC3_WORK/gen}"
 # The desktop host: Linux (the VM) or macOS (native, Apple Silicon). Each
 # builds into its own tree under work/ (build-linux*, build-mac*), so the
 # VM and the Mac can share the workspace folder.
-if [ "$(uname -s)" = "Darwin" ]; then MC3_HOST=mac; else MC3_HOST=linux; fi
+case "$(uname -s)" in
+    Darwin) MC3_HOST=mac ;;
+    MINGW*|MSYS*|CYGWIN*) MC3_HOST=windows ;;   # MSYS2 (tools/setup_windows.sh)
+    *) MC3_HOST=linux ;;
+esac
 export MC3_HOST
+# Windows: the MSYS2 environment decides the architecture (CLANG64 = x86-64,
+# CLANGARM64 = ARM64); builds go to work/build-windows-<arch>/.
+if [ "$MC3_HOST" = windows ]; then
+    case "${MSYSTEM:-}" in
+        CLANGARM64) export MC3_WIN_ARCH=aarch64 ;;
+        CLANG64) export MC3_WIN_ARCH=x86_64 ;;
+        *) echo "error: run this in MSYS2's CLANG64 or CLANGARM64 shell (install_windows.bat does)" >&2; exit 1 ;;
+    esac
+fi
 
 # macOS: build and run as arm64 with the Apple Silicon Homebrew
 # (/opt/homebrew). A shell under Rosetta (uname -m = x86_64) would pick the

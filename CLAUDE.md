@@ -261,6 +261,21 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   0x00512C4D, about half. The tool names them and refuses. CodeBreaker
   .cbs (RC4 + zlib) is not read.
 
+- Windows (2026-10-23, in testing): MinGW/clang builds, x86-64 and ARM64
+  (`make windows` cross from the Mac with llvm-mingw + MSYS2 libraries,
+  tools/win_deps.py; natively in MSYS2 `make setup build`;
+  install_windows.bat does all of it). The toolkit's desktop path on Win32
+  (XBOXRECOMP_WIN_SDL_GL; CONTRIBUTING.md, Windows build). Found
+  on the way: the title has to run off the main thread (window messages);
+  host paths are UTF-16 on Windows (bink_native.c converts for FFmpeg);
+  Parallels' GL refuses uniform-array uploads larger than what the
+  compiler kept (movies black). Runs in Parallels (Windows 11 ARM):
+  movies, sound, pads; slow there. Open: speed and picture quality in the
+  VM, an occasional hang opening the first movie, a test on a real PC.
+  Diagnose with `mcdub3_env.txt` beside the exe (read by run_mcdub3.bat):
+  RECOMP_GL_ERRORS=2, RECOMP_GL_PROBE=1, RECOMP_WATCHDOG_SECS (+ every
+  thread's native stack; tools/windows/symbolize.sh resolves it).
+
 ### First lift (2026-10-14)
 
 21,585 functions, 0 failed, 2.98 M lines of C in 87 chunks (`--split 250`).
