@@ -9,8 +9,11 @@
   --udata DIR    the local UDATA folder (default $MC3_GAME_DIR/UDATA)
   --remote DIR   the Switch's UDATA folder, from the card's root
                  (default /switch/mcdub3-nx/game/UDATA)
-  --port N       FTP port (default 5000: ftpd, sphaira); --user / --password
-                 for a server that asks (default anonymous)
+  --port N       FTP port (default 5000: ftpd, sphaira)
+  --user / --password
+                 only for a server that asks for a login. Without them the
+                 tool logs in anonymously, or not at all if the server
+                 needs no login; a user without a password sends an empty one
   --list         only show what is on both sides
 
 The receiving side is copied to work/saves-backup/<time>-<direction>/ first,
@@ -65,6 +68,27 @@ def ftp_makedirs(ftp, path):
                 pass
 
 
+def login(ftp, user, password):
+    """A login only as far as the server wants one: the given user (an empty
+    password if none), else anonymous, else none at all."""
+    try:
+        if user:
+            ftp.login(user, password)
+        else:
+            ftp.login()                          # anonymous
+        return
+    except ftplib.error_perm as e:
+        if user:
+            raise SystemExit(f'the FTP server refused the login for {user!r}: {e}')
+        refused = e
+    try:                                         # a server that wants no USER at all
+        ftp.voidcmd('NOOP')
+        ftp.pwd()
+    except ftplib.Error:
+        raise SystemExit(f'the FTP server wants a login ({refused}): '
+                         f'give FTP_USER= and FTP_PASS= (make), or --user/--password')
+
+
 def local_walk(root):
     out = {}
     for top, _, files in os.walk(root):
@@ -84,7 +108,7 @@ def main():
     ap.add_argument('direction', choices=['up', 'down'])
     ap.add_argument('--host', required=True)
     ap.add_argument('--port', type=int, default=5000)
-    ap.add_argument('--user', default='anonymous')
+    ap.add_argument('--user', default='')
     ap.add_argument('--password', default='')
     ap.add_argument('--game-id', default='54540079')
     ap.add_argument('--profile')
@@ -104,10 +128,10 @@ def main():
     try:
         ftp = ftplib.FTP()
         ftp.connect(a.host, a.port, timeout=15)
-        ftp.login(a.user, a.password)
     except (OSError, ftplib.Error) as e:
         raise SystemExit(f'cannot reach the FTP server on the Switch at {a.host}:{a.port} ({e}).\n'
                          f'Is it running (ftpd or sphaira on the Switch) and on the same network?')
+    login(ftp, a.user, a.password)
 
     there = ftp_walk(ftp, remote) if ftp_is_dir(ftp, remote) else {}
     here = local_walk(local) if os.path.isdir(local) else {}
