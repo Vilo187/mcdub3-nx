@@ -60,7 +60,7 @@ The Mac application can be packaged and installed by following these instruction
    ```
 
 3. Put your extracted disc in `game/`: `default.xbe` and all the other files
-   from the disc, not the ISO. A disc extraction utility is bundled with this rape. To extract your disc you can run:
+   from the disc, not the ISO. A disc extraction utility is bundled with this repo. To extract your disc you can run:
 
    ```sh
    make extract ISO=<file.iso>
@@ -112,7 +112,33 @@ You can also play the game without making the app by running `make build run`
 
 The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it isn't there, lifts the game's code, builds it, and puts a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and needs an internet connection; after updating the code, run it again. It works on x86-64 PCs and on Windows on ARM, and writes its log to `work\logs\install_windows.log`.
 
-Settings are environment variables, as on the other platforms: set them before starting `run_mcdub3.bat`, or for developers `make run RECOMP_GL_SCALE=2` in MSYS2's CLANG64 shell. The keyboard plays as player 1 and SDL game controllers are supported.
+The game itself lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe`, its DLLs and `run_mcdub3.bat`, which the shortcut starts. Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line (create it if it isn't there), for example `RECOMP_GL_SCALE=2`. The keyboard plays as player 1 and SDL game controllers are supported.
+
+For developers: `make` and the other tools come with MSYS2 and only work in its own shell, not in Command Prompt or PowerShell. Start **MSYS2 CLANG64** from the Start menu (**MSYS2 CLANGARM64** on Windows on ARM), go to the repo and use the same commands as on Mac and Linux: `make setup`, `make lift`, `make build run`, `make run RECOMP_GL_SCALE=2`.
+
+## Upscaling
+
+There are two kinds, and they combine:
+
+- **Resolution:** the game draws at a multiple of the Xbox's 720×480. `RECOMP_GL_SCALE` sets it (0.5 to 5: `1.5` = 1280×720, `2` = 1440×960, `3` and up for 1440p and 4K screens). `RECOMP_GL_UI_SCALE` (1 to 5, default `2`) does the same for menu and HUD art. Higher costs frame rate; on the Switch stay at `1.5` or below.
+- **HD textures:** a texture pack replaces the game's textures with upscaled versions. You make it from your own copy of the game (below); it isn't shipped, because it's the game's art.
+
+| Platform | Resolution | HD textures |
+| --- | --- | --- |
+| Nintendo Switch | `RECOMP_GL_SCALE=1.5` in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` | `hd/textures/` in `sdmc:/switch/mcdub3-nx/` (`make switch HD=1` stages it) |
+| Mac app | `make mac-app SCALE=2`, other settings with `SETTINGS="RECOMP_GL_UI_SCALE=3"`; later in `~/Library/Application Support/mcdub3/mcdub3_env.txt` | `make mac-app HD=1` puts the pack inside the app; or `hd/textures/` in `~/Library/Application Support/mcdub3/` |
+| Mac or Linux, from the repo | `make run RECOMP_GL_SCALE=2` | `hd/textures/` in the repo, beside `game/`: used automatically |
+| Windows | `RECOMP_GL_SCALE=2` in `mcdub3_env.txt` beside `mcdub3.exe` | `hd\textures\` in the repo, beside `game\`: used automatically |
+
+**Making a texture pack** (once, then grow it as you play more of the game):
+
+```sh
+make hd-dump RECOMP_GL_SCALE=1.5   # play the scenes you want; every texture lands in hd/dump/
+make hd-tools                      # once: fetches the upscaler (Real-ESRGAN)
+make hd-upscale                    # hd/dump -> hd/textures (FACTOR=2, 3 or 4)
+```
+
+Dumping works on every computer platform. The upscaler runs on a Mac or an x86-64 Linux PC only; on Windows or an ARM Linux machine, upscale on a Mac and copy `hd/textures/` over. The log says how many replacements were found: `[GL] HD pack ...: N replacement textures`. Delete `hd/` to go back to the original look.
 
 ## Saves
 

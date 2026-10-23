@@ -583,6 +583,14 @@ static int game_main(void)
         if (!hd || !hd[0]) {
             char dir[1024];
             const char *slash = strrchr(game_dir, '/');
+#ifdef _WIN32
+            /* Windows paths separate with a backslash: without this the
+             * pack was looked for beside the exe, not beside the game
+             * folder (2026-10-23). */
+            const char *bs = strrchr(game_dir, '\\');
+            if (bs && (!slash || bs > slash))
+                slash = bs;
+#endif
             size_t n = slash ? (size_t)(slash - game_dir) : 0;
             snprintf(dir, sizeof dir, "%.*s%shd", (int)n, game_dir, n ? "/" : "");
             setenv("RECOMP_GL_HD_DIR", dir, 1);
