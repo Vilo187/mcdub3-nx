@@ -47,6 +47,18 @@ cp "$BIN" "$APP/Contents/MacOS/mcdub3"
 # binary pointed at them: the app runs without Homebrew.
 dylibbundler -od -b -x "$APP/Contents/MacOS/mcdub3" -d "$APP/Contents/libs" \
     -p @executable_path/../libs/ >/dev/null
+# Homebrew's sdl2 is now sdl2-compat: a libSDL2 that loads SDL3 at run time
+# (dlopen), which dylibbundler cannot see -- the app said "Failed loading
+# SDL3 library" on start (2026-10-23). It looks beside itself first
+# (@loader_path/libSDL3.dylib): put SDL3 there.
+if grep -q "Failed loading SDL3 library" "$APP/Contents/libs/"libSDL2*.dylib 2>/dev/null; then
+    SDL3="$(/opt/homebrew/bin/brew --prefix sdl3 2>/dev/null)/lib/libSDL3.0.dylib"
+    [ -f "$SDL3" ] || mc3_fail "Homebrew's SDL2 is sdl2-compat, which needs SDL3: brew install sdl3"
+    cp "$SDL3" "$APP/Contents/libs/libSDL3.dylib"
+    chmod u+w "$APP/Contents/libs/libSDL3.dylib"
+    install_name_tool -id @loader_path/libSDL3.dylib "$APP/Contents/libs/libSDL3.dylib"
+    echo "  SDL3 bundled too (Homebrew's SDL2 is sdl2-compat)"
+fi
 echo "  libraries: $(ls "$APP/Contents/libs" | wc -l | tr -d ' ') bundled"
 
 # Defaults baked in at build time.
