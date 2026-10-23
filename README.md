@@ -1,13 +1,13 @@
 <p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="500"></p>
 
-<p align="center"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg"> <img src="https://img.shields.io/badge/Nintendo Switch-21.0.0-orange?logo=nintendo"> <img src="https://img.shields.io/badge/Mac-arm64-green?logo=nintendo"> <img src="https://img.shields.io/badge/Linux-x86__64%20%20aarch64-purple?logo=nintendo"> <img src="https://img.shields.io/badge/OpenGL-renderer-blue?logo=opengl"> </p>
+<p align="center"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg"> <img src="https://img.shields.io/badge/Nintendo Switch-21.0.0-orange?logo=nintendo"> <img src="https://img.shields.io/badge/Mac-%20Sequoia%2015.6-green?logo=nintendo"> <img src="https://img.shields.io/badge/Linux-Ubuntu 22.04-purple?logo=nintendo"> <img src="https://img.shields.io/badge/Windows-11-blue.svg"> <img src="https://img.shields.io/badge/OpenGL-renderer-blue?logo=opengl"> </p>
 
 <p align="center"><img src="assets/preview.png" alt="Midnight Club 3: DUB Edition" width="450"></p>
 
 
 
 
-The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux and macOS without requirement of emulation.
+The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux, macOS and Windows without the requirement of emulation.
 
 Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-sw), whose Switch layer has been a great inspiration for this engine.
 
@@ -17,12 +17,12 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 
 ## Platforms
 
-| Platform        | Support | Tested       | Hardware        |
-| --------------- | ------- | ------------ | --------------- |
-| Nintendo Switch | ✅       | 21.0.0       | V1              |
-| Ubuntu Linux    | ✅       | 22.04.5      | Virtual Machine |
-| Mac             | ✅       | Sequoia 15.6 | M1              |
-| Windows         | ❌       | -            | -               |
+| Platform        | Support | Tested         | Hardware                              |
+| --------------- | ------- | -------------- | ------------------------------------- |
+| Nintendo Switch | ✅       | 21.0.0         | V1                                    |
+| Linux           | ✅       | Ubuntu 22.04.5 | Virtual Machine                       |
+| Mac             | ✅       | Sequoia 15.6   | M1                                    |
+| PC              | ✅       | Windows 11     | Virtual Machine and Intel i7 Hardware |
 
 ## Supported Editions
 
@@ -83,6 +83,8 @@ You can also play the game without making the app by running `make build run`
 
 ### Linux
 
+The game can be ran locally without packaging:
+
 1. Get the code and install what the build needs:
 
    ```sh
@@ -103,34 +105,31 @@ You can also play the game without making the app by running `make build run`
 
 ### Windows
 
-> [!NOTE]
+> [!WARNING]
 > Windows support is new and still being tested.
 
-1. Download the code: **Code → Download ZIP** on this page, and unzip it (or `git clone https://github.com/laureladastra/mcdub3-nx.git`). Choose a folder without spaces in its path, for example `C:\Games\mcdub3-nx`.
-2. Put the extracted disc (`default.xbe` and the rest) in its `game` folder. The disc's `.iso` works too: the installer unpacks it.
-3. Double-click **`install_windows.bat`**.
+The game can be ran locally or packaged by following these instructions:
 
-The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it isn't there, lifts the game's code, builds it, and puts a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and needs an internet connection; after updating the code, run it again. It works on x86-64 PCs and on Windows on ARM, and writes its log to `work\logs\install_windows.log`.
+1. Copy the code to a folder without spaces in its path (i.e. `C:\Games\mcdub3-nx`):
 
-The game itself lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe` and its DLLs. Start it with the desktop shortcut or by double-clicking `mcdub3.exe`; every build makes or refreshes the shortcut. Keep the exe in that folder (it needs its DLLs and finds the disc in the repo's `game` folder); the log of each start goes to `work\logs\`. Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line, for example `RECOMP_GL_SCALE=2`: every option is listed there, commented out. By default the game renders at scale 5 (3600x2400) with menu and HUD art at 5 too; on a PC with integrated graphics, `RECOMP_GL_SCALE=1.5` and `RECOMP_GL_UI_SCALE=2` play more smoothly (see [Upscaling](#upscaling)). The keyboard plays as player 1 and SDL game controllers are supported.
+   ```sh
+   git clone https://github.com/laureladastra/mcdub3-nx.git
+   ```
+2. Put your extracted disc (`default.xbe` and the rest) or `.iso`  in the `game` folder. The installer will automatically unpacks the .iso.
+3. Double-click the installer **`install_windows.bat`**. The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it doesn't exist, lift the game's code, build it and put a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and requires an internet connection to install the dependencies.
+
+The game lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe` and its DLLs. Start it with the desktop shortcut or by double-clicking `mcdub3.exe`. Every build makes or refreshes the shortcut. Keep the exe in that folder (it needs its DLLs and finds the disc in the repo's `game` folder). Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line, for example `RECOMP_GL_SCALE=2`, according to the specifications in [Settings](##Settings). By default the game renders at scale 5 (3600x2400) with menu and HUD art at 5 too. The keyboard plays as player 1 and SDL game controllers are supported.
 
 For developers: `make` and the other tools come with MSYS2 and only work in its own shell, not in Command Prompt or PowerShell (there, "make" is not recognised). Double-click **`tools\windows\shell.bat`**: it opens that shell in the repo folder, for x86-64 or ARM as your PC needs (by hand: `C:\msys64\msys2_shell.cmd -clang64 -here`, or `-clangarm64` on Windows on ARM). Then the same commands as on Mac and Linux: `make setup`, `make lift`, `make build run`, `make run RECOMP_GL_SCALE=2`. `make build` also takes the app defaults, like `make mac-app`: `make build SCALE=2 UI_SCALE=3 SETTINGS="RECOMP_GL_SHARPEN=0.3"`.
 
-## Upscaling
+## Upscale Defaults
 
-Two settings make the picture sharper:
-
-- `RECOMP_GL_SCALE`: the resolution the game draws at, as a multiple of the Xbox's 720×480. 0.5 to 5: `1.5` = 1280×720, `2` = 1440×960, `5` = 3600×2400 for 1440p and 4K screens.
-- `RECOMP_GL_UI_SCALE`: menu and HUD art drawn this many times larger, 1 (as on the Xbox) to 5.
-
-Higher values cost frame rate. The defaults differ per platform:
-
-| Platform | Default (`SCALE` / `UI_SCALE`) | How to change it |
-| --- | --- | --- |
-| Mac app | **5 / 5** | When building: `make mac-app SCALE=2 UI_SCALE=3`. Afterwards: `RECOMP_GL_SCALE=2` and `RECOMP_GL_UI_SCALE=3` in `~/Library/Application Support/mcdub3/mcdub3_env.txt` |
-| Windows | **5 / 5** | `RECOMP_GL_SCALE=2` and `RECOMP_GL_UI_SCALE=3` in `mcdub3_env.txt` beside `mcdub3.exe` (every option is listed there, commented out). Or when building, in the MSYS2 shell: `make build SCALE=2 UI_SCALE=3` |
-| Mac or Linux, from the repo | 1 / 2 | `make run RECOMP_GL_SCALE=2 RECOMP_GL_UI_SCALE=3` |
-| Nintendo Switch | 1 / 2 | `RECOMP_GL_SCALE=1.5` in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt`; stay at `1.5` or below there |
+| Platform                    | Default (`SCALE` / `UI_SCALE`) | How to change it                                                                                                                                                                                            |
+| --------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mac app                     | **5 / 5**                      | When building: `make mac-app SCALE=2 UI_SCALE=3`. Afterwards: `RECOMP_GL_SCALE=2` and `RECOMP_GL_UI_SCALE=3` in `~/Library/Application Support/mcdub3/mcdub3_env.txt`                                       |
+| Windows                     | **5 / 5**                      | `RECOMP_GL_SCALE=2` and `RECOMP_GL_UI_SCALE=3` in `mcdub3_env.txt` beside `mcdub3.exe` (every option is listed there, commented out). Or when building, in the MSYS2 shell: `make build SCALE=2 UI_SCALE=3` |
+| Mac or Linux, from the repo | 1 / 2                          | `make run RECOMP_GL_SCALE=2 RECOMP_GL_UI_SCALE=3`                                                                                                                                                           |
+| Nintendo Switch             | 1 / 2                          | `RECOMP_GL_SCALE=1.5` in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt`; stay at `1.5` or below there                                                                                                              |
 
 A setting in `mcdub3_env.txt` always wins over what the app was built with.
 
@@ -152,15 +151,14 @@ An imported profile keeps its owner's settings, controller layout included. If d
 
 ## Technical Overview
 
-| Area            | State                                                                                                                                                               |
-| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Lift            | 21,585 functions, 2.98 M lines of C                                                                                                                                 |
-| Movies          | Bink decoded natively with FFmpeg, sound in sync, upscaled on the GPU                                                                                               |
-| Audio           | XACT sound effects and the WMA music                                                                                                                                |
-| Graphics        | OpenGL renderer: up to 3x resolution, square pixels in 16:9, 4:3 screens filled to widescreen, mipmaps and 16x anisotropic filtering, FXAA, sharpening, motion blur |
-| Texture packs   | Optional HD replacements. Dumped from the game, upscaled (Real-ESRGAN), loaded in the background and DXT-compressed.                                                |
-| Input           | Nintendo Switch controllers; on Mac/Linux the keyboard and SDL pads (DualSense, Xbox). Vibration supported.                                                         |
-| Nintendo Switch | NRO and NSP forwarder                                                                                                                                               |
+| Area          | State                                                                                                                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Lift          | 21,585 functions, 2.98 M lines of C                                                                                                                                 |
+| Movies        | Bink decoded natively with FFmpeg, sound in sync, upscaled on the GPU                                                                                               |
+| Audio         | XACT sound effects and the WMA music                                                                                                                                |
+| Graphics      | OpenGL renderer: up to 3x resolution, square pixels in 16:9, 4:3 screens filled to widescreen, mipmaps and 16x anisotropic filtering, FXAA, sharpening, motion blur |
+| Texture packs | Optional HD replacements. Dumped from the game, upscaled (Real-ESRGAN), loaded in the background and DXT-compressed.                                                |
+| Input         | Nintendo Switch controllers; on Mac/Linux the keyboard and SDL pads (DualSense, Xbox). Vibration supported.                                                         |  |
 
 ## ⚠️ &nbsp;Known Bugs
 
@@ -178,19 +176,19 @@ default, is [switch/mcdub3_env.example.txt](switch/mcdub3_env.example.txt). The 
 
 ### Graphics
 
-| Setting              | Default                    | What it does                                                                                                                                                        |
-| -------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Setting              | Default                         | What it does                                                                                                                                                        |
+| -------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `RECOMP_GL_SCALE`    | `1` (Mac and Windows apps: `5`) | Rendering resolution as a multiple of the Xbox's 720x480 (0.5 to 5). `1.5` gives 1280x720, the best match for a 720p screen; higher costs frame rate on the Switch. |
-| `RECOMP_WIDESCREEN`  | `1`                        | Tells the game the TV is widescreen, so it renders 16:9 itself.                                                                                                     |
-| `RECOMP_GL_SQUARE`   | `1`                        | Shows the widescreen picture at its true shape (square pixels).                                                                                                     |
-| `RECOMP_GL_FILL`     | `1`                        | Menus and videos laid out for 4:3 fill the whole width instead of showing black side bands.                                                                         |
-| `MC3_FILL_SKIP`      | `rockstar,sdlogo,mc3intro` | Movies that keep their original 4:3 framing (names from `game/video/`, without `.bik`).                                                                             |
-| `RECOMP_GL_ASPECT`   | *(unset)*                  | `fill` stretches the picture to the whole screen, whatever its shape.                                                                                               |
-| `RECOMP_GL_FXAA`     | `1`                        | Smooths jagged edges.                                                                                                                                               |
-| `RECOMP_GL_SHARPEN`  | `0.5`                      | Sharpening strength, from 0 (off) to 1.                                                                                                                             |
-| `RECOMP_GL_MIPS`     | `1`                        | Smoother textures in the distance, with less shimmering.                                                                                                            |
-| `RECOMP_GL_ANISO`    | `16`                       | Keeps road textures sharp at shallow angles. 1 is off, 16 the maximum.                                                                                              |
-| `RECOMP_GL_LOD_BIAS` | `-0.25`                    | Texture detail: negative is sharper, positive softer.                                                                                                               |
+| `RECOMP_WIDESCREEN`  | `1`                             | Tells the game the TV is widescreen, so it renders 16:9 itself.                                                                                                     |
+| `RECOMP_GL_SQUARE`   | `1`                             | Shows the widescreen picture at its true shape (square pixels).                                                                                                     |
+| `RECOMP_GL_FILL`     | `1`                             | Menus and videos laid out for 4:3 fill the whole width instead of showing black side bands.                                                                         |
+| `MC3_FILL_SKIP`      | `rockstar,sdlogo,mc3intro`      | Movies that keep their original 4:3 framing (names from `game/video/`, without `.bik`).                                                                             |
+| `RECOMP_GL_ASPECT`   | *(unset)*                       | `fill` stretches the picture to the whole screen, whatever its shape.                                                                                               |
+| `RECOMP_GL_FXAA`     | `1`                             | Smooths jagged edges.                                                                                                                                               |
+| `RECOMP_GL_SHARPEN`  | `0.5`                           | Sharpening strength, from 0 (off) to 1.                                                                                                                             |
+| `RECOMP_GL_MIPS`     | `1`                             | Smoother textures in the distance, with less shimmering.                                                                                                            |
+| `RECOMP_GL_ANISO`    | `16`                            | Keeps road textures sharp at shallow angles. 1 is off, 16 the maximum.                                                                                              |
+| `RECOMP_GL_LOD_BIAS` | `-0.25`                         | Texture detail: negative is sharper, positive softer.                                                                                                               |
 | `RECOMP_GL_UI_SCALE` | `2` (Mac and Windows apps: `5`) | Draws menu and HUD art this many times larger: 1 (off) to 5, whole numbers.                                                                                         |
 
 ### Input and controllers
