@@ -31,6 +31,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(p, mode) _mkdir(p)          /* Windows: no mode argument */
+#endif
 
 #if defined(__GNUC__)
 #pragma GCC diagnostic push

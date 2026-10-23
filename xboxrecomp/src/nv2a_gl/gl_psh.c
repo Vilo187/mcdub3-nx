@@ -27,6 +27,7 @@
 
 #include <stdarg.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef struct {
@@ -390,6 +391,17 @@ int nv2a_gl_psh(const Nv2aPshKey *k, char *buf, size_t cap)
         emit(&o, "    vec3 fD = "); final_input(&o, cw0, 0, k);       emit(&o, ";\n");
         emit(&o, "    float fG = "); final_input(&o, cw1 >> 8, 1, k); emit(&o, ";\n");
         emit(&o, "    fragColor = vec4(fA * fB + (1.0 - fA) * fC + fD, fG);\n");
+    }
+    {
+        /* RECOMP_GL_PROBE=1 (nv2a_gl.c): every draw writes plain green, so
+         * a picture that stays black tells draws from textures apart. */
+        static int probe = -1;
+        if (probe < 0) {
+            const char *e = getenv("RECOMP_GL_PROBE");
+            probe = e && *e == '1';
+        }
+        if (probe)
+            emit(&o, "    fragColor = vec4(0.0, 1.0, 0.0, 1.0);\n");
     }
     emit(&o,
         "    fragColor = clamp(fragColor, 0.0, 1.0);\n"
