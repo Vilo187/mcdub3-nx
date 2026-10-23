@@ -12,8 +12,9 @@
 #   tools/build_windows.sh               x86-64
 #   WIN_ARCH=aarch64 tools/build_windows.sh  Windows on ARM
 #
-#   SCALE=2 SETTINGS="K=V ..."           defaults for the installed game (SCALE
-#                                        5 unless given), as
+#   SCALE=2 UI_SCALE=3 SETTINGS="K=V ..."
+#                                        defaults for the installed game (SCALE
+#                                        and UI_SCALE 5 unless given), as
 #                                        make mac-app: written to
 #                                        dist/mcdub3_defaults.txt; the player's
 #                                        dist/mcdub3_env.txt still wins
@@ -92,9 +93,10 @@ cp "$BUILD/mcdub3.exe" "$DIST/"
 # rewritten every build), then mcdub3_env.txt (the player's: kept across
 # builds, made once from the documented template, every option commented).
 {
-    echo "# Defaults of this build (make build SCALE=... SETTINGS=...)."
+    echo "# Defaults of this build (make build SCALE=... UI_SCALE=... SETTINGS=...)."
     echo "# Rewritten by every build: change settings in mcdub3_env.txt instead."
     echo "RECOMP_GL_SCALE=${SCALE:-5}"        # 5 by default, as the Mac app
+    echo "RECOMP_GL_UI_SCALE=${UI_SCALE:-5}"  # 5 by default; SETTINGS below can override
     for kv in ${SETTINGS:-}; do echo "$kv"; done
 } | sed 's/$/\r/' > "$DIST/mcdub3_defaults.txt"
 if [ ! -f "$DIST/mcdub3_env.txt" ]; then
@@ -127,4 +129,11 @@ printf '%s\r\n' \
   'set "RC=%ERRORLEVEL%"' \
   'popd' \
   'if not "%RC%"=="0" (echo The game stopped with code %RC%: see %LOG% & pause)' > "$DIST/run_mcdub3.bat"
-echo "built $DIST/mcdub3.exe   (start it with run_mcdub3.bat, or make run)"
+# On Windows: a desktop shortcut to the exe (its own icon), made or
+# refreshed by every build -- the exe needs no launcher (src/windows_host.c).
+if [ "$MC3_HOST" = windows ]; then
+    EXE_W="$(cygpath -w "$DIST/mcdub3.exe")"; DIST_W="$(cygpath -w "$DIST")"
+    powershell.exe -NoProfile -Command "\$s = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\\Midnight Club 3.lnk'); \$s.TargetPath = '$EXE_W'; \$s.WorkingDirectory = '$DIST_W'; \$s.IconLocation = '$EXE_W'; \$s.Save()" \
+        && echo "desktop shortcut: Midnight Club 3 -> $EXE_W" || echo "(no desktop shortcut)"
+fi
+echo "built $DIST/mcdub3.exe   (double-click it, the desktop shortcut, or make run)"

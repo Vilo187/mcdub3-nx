@@ -448,6 +448,9 @@ static void fatal(const char *msg)
     fprintf(stderr, "[FATAL] %s\n", msg);
 #ifdef __SWITCH__
     switch_error_dialog(msg);
+#elif defined(_WIN32)
+    extern void windows_error_dialog(const char *msg);   /* windows_host.c */
+    windows_error_dialog(msg);
 #endif
 }
 
@@ -753,6 +756,12 @@ static int game_main_args(int argc, char **argv)
 int main(int argc, char **argv)
 {
     extern int xbox_host_main_run(int (*fn)(int, char **), int argc, char **argv);
+#ifdef _WIN32
+    /* Settings files, the disc and the log when started on its own
+     * (double-click, shortcut): windows_host.c. */
+    extern void windows_boot(void);
+    windows_boot();
+#endif
     return xbox_host_main_run(game_main_args, argc, argv);
 }
 #endif
