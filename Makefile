@@ -21,10 +21,10 @@ NOW   = $(shell date +%Y%m%d_%H%M%S)
 # Command-line settings that the scripts read from the environment.
 export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE SETTINGS GAME \
-       RELEASE_DIR MC3_BUILD_ID EDITION
+       RELEASE_DIR MC3_BUILD_ID EDITION WIN_ARCH
 
 .PHONY: help setup nsp check-vm extract lift regen relift \
-        build build-vk build-debug mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
+        build build-vk build-debug windows mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
         switch switch-vk switch-lto send \
         hd-dump hd-tools hd-upscale import-save \
         seeds lift-report log du clean-build clean-gen clean toolkit-test
@@ -35,8 +35,12 @@ help:  ## Show this help
 	@echo
 
 ## Setup (once)
-setup:  ## Install build deps and the Python venv (Ubuntu: also Docker for the Switch; macOS: Homebrew packages)
-	@if [ "$$(uname -s)" = Darwin ]; then bash tools/setup_mac.sh; else bash vm/setup-ubuntu.sh; fi
+setup:  ## Install build deps and the Python venv (Ubuntu: also Docker for the Switch; macOS: Homebrew packages; Windows: MSYS2 packages)
+	@case "$$(uname -s)" in \
+	   Darwin) bash tools/setup_mac.sh ;; \
+	   MINGW*|MSYS*|CYGWIN*) bash tools/setup_windows.sh ;; \
+	   *) bash vm/setup-ubuntu.sh ;; \
+	 esac
 
 check-vm:  ## Print the VM checks (CPU, page size, RAM, disk, OpenGL)
 	@uname -m; echo "page size: $$(getconf PAGESIZE)"; echo "cores: $$(nproc)"
@@ -73,9 +77,16 @@ lift-report:  ## Summarise the last lift (functions, stubs, unimplemented)
 	    || echo "no lift yet: make lift"
 
 ## Linux (the debug loop)
-build:  ## Build the Linux binary (OpenGL)
+build:  ## Build the desktop binary (OpenGL): Linux, macOS, or Windows in MSYS2
 	@mkdir -p $(LOGS)
-	bash tools/build_linux.sh 2>&1 | tee $(LOGS)/build_$(NOW).log
+	@case "$$(uname -s)" in \
+	   MINGW*|MSYS*|CYGWIN*) bash tools/build_windows.sh ;; \
+	   *) bash tools/build_linux.sh ;; \
+	 esac 2>&1 | tee $(LOGS)/build_$(NOW).log
+
+windows:  ## Cross-build the Windows exe from macOS/Linux (llvm-mingw in work/tools; WIN_ARCH=aarch64 for ARM)
+	@mkdir -p $(LOGS)
+	bash tools/build_windows.sh 2>&1 | tee $(LOGS)/build_windows_$(NOW).log
 
 build-vk:  ## Build with the Vulkan renderer (needs glslang 12+)
 	$(MAKE) build VULKAN=1

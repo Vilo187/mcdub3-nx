@@ -358,6 +358,40 @@ Settings apply in order, later wins: the defaults built in (SCALE,
 SETTINGS, HD), then `mcdub3_env.txt` in Application Support. Every
 `RECOMP_*` / `MC3_*` setting works there (README, Settings).
 
+## Windows build (in testing since 2026-10-23)
+
+Windows builds the same lifted C with MSYS2's clang: x86-64 in the CLANG64
+environment, Windows on ARM in CLANGARM64. Trees are
+`work/build-windows-<arch>/`; `dist/` in there holds `mcdub3.exe`, the DLLs
+it needs (tools/windows/copy_dlls.py reads the import tables) and
+`run_mcdub3.bat` (finds `game\` beside the exe or the repo's, logs to
+`work\logs\windows_run.log`).
+
+- **Players:** `install_windows.bat` in the repo root, double-clicked
+  (README, Installation). It unpacks MSYS2 into `C:\msys64` if missing
+  (`MSYS2_ROOT` for another folder), updates it, and runs
+  tools/install_windows.sh in the shell matching the machine: `make setup`
+  (tools/setup_windows.sh, pacman: clang, cmake, ninja, SDL2, FFmpeg,
+  Python with capstone and Pillow), an ISO in `game\` unpacked, `make lift`
+  if needed, `make build`, a desktop shortcut. Re-runnable.
+- **Developers on Windows:** the CLANG64 / CLANGARM64 shell, then the usual
+  `make setup`, `make lift`, `make build run`.
+- **Cross build from macOS or Linux:** `make windows` (`WIN_ARCH=aarch64`
+  for ARM), tools/build_windows.sh with llvm-mingw (a release unpacked in
+  `work/tools/`) and tools/windows/toolchain.cmake; tools/win_deps.py
+  fetches MSYS2's packages and their dependencies into
+  `work/win-sysroot/<arch>/` (Python 3.14+ for zstd). Fast for build
+  errors; run the result on Windows (Parallels: the repo is
+  `\\Mac\Home\...`).
+
+How it runs: the toolkit's Windows path was Direct3D 11, XAudio2, XInput
+and page-fault MMIO (VEH). With `XBOXRECOMP_WIN_SDL_GL` (MC3 turns it on)
+Windows takes the desktop path instead: the pushbuffer executor with
+nv2a_gl, SDL2 for window, sound and pads, the MMIO registry for the lifted
+MMIO sections (`XBOXRECOMP_SDL_HOST` in the sources). The kernel layer is
+the toolkit's Win32 code on the real Win32 API (elsewhere it runs on
+win32_compat.c); threads are not pinned (platform/win32_host.c).
+
 ## Create the VM (Parallels Desktop)
 
 1. Parallels' installation assistant → **Download Ubuntu Linux**. It installs

@@ -12,10 +12,12 @@
  *   Switch: sdmc:/switch/<MC3_SD_DIR>/game
  */
 
-#ifndef _WIN32
-#  include <pthread.h>
-#  include <signal.h>
+#if !defined(_WIN32) || defined(__MINGW32__)
+#  include <pthread.h>                     /* MinGW: winpthreads */
 #  include <unistd.h>
+#endif
+#ifndef _WIN32
+#  include <signal.h>
 #endif
 #include <stddef.h>
 #include <stdint.h>
@@ -23,6 +25,16 @@
 #include <stdlib.h>
 #include <stdbool.h>
 #include <string.h>
+
+#ifdef _WIN32
+/* The Windows C runtime has no setenv. */
+static int setenv(const char *name, const char *value, int overwrite)
+{
+    if (!overwrite && getenv(name))
+        return 0;
+    return _putenv_s(name, value);
+}
+#endif
 
 /* Version and build, from switch/app.env (CMake: MC3_VERSION, MC3_BUILD_ID;
  * CI sets the build ID to the run), so a log names exactly what ran. */
@@ -624,19 +636,18 @@ static int game_main(void)
     xbox_OhciInit();
     fprintf(stderr, "[BOOT] USB up\n");   /* boot markers: the Switch log is timestamped */
 
-#ifndef _WIN32
-    /* GPU renderer for the pushbuffer executor; MC3_GPU=0 keeps the
-     * executor's CPU renderer (slow, but a useful reference). */
+    /* GPU renderer for the pushbuffer executor, on every host (Windows too:
+     * XBOXRECOMP_WIN_SDL_GL); MC3_GPU=0 keeps the executor's CPU renderer
+     * (slow, but a useful reference). */
     if (!env_is("MC3_GPU", "0")) {
-#  if defined(MC3_VULKAN)
+#if defined(MC3_VULKAN)
         extern void nv2a_vk_install(void);
         nv2a_vk_install();
-#  else
+#else
         extern void nv2a_gl_install(void);
         nv2a_gl_install();
-#  endif
-    }
 #endif
+    }
     fprintf(stderr, "[BOOT] renderer installed\n");
 
     xbox_kernel_init();

@@ -45,6 +45,12 @@ set(XBOXRECOMP_APP_NAME "${MC3_SD_DIR}" CACHE STRING "" FORCE)
 option(MC3_VULKAN "Render with Vulkan instead of OpenGL" OFF)
 set(XBOXRECOMP_VULKAN ${MC3_VULKAN} CACHE BOOL "" FORCE)
 
+# Windows: the same renderer and SDL host as Linux and macOS, not the
+# toolkit's Direct3D 11 path (MC3 draws through the pushbuffer executor).
+if(WIN32)
+    set(XBOXRECOMP_WIN_SDL_GL ON CACHE BOOL "" FORCE)
+endif()
+
 add_subdirectory(${XBOXRECOMP_DIR} ${CMAKE_BINARY_DIR}/xboxrecomp)
 
 file(GLOB MC3_GEN_SOURCES CONFIGURE_DEPENDS "${MC3_GEN_DIR}/*.c")

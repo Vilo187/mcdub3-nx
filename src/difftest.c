@@ -24,6 +24,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(p, mode) _mkdir(p)          /* Windows: no mode argument */
+#endif
 
 #include "recomp_types.h"
 

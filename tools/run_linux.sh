@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run the desktop build (Linux or macOS) in a window, logging to
+# Run the desktop build (Linux, macOS or Windows/MSYS2) in a window, logging to
 # $MC3_WORK/logs/.
 #
 #   tools/run_linux.sh                        play: window, keyboard/controller
@@ -19,8 +19,12 @@ mc3_mac_native "$0" "$@"
 SUFFIX=""
 [ "${VULKAN:-0}" = "1" ] && SUFFIX="-vk"
 [ "${DEBUG:-0}" = "1" ] && SUFFIX="$SUFFIX-dbg"
-BIN="${BIN:-$MC3_WORK/build-$MC3_HOST$SUFFIX/mcdub3}"
-[ -x "$BIN" ] || mc3_fail "no binary at $BIN (tools/build_linux.sh)"
+if [ "$MC3_HOST" = windows ]; then
+    BIN="${BIN:-$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist/mcdub3.exe}"   # beside its DLLs
+else
+    BIN="${BIN:-$MC3_WORK/build-$MC3_HOST$SUFFIX/mcdub3}"
+fi
+[ -x "$BIN" ] || mc3_fail "no binary at $BIN (make build)"
 # A run of a stale binary looks exactly like the fix did not work.
 STALE=$(find "$MC3_REPO/src" "$MC3_REPO/config" "$XBOXRECOMP_DIR/src" "$MC3_GEN_DIR" \
             -newer "$BIN" -type f \( -name '*.c' -o -name '*.h' \) 2>/dev/null | head -3)
@@ -53,7 +57,7 @@ if [ -n "${SECS:-}" ]; then
     fi
 fi
 if [ "${HEADLESS:-0}" = "1" ]; then
-    [ "$MC3_HOST" = mac ] && mc3_fail "HEADLESS=1 needs xvfb: Linux only"
+    [ "$MC3_HOST" = linux ] || mc3_fail "HEADLESS=1 needs xvfb: Linux only"
     CMD=(xvfb-run -a "${CMD[@]}")
 fi
 

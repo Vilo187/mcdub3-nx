@@ -54,7 +54,13 @@ int  mc3_bink_native_audio_active(void);
 #include "apu/apu.h"            /* the runtime's software mixer */
 
 /* The runtime's Xbox -> host path translation (xboxrecomp kernel_path.c). */
+#ifdef _WIN32
+#include <windows.h>
+/* The runtime's host paths are UTF-16 on Windows (kernel.h, xbox_host_char). */
+extern int xbox_translate_path(const char *xbox_path, wchar_t *host, unsigned int size);
+#else
 extern int xbox_translate_path(const char *xbox_path, char *host, unsigned int size);
+#endif
 
 #define MAX_MOVIES 4
 
@@ -430,7 +436,17 @@ static int host_path(const char *xbox_name, char *out, size_t n)
     const char *dir;
     size_t i;
 
+#ifdef _WIN32
+    /* Read as a narrow string, the UTF-16 path was just its first letter:
+     * "FFmpeg cannot open Z" and every movie black (2026-10-23). FFmpeg
+     * takes UTF-8 on Windows. */
+    wchar_t wide[1024];
+    int ok = xbox_translate_path(xbox_name, wide, (unsigned int)(sizeof wide / sizeof wide[0]))
+             && WideCharToMultiByte(CP_UTF8, 0, wide, -1, out, (int)n, NULL, NULL) > 0;
+    if (!ok) {
+#else
     if (!xbox_translate_path(xbox_name, out, (unsigned int)n)) {
+#endif
         dir = getenv("MC3_GAME_DIR");
         if (!dir || !*dir)
             return 0;
