@@ -28,7 +28,9 @@
 
 #include <stdint.h>
 
-#if defined(_WIN32)
+/* Only the fault-based path uses it, which the SDL host (XBOXRECOMP_WIN_SDL_GL,
+ * any architecture) replaces with the MMIO registry. */
+#if defined(_WIN32) && !defined(XBOXRECOMP_SDL_HOST)
 #include <windows.h>
 
 /* Service one register access. dev is passed straight back to the callbacks. */

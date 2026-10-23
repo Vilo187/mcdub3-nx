@@ -22,7 +22,19 @@ add_compile_definitions(
     NOMINMAX
 )
 
-# Option to build examples
+# Windows: the toolkit's own path is Direct3D 11, XAudio2 and XInput. With
+# XBOXRECOMP_WIN_SDL_GL a Windows build takes the desktop path instead: the
+# pushbuffer executor with the OpenGL renderer, SDL2 for the window, sound
+# and pads, as on Linux and macOS (MinGW/clang; the kernel stays Win32).
+option(XBOXRECOMP_WIN_SDL_GL "Windows: OpenGL renderer + SDL2 host, as on Linux/macOS" OFF)
+if(NOT WIN32 OR XBOXRECOMP_WIN_SDL_GL)
+    set(XBOXRECOMP_SDL_HOST ON)
+else()
+    set(XBOXRECOMP_SDL_HOST OFF)
+endif()
+if(WIN32 AND XBOXRECOMP_WIN_SDL_GL)
+    add_compile_definitions(XBOXRECOMP_SDL_HOST=1)
+endif()
 
 # ── Runtime Libraries ─────────────────────────────────────────
 
@@ -80,9 +92,10 @@ add_subdirectory(src/input)
 # Shared FMV player (Media Foundation -> D3D8 texture)
 add_subdirectory(src/video)
 
-# Renderer for the pushbuffer executor (Linux, macOS, Switch): OpenGL, or
-# Vulkan with XBOXRECOMP_VULKAN=ON. Windows keeps its D3D11 path.
-if(NOT WIN32)
+# Renderer for the pushbuffer executor (Linux, macOS, Switch; Windows with
+# XBOXRECOMP_WIN_SDL_GL): OpenGL, or Vulkan with XBOXRECOMP_VULKAN=ON.
+# Windows otherwise keeps its D3D11 path.
+if(XBOXRECOMP_SDL_HOST)
     if(XBOXRECOMP_VULKAN)
         add_subdirectory(src/nv2a_vk)
     else()
@@ -104,7 +117,7 @@ target_link_libraries(xboxrecomp INTERFACE
     xbox_nv2a
     xbox_video
 )
-if(NOT WIN32)
+if(XBOXRECOMP_SDL_HOST)
     if(XBOXRECOMP_VULKAN)
         target_link_libraries(xboxrecomp INTERFACE xbox_nv2a_vk)
     else()

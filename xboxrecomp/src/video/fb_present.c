@@ -16,7 +16,7 @@
  */
 #include <stdint.h>
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(XBOXRECOMP_SDL_HOST)
 #include <windows.h>
 #include <stdio.h>
 #include <stdlib.h>

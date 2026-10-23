@@ -29,7 +29,7 @@
  * everything, so a key held while switching away does not stay down.
  * Written by the window thread, read by the USB thread, one byte each.
  */
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#if (!defined(_WIN32) || defined(XBOXRECOMP_SDL_HOST)) && !defined(__SWITCH__)
 
 #include <SDL.h>
 #include <stdlib.h>

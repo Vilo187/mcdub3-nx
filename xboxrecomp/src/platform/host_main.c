@@ -9,8 +9,8 @@
  * becomes a service loop: it runs what other threads hand it
  * (xbox_host_main_call: window and context creation, controller set-up)
  * and pumps the window system's events, which SDL then queues for any
- * thread to take (SDL_PeepEvents). Elsewhere both calls are direct: the
- * title runs on the main thread as before.
+ * thread to take (SDL_PeepEvents). The same on Windows (below). Elsewhere
+ * both calls are direct: the title runs on the main thread as before.
  */
 #include <pthread.h>
 #include <stdio.h>
@@ -18,7 +18,10 @@
 
 #include "host_main.h"
 
-#if defined(__APPLE__) && !defined(XBOXRECOMP_NO_SDL)
+/* Windows likewise: a window's messages reach only the thread that created
+ * it. Created on the boot thread and presented from the title's, the window
+ * never answered and Windows marked it "Not Responding" (2026-10-23). */
+#if (defined(__APPLE__) || defined(_WIN32)) && !defined(XBOXRECOMP_NO_SDL)
 #include <SDL.h>
 
 typedef struct HostCall {
@@ -147,7 +150,7 @@ int xbox_host_main_run(int (*fn)(int, char **), int argc, char **argv)
     return s_exit_code;
 }
 
-#else   /* not macOS: the title keeps the main thread */
+#else   /* Linux, the Switch: the title keeps the main thread */
 
 int  xbox_host_on_main(void) { return 1; }
 void xbox_host_main_call(void (*fn)(void *), void *arg) { fn(arg); }

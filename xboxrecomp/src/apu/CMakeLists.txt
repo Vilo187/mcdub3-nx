@@ -33,7 +33,7 @@ if(MSVC)
     )
 endif()
 
-if(WIN32)
+if(WIN32 AND NOT XBOXRECOMP_SDL_HOST)
     # xaudio2_8 for XAudio2Create, which apu_xaudio2.c calls directly.
     # It was missing: nothing had ever referenced this library from a linked
     # target, so the archive was built and never pulled in, and the first
@@ -44,6 +44,9 @@ else()
     # Linux: platform layer (Win32 primitives on POSIX) + SDL2 audio + libm
     find_package(SDL2 REQUIRED)
     target_link_libraries(xbox_apu PRIVATE platform SDL2::SDL2 m)
+    if(WIN32)
+        target_link_libraries(xbox_apu PRIVATE winmm)   # the waveOut fallback
+    endif()
 endif()
 
 # The APU raises its interrupt (xbox_set_irq_line) and resolves DMA addresses

@@ -34,7 +34,7 @@ void xa2_set_master_volume(float v)
 
 /* The XAudio2 backend is Windows-only; on other hosts the same xa2_* calls
  * are served by SDL2 audio (below). */
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(XBOXRECOMP_SDL_HOST)
 
 #define COBJMACROS
 #include <windows.h>
@@ -372,7 +372,9 @@ static void dump_on_signal(int sig)
 {
     /* Ctrl+C also ends the `| tee` the run logs through; the threads still
      * logging would then take SIGPIPE and kill the process mid-write. */
+#ifdef SIGPIPE                             /* Windows has none */
     signal(SIGPIPE, SIG_IGN);
+#endif
     if (s_dump.on) {
         int fd = open(s_dump.path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
         s_dump.on = 0;

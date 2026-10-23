@@ -20,9 +20,18 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # declares its own project().
 get_filename_component(XBOXRECOMP_SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
-if(WIN32)
+if(WIN32 AND NOT XBOXRECOMP_SDL_HOST)
     add_library(platform INTERFACE)
     target_include_directories(platform INTERFACE ${XBOXRECOMP_SRC_DIR})
+elseif(WIN32)
+    # Windows with the SDL host: the real <windows.h>, plus host_main.c (the
+    # renderer hands window calls to the main thread through it).
+    add_library(platform STATIC host_main.c win32_host.c)
+    target_include_directories(platform PUBLIC ${XBOXRECOMP_SRC_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+    find_package(Threads REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(PLATFORM_SDL2 REQUIRED IMPORTED_TARGET sdl2)
+    target_link_libraries(platform PUBLIC Threads::Threads PkgConfig::PLATFORM_SDL2)
 else()
     add_library(platform STATIC win32_compat.c host_main.c)
     target_include_directories(platform PUBLIC
