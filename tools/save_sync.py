@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Copy MC3 profiles between this computer and a Switch running an FTP server.
 
-  save_sync.py down --host <switch ip> [options]   Switch -> computer
-  save_sync.py up   --host <switch ip> [options]   computer -> Switch
+  save_sync.py down --host <switch ip>[:port] [options]   Switch -> computer
+  save_sync.py up   --host <switch ip>[:port] [options]   computer -> Switch
+
+  The port defaults to 21; another goes after the IP, e.g. 192.168.1.20:5000.
 
   --game-id ID   title ID folder (default 54540079, MC3)
   --profile P    one save folder (12 hex, e.g. 0075195616BF); default all
   --udata DIR    the local UDATA folder (default $MC3_GAME_DIR/UDATA)
   --remote DIR   the Switch's UDATA folder, from the card's root
                  (default /switch/mcdub3-nx/game/UDATA)
-  --port N       FTP port (default 5000: ftpd, sphaira)
   --user / --password
                  only for a server that asks for a login. Without them the
                  tool logs in anonymously, or not at all if the server
@@ -68,6 +69,16 @@ def ftp_makedirs(ftp, path):
                 pass
 
 
+class NeedsTLS(Exception):
+    pass
+
+
+def connect(cls, host, port):
+    ftp = cls()
+    ftp.connect(host, port, timeout=15)
+    return ftp
+
+
 def login(ftp, user, password):
     """A login only as far as the server wants one: the given user (an empty
     password if none), else anonymous, else none at all."""
@@ -78,6 +89,8 @@ def login(ftp, user, password):
             ftp.login()                          # anonymous
         return
     except ftplib.error_perm as e:
+        if 'AUTH' in str(e) and not isinstance(ftp, ftplib.FTP_TLS):
+            raise NeedsTLS() from e
         if user:
             raise SystemExit(f'the FTP server refused the login for {user!r}: {e}')
         refused = e
@@ -107,7 +120,6 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('direction', choices=['up', 'down'])
     ap.add_argument('--host', required=True)
-    ap.add_argument('--port', type=int, default=5000)
     ap.add_argument('--user', default='')
     ap.add_argument('--password', default='')
     ap.add_argument('--game-id', default='54540079')
@@ -116,6 +128,10 @@ def main():
     ap.add_argument('--remote', default='/switch/mcdub3-nx/game/UDATA')
     ap.add_argument('--list', action='store_true')
     a = ap.parse_args()
+    host, _, port = a.host.rpartition(':') if ':' in a.host else (a.host, '', '21')
+    if not port.isdigit():
+        raise SystemExit(f'not an IP or IP:PORT: {a.host}')
+    a.host, a.port = host, int(port)
 
     udata = os.path.expanduser(a.udata) if a.udata else \
         os.path.join(os.environ.get('MC3_GAME_DIR') or os.path.join(REPO, 'game'), 'UDATA')
@@ -126,12 +142,21 @@ def main():
 
     print(f'Switch {a.host}:{a.port}  {remote}\nhere          {local}')
     try:
-        ftp = ftplib.FTP()
-        ftp.connect(a.host, a.port, timeout=15)
+        ftp = connect(ftplib.FTP, a.host, a.port)
     except (OSError, ftplib.Error) as e:
         raise SystemExit(f'cannot reach the FTP server on the Switch at {a.host}:{a.port} ({e}).\n'
-                         f'Is it running (ftpd or sphaira on the Switch) and on the same network?')
-    login(ftp, a.user, a.password)
+                         f'Is it running on the Switch, on the same network, and is the port right? '
+                         f'(21 by default; another as IP:PORT, e.g. {a.host}:5000)')
+    try:
+        login(ftp, a.user, a.password)
+    except NeedsTLS:
+        # A server that only takes encrypted logins (FTPS: "503 Use AUTH
+        # first" -- FileZilla Server, for one). Switch servers do not.
+        ftp.close()
+        ftp = connect(ftplib.FTP_TLS, a.host, a.port)
+        login(ftp, a.user, a.password)
+        ftp.prot_p()
+        print('  (encrypted connection: FTPS)')
 
     there = ftp_walk(ftp, remote) if ftp_is_dir(ftp, remote) else {}
     here = local_walk(local) if os.path.isdir(local) else {}

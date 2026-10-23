@@ -176,13 +176,13 @@ import-save:  ## Import an Xbox MC3 profile: make import-save FILE=<.gsx | memor
 	@test -n "$(FILE)" || { echo "usage: make import-save FILE=<save file or folder>"; exit 2; }
 	python3 tools/save_import.py "$(FILE)" $(if $(UDATA),--udata "$(UDATA)") $(if $(REPLACE),--replace) $(if $(LIST),--list)
 
-save-sync-down:  ## Switch -> here: the profiles over FTP (HOST_IP=<switch ip>; PROFILE=<folder>, PORT=5000, GAME_ID=54540079, LIST=1)
-	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-down HOST_IP=<the Switch's IP> (an FTP server running on it)"; exit 2; }
-	python3 tools/save_sync.py down --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(PORT),--port $(PORT)) $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list)
+save-sync-down:  ## Switch -> here: the profiles over FTP (HOST_IP=<ip>[:port], port 21 by default; PROFILE=<folder>, GAME_ID=54540079, LIST=1)
+	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-down HOST_IP=<the Switch's IP>[:port] (an FTP server running on it; port 21 by default)"; exit 2; }
+	python3 tools/save_sync.py down --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list)
 
-save-sync-up:  ## Here -> Switch: the profiles over FTP (HOST_IP=<switch ip>; PROFILE=<folder>, PORT=5000, GAME_ID=54540079, LIST=1)
-	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-up HOST_IP=<the Switch's IP> (an FTP server running on it)"; exit 2; }
-	python3 tools/save_sync.py up --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(PORT),--port $(PORT)) $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list)
+save-sync-up:  ## Here -> Switch: the profiles over FTP (HOST_IP=<ip>[:port], port 21 by default; PROFILE=<folder>, GAME_ID=54540079, LIST=1)
+	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-up HOST_IP=<the Switch's IP>[:port] (an FTP server running on it; port 21 by default)"; exit 2; }
+	python3 tools/save_sync.py up --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list)
 
 ## Housekeeping
 log:  ## Show the end of the newest log in work/logs
