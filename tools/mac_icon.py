@@ -4,9 +4,9 @@
   mac_icon.py <picture> <out.png>
 
 Apple's layout for a Big Sur-style icon: a 1024x1024 canvas, the artwork in
-an 824x824 rounded square centred on it (100 px margin), corners as a
-superellipse (the "squircle", not a plain circular arc), and a soft shadow
-under it. The result goes through iconutil (tools/mac_app.sh).
+an 824x824 rounded square centred on it (100 px margin), straight edges
+and corners of radius 185 px, and a soft shadow under it. The result goes
+through iconutil (tools/mac_app.sh).
 """
 import sys
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
@@ -15,21 +15,15 @@ CANVAS, BODY, MARGIN = 1024, 824, 100
 SS = 4                                   # supersampling for smooth edges
 
 
-def squircle_mask(size, n=5.0):
-    """A superellipse |x|^n + |y|^n <= 1, antialiased by supersampling."""
+def squircle_mask(size):
+    """Apple's app-icon shape: a square with straight edges and rounded
+    corners, radius 22.37% of the side (185 of 824). A superellipse over the
+    whole square, as before, has no straight stretch anywhere: the edges
+    bulged next to stock icons (2026-10-23). Antialiased by supersampling."""
     big = size * SS
     mask = Image.new("L", (big, big), 0)
-    px = mask.load()
-    r = big / 2.0
-    for y in range(big):
-        dy = abs((y + 0.5 - r) / r) ** n
-        if dy >= 1.0:
-            continue
-        # Solve |x|^n = 1 - |y|^n for the row's half-width.
-        half = (1.0 - dy) ** (1.0 / n) * r
-        x0, x1 = int(r - half), int(r + half)
-        for x in range(max(0, x0), min(big, x1 + 1)):
-            px[x, y] = 255
+    ImageDraw.Draw(mask).rounded_rectangle((0, 0, big - 1, big - 1),
+                                           radius=round(big * 0.2237), fill=255)
     return mask.resize((size, size), Image.LANCZOS)
 
 
