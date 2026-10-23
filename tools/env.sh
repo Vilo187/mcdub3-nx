@@ -83,11 +83,15 @@ export MC3_SD_DIR="${MC3_SD_DIR:-mcdub3-nx}"
 mc3_default_jobs() {
     local mem_mb cpus jobs
     if [ -r /proc/meminfo ]; then
-        mem_mb=$(( $(awk '/^MemAvailable:/ {print $2}' /proc/meminfo) / 1024 ))
+        # MemAvailable on Linux; MSYS2's /proc/meminfo has only MemFree and
+        # MemTotal (an empty value broke the arithmetic, 2026-10-23).
+        mem_mb=$(awk '/^MemAvailable:/ {a=$2} /^MemFree:/ {f=$2} /^MemTotal:/ {t=$2}
+                      END {print int((a ? a : (f ? f : t / 2)) / 1024)}' /proc/meminfo)
     else
         mem_mb=$(( $(sysctl -n hw.memsize) / 1048576 / 2 ))
     fi
-    cpus=$(getconf _NPROCESSORS_ONLN)
+    [ -n "$mem_mb" ] || mem_mb=3000
+    cpus=$(getconf _NPROCESSORS_ONLN 2>/dev/null || nproc 2>/dev/null || echo 2)
     jobs=$(( mem_mb / 1500 ))
     [ "$jobs" -lt 1 ] && jobs=1
     [ "$jobs" -gt "$cpus" ] && jobs=$cpus
