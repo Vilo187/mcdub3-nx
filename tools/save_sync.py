@@ -133,7 +133,15 @@ def connect_or_explain(cls, host, port):
         raise SystemExit(f'no answer from {host}:{port} within 15 s: a wrong IP, another network, or the '
                          f'Switch asleep or its FTP server closed')
     except OSError as e:
-        raise SystemExit(f'cannot reach {host}:{port}: {e.strerror or e}. Same network as the Switch?')
+        hint = 'Same network as the Switch (not a guest network)?'
+        if e.errno == getattr(__import__('errno'), 'EHOSTUNREACH', None) and sys.platform == 'darwin':
+            # macOS 15+ blocks connections into the local network for apps
+            # without the permission: "No route to host" on the same Wi-Fi.
+            hint = ('On a Mac this is usually the Local Network permission: System Settings > '
+                    'Privacy & Security > Local Network > allow the app you run make in '
+                    '(Terminal, iTerm, VS Code), then restart it. Otherwise: same network '
+                    '(not a guest one), and does ping ' + host + ' answer?')
+        raise SystemExit(f'cannot reach {host}:{port}: {e.strerror or e}. {hint}')
 
 
 def profile_name(meta):
