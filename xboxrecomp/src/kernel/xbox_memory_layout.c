@@ -368,7 +368,7 @@ static void ac97_clear_reset_bits_at(void *page)
 
 static LONG CALLBACK ac97_write_veh(PEXCEPTION_POINTERS ep)
 {
-#ifdef _WIN32
+#if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86))   /* steps the write with x86 TF */
     DWORD code = ep->ExceptionRecord->ExceptionCode;
     DWORD old;
 
@@ -1742,7 +1742,7 @@ static void watch_report(void)
 
 static LONG CALLBACK watch_veh(PEXCEPTION_POINTERS ep)
 {
-#ifdef _WIN32
+#if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86))   /* steps the write with x86 TF */
     DWORD code = ep->ExceptionRecord->ExceptionCode;
     DWORD old;
 
@@ -2018,9 +2018,16 @@ static void watchdog_dump(const char *why)
     fflush(stderr);
 }
 
+#if defined(_WIN32)
+void xbox_host_stacks_dump(const char *why);      /* platform/win32_stacks.c */
+#endif
+
 void xbox_WatchdogDump(const char *why)
 {
     watchdog_dump(why ? why : "snapshot");
+#if defined(_WIN32)
+    xbox_host_stacks_dump(why);        /* no gdb on Windows: the native side too */
+#endif
 }
 
 static DWORD WINAPI xbox_watchdog_thread(LPVOID unused)
@@ -2030,7 +2037,7 @@ static DWORD WINAPI xbox_watchdog_thread(LPVOID unused)
     (void)unused;
     Sleep(s_watchdog_secs * 1000u);
     snprintf(why, sizeof why, "no exit after %us", s_watchdog_secs);
-    watchdog_dump(why);
+    xbox_WatchdogDump(why);
     /* RECOMP_WATCHDOG_KEEP=1: a snapshot, not a verdict -- on a slow host
      * (a Switch) a healthy boot can still be loading at the deadline. */
     {

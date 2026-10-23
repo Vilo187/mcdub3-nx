@@ -28,6 +28,11 @@ set(KERNEL_SOURCES
     nv2a_pb_exec.c
 )
 
+if(WIN32)
+    # Every host thread's native stack in a watchdog snapshot (no gdb there).
+    list(APPEND KERNEL_SOURCES ../platform/win32_stacks.c)
+endif()
+
 add_library(xbox_kernel STATIC ${KERNEL_SOURCES})
 
 # The device-model side of the kernel: interrupt lines and the contiguous

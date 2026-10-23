@@ -11,7 +11,7 @@ endif()
 
 target_include_directories(xbox_input PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
-if(WIN32)
+if(WIN32 AND NOT XBOXRECOMP_SDL_HOST)
     target_link_libraries(xbox_input PUBLIC platform xinput)
 else()
     find_package(SDL2 REQUIRED)
