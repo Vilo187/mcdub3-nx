@@ -11,6 +11,7 @@ add_library(xbox_nv2a_gl STATIC
     gl_vsh.c
     gl_psh.c
     hd_pack.c
+    gl_check.c
 )
 target_include_directories(xbox_nv2a_gl PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # platform: host_main.c, the main thread for the window system (macOS).
@@ -32,6 +33,6 @@ if(NOT MSVC)
 endif()
 
 # Key events go to the input module (input/sdl_keyboard.c, RECOMP_KEYBOARD).
-if(NOT WIN32 AND NOT NINTENDO_SWITCH)
+if(NOT NINTENDO_SWITCH)
     target_link_libraries(xbox_nv2a_gl PUBLIC xbox_input)
 endif()

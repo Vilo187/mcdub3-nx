@@ -35,6 +35,10 @@
  */
 #include "nv2a_gl.h"
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(p, mode) _mkdir(p)          /* Windows: no mode argument */
+#endif
 #include <unistd.h>
 #include "gl_api.h"
 #include "gl_psh.h"
@@ -46,7 +50,7 @@
 
 #include <SDL.h>
 
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#if (!defined(_WIN32) || defined(XBOXRECOMP_SDL_HOST)) && !defined(__SWITCH__)
 void xbox_sdl_keyboard_handle(const SDL_Event *e);   /* input/sdl_keyboard.c */
 int  xbox_sdl_keyboard_down(int scancode);
 #endif
@@ -74,9 +78,43 @@ static int           s_new_obj;          /* this operation uses something new */
  * something new (a shader just compiled, a surface or texture just made)
  * are logged -- the rest is thousands of lines a frame, far too slow for a
  * synchronous log on an SD card. */
+static uint32_t      s_frame;
+
+/* RECOMP_GL_PROBE=1: where does the picture get lost? Clears are red, every
+ * draw writes green (gl_psh.c), and a blue square goes straight into the
+ * window before each swap. Black window: nothing reaches the screen; blue
+ * only: nothing reaches the title's surfaces; red: clears do, draws not;
+ * green: draws do, so their inputs (textures) are what is missing. For the
+ * first Windows runs on Parallels' GL, black throughout (2026-10-23). */
+static int gl_probe(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_GL_PROBE");
+        on = e && *e == '1';
+        if (on)
+            fprintf(stderr, "  [GL] probe: clears red, draws green, a blue square in the window (RECOMP_GL_PROBE)\n");
+    }
+    return on;
+}
 static void gl_step_done(const char *what)
 {
     int upload = what[0] == 't';          /* "texture upload": part of a draw */
+    {
+        /* RECOMP_GL_ERRORS=1: the first GL errors, by the step that raised
+         * them -- for a driver that refuses what others accept (Parallels'
+         * GL on Metal drew nothing on the first Windows run, 2026-10-23). */
+        static int on = -1;
+        static unsigned reported;
+        if (on < 0)
+            on = getenv("RECOMP_GL_ERRORS") != NULL;
+        if (on) {
+            GLenum err;
+            while ((err = glGetError()) != GL_NO_ERROR)
+                if (reported++ < 40)
+                    fprintf(stderr, "  [GL] error 0x%04X after %s (frame %u)\n", err, what, s_frame);
+        }
+    }
     if (s_finish < 0)
         s_finish = getenv("RECOMP_GL_FINISH") != NULL;
     if (s_finish) {
@@ -97,7 +135,6 @@ typedef struct { GLuint buf; GLenum target; GLsizeiptr cap, off; } GlRing;
 static GlRing s_vring = { 0, GL_ARRAY_BUFFER, 16 << 20, 0 };
 static GlRing s_iring = { 0, GL_ELEMENT_ARRAY_BUFFER, 4 << 20, 0 };
 static const uint32_t *s_regs;          /* the executor's method shadow */
-static uint32_t      s_frame;
 /* Hitch accounting (gl_flip logs frames over 50 ms): per frame, programs
  * compiled and textures uploaded, and the time spent on each. */
 static uint32_t s_hz_progs, s_hz_texs, s_hz_draws;
@@ -594,6 +631,22 @@ static void tex_account(GlTex *t, uint32_t bytes)
 {
     s_hz_texs++;
     s_hz_tex_bytes += bytes;
+    if (gl_probe() && bytes >= (1u << 20) && t) {
+        /* Probe: a large texture as the title left it in memory (a movie
+         * frame) -- all zero here means the title's side, not GL. */
+        static unsigned n_seen;
+        if (n_seen++ % 30 == 0) {
+            const uint8_t *p = (const uint8_t *)xbox_GetMemoryOffset() + t->va;
+            uint32_t n = t->pitch ? t->pitch * t->h : t->w * t->h * 4, k, lo = 255, hi = 0, nz = 0;
+            for (k = 0; k < n; k += 97) {
+                if (p[k] < lo) lo = p[k];
+                if (p[k] > hi) hi = p[k];
+                nz += p[k] != 0;
+            }
+            fprintf(stderr, "  [GL] probe: texture 0x%08X format 0x%02X %ux%u pitch %u: bytes %u..%u, %u of %u sampled non-zero\n",
+                    t->va, t->color, t->w, t->h, t->pitch, lo, hi, nz, n / 97 + 1);
+        }
+    }
     static uint64_t budget;
     if (!budget) {
         const char *e = getenv("RECOMP_GL_TEX_MB");
@@ -760,6 +813,20 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
                : bytes_hash_full(va, tex_bytes(color, w, h, pitch));
     if (color == 0x0B)                       /* the palette is content too */
         hash ^= bytes_hash(s_palette_va, 1024) * 31u;
+    static unsigned probe_tex_n;
+    if (gl_probe() && color == 0x12 && w >= 320 && (probe_tex_n++ % 30) == 0) {
+        /* Probe: the movie frame as the title left it in memory -- black
+         * here means the title's blitter, not GL. */
+        const uint8_t *p = (const uint8_t *)xbox_GetMemoryOffset() + va;
+        uint32_t n = pitch ? pitch * h : w * h * 4, k, lo = 255, hi = 0, nz = 0;
+        for (k = 0; k < n; k += 97) {
+            if (p[k] < lo) lo = p[k];
+            if (p[k] > hi) hi = p[k];
+            nz += p[k] != 0;
+        }
+        fprintf(stderr, "  [GL] probe: movie frame at 0x%08X %ux%u pitch %u in memory: bytes %u..%u, %u of %u sampled non-zero\n",
+                va, w, h, pitch, lo, hi, nz, n / 97 + 1);
+    }
     if (t && t->hash == hash) {
         t->used = t->checked = s_frame;
         return tex_done(t);
@@ -1657,6 +1724,14 @@ static GLuint movie_prepare(uint32_t va, uint32_t color)
         s_new_obj = 1;
         tex_bind_forget();
     }
+    static unsigned probe_mv_n;
+    if (gl_probe() && s_mv.pl[0] && (probe_mv_n++ % 30) == 0) {
+        const uint8_t *y = (const uint8_t *)s_mv.pl[0];
+        uint32_t n = pw[0] * ph[0], k2, lo = 255, hi = 0;
+        for (k2 = 0; k2 < n; k2 += 97) { if (y[k2] < lo) lo = y[k2]; if (y[k2] > hi) hi = y[k2]; }
+        fprintf(stderr, "  [GL] probe: movie Y plane %ux%u from the decoder: %u..%u; matrix row 0 %g %g %g %g, alpha %g\n",
+                pw[0], ph[0], lo, hi, s_mv.m[0], s_mv.m[1], s_mv.m[2], s_mv.m[3], s_mv.alpha);
+    }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     for (k = 0; k < 3; k++) {
         active_unit(k);
@@ -1732,6 +1807,14 @@ static void depth_tex_prepare(const uint32_t *regs, const Nv2aRawBatch *b)
 /* RECOMP_GL_ANISO: anisotropic filtering of mipmapped textures, 1..16
  * (default 16, 1 = off; capped by the driver). RECOMP_GL_LOD_BIAS: mip
  * bias, negative = sharper (default -0.25). Both as nfsu2-sw's Vulkan. */
+static float s_aniso_max = -1.0f;          /* the driver's, 1 = none */
+static float tex_aniso(void);
+static float tex_aniso_max(void)
+{
+    if (s_aniso_max < 0.0f)
+        (void)tex_aniso();
+    return s_aniso_max;
+}
 static float tex_aniso(void)
 {
     static float a = -1.0f;
@@ -1747,6 +1830,7 @@ static float tex_aniso(void)
         }
         if (glGetError() != GL_NO_ERROR || mx < 1.0f)
             mx = 1.0f;                                          /* not supported */
+        s_aniso_max = mx;
         if (a < 1.0f) a = 1.0f;
         if (a > mx) a = mx;
         fprintf(stderr, "  [GL] mipmaps %s, anisotropic filtering %gx (driver max %g)\n",
@@ -1855,8 +1939,12 @@ static void bind_stage(const uint32_t *regs, int i, float scale[2])
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min);
             if (glTexParameterf) {
-                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
-                                mip && min == GL_LINEAR_MIPMAP_LINEAR ? tex_aniso() : 1.0f);
+                /* Only where the driver has it (GL 4.6 or the extension):
+                 * Parallels' GL 3.3 refused the parameter, even at 1x, with
+                 * GL_INVALID_ENUM (2026-10-23). */
+                if (tex_aniso_max() > 1.0f)
+                    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY,
+                                    mip && min == GL_LINEAR_MIPMAP_LINEAR ? tex_aniso() : 1.0f);
                 glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_LOD_BIAS, mip ? tex_lod_bias() : 0.0f);
             }
         }
@@ -1870,6 +1958,7 @@ typedef struct {
     Nv2aPshKey pkey;
     GLuint     prog;
     GLint      u_c, u_surf, u_snapy, u_aa, u_m, u_vpoff, u_xform;
+    GLint      n_c, n_m, n_mv, n_tscale, n_c0, n_c1;   /* active array sizes (arr_active) */
     GLint      u_mv, u_fogplane, u_fog0, u_fog1;   /* fixed-function fog */
     GLint      u_t[4], u_tscale, u_c0, u_c1, u_fc0, u_fc1, u_fogcolor, u_afunc, u_aref;
     uint32_t   used;
@@ -1887,6 +1976,30 @@ typedef struct {
         int   xform, afunc;
     } uni;
 } GlProg;
+
+/* How many elements of the uniform array `name` (declared with `max`) the
+ * linked program keeps. Compilers drop the unused tail; an upload of more
+ * elements than that is legal and ignored by most drivers, but Parallels'
+ * GL refused the whole call (GL_INVALID_OPERATION), so u_tscale stayed 0 and
+ * every movie frame was sampled at its black corner (2026-10-23). The live
+ * elements are a prefix: binary search on name[k]. */
+static GLint arr_active(GLuint prog, const char *name, int max)
+{
+    char n[64];
+    int lo = 0, hi = max;                /* answer in [lo, hi] */
+    while (lo < hi) {
+        int mid = (lo + hi + 1) / 2;     /* is name[mid - 1] live? */
+        snprintf(n, sizeof n, "%s[%d]", name, mid - 1);
+        if (glGetUniformLocation(prog, n) >= 0) lo = mid;
+        else hi = mid - 1;
+    }
+    /* No name[0], but the name itself: an array cut down to one element
+     * and reported as a plain uniform (which is why a count above 1 was
+     * refused). One element. */
+    if (lo == 0 && glGetUniformLocation(prog, name) >= 0)
+        lo = 1;
+    return lo;
+}
 
 #define GL_MAX_PROG 1024
 static GlProg s_prog[GL_MAX_PROG];
@@ -2470,6 +2583,12 @@ static GlProg *prog_register(uint64_t vkey, const Nv2aPshKey *pk, GLuint prog)
     p->next = s_prog_head[bucket];
     s_prog_head[bucket] = (int)(p - s_prog) + 1;
     p->u_c = glGetUniformLocation(p->prog, "c");
+    p->n_c = arr_active(p->prog, "c", 192);
+    p->n_m = arr_active(p->prog, "u_m", 4);
+    p->n_mv = arr_active(p->prog, "u_mv", 4);
+    p->n_tscale = arr_active(p->prog, "u_tscale", 4);
+    p->n_c0 = arr_active(p->prog, "u_c0", 8);
+    p->n_c1 = arr_active(p->prog, "u_c1", 8);
     p->vpc_rows = p->u_c >= 0 && glGetUniformLocation(p->prog, "c[191]") == p->u_c + 191;
     p->u_surf = glGetUniformLocation(p->prog, "u_surf");
     p->u_snapy = glGetUniformLocation(p->prog, "u_snapy");
@@ -2814,6 +2933,10 @@ static int ready(void)
     SDL_GL_SetSwapInterval(0);
     if (nv2a_gl_load(SDL_GL_GetProcAddress) != 0)
         return 0;
+    {
+        extern void nv2a_gl_check_install(void);   /* gl_check.c: RECOMP_GL_ERRORS=2 */
+        nv2a_gl_check_install();
+    }
     fprintf(stderr, "  [GL] %s / %s / %s\n", (const char *)glGetString(GL_VENDOR),
             (const char *)glGetString(GL_RENDERER), (const char *)glGetString(GL_VERSION));
     {
@@ -3105,6 +3228,22 @@ static GLintptr ring_alloc(GlRing *g, GLsizeiptr size, void **ptr)
         at = 0;
     }
     g->off = at + size;
+    {
+        /* RECOMP_GL_MAP=0: copy with glBufferSubData instead of writing
+         * through a mapping (the callers' fallback) -- for a driver whose
+         * unsynchronised maps go wrong (forwarding drivers: Parallels). */
+        static int map = -1;
+        if (map < 0) {
+            const char *e = getenv("RECOMP_GL_MAP");
+            map = !(e && *e == '0');
+            if (!map)
+                fprintf(stderr, "  [GL] vertex and index data copied, not mapped (RECOMP_GL_MAP=0)\n");
+        }
+        if (!map) {
+            *ptr = NULL;
+            return at;
+        }
+    }
     *ptr = glMapBufferRange(g->target, at, size,
                             GL_MAP_WRITE_BIT | GL_MAP_UNSYNCHRONIZED_BIT
                             );
@@ -3379,16 +3518,16 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
         /* Same executor version: same contents, no compare needed. */
         if (!p->vpc_valid || !p->vpc_rows) {
             memcpy(p->vpc, b->vp_consts, sizeof p->vpc);
-            glUniform4fv(p->u_c, 192, &b->vp_consts[0][0]);
+            glUniform4fv(p->u_c, p->n_c, &b->vp_consts[0][0]);
         } else {
             /* Only the rows that changed, as runs: a draw usually changes a
              * matrix or two of the 192, and sending all 3 KB each time was
              * copied again by Mesa and by nouveau's constbuf upload. */
             int r = 0;
-            while (r < 192) {
+            while (r < p->n_c) {
                 int e;
                 if (!memcmp(p->vpc[r], b->vp_consts[r], 16)) { r++; continue; }
-                for (e = r + 1; e < 192 && memcmp(p->vpc[e], b->vp_consts[e], 16); e++) { }
+                for (e = r + 1; e < p->n_c && memcmp(p->vpc[e], b->vp_consts[e], 16); e++) { }
                 memcpy(p->vpc[r], b->vp_consts[r], (size_t)(e - r) * 16);
                 glUniform4fv(p->u_c + r, e - r, &b->vp_consts[r][0]);
                 r = e;
@@ -3424,16 +3563,16 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
             if (p->u_surf >= 0) glUniform4fv(p->u_surf, 1, u.surf);
             if (p->u_snapy >= 0) glUniform1f(p->u_snapy, u.snapy);
             if (p->u_aa >= 0) glUniform2fv(p->u_aa, 1, u.aa);
-            if (p->u_m >= 0) glUniform4fv(p->u_m, 4, u.m);
+            if (p->u_m >= 0) glUniform4fv(p->u_m, p->n_m, u.m);
             if (p->u_vpoff >= 0) glUniform4fv(p->u_vpoff, 1, u.vpoff);
             if (p->u_xform >= 0) glUniform1i(p->u_xform, u.xform);
-            if (p->u_mv >= 0) glUniform4fv(p->u_mv, 4, u.mv);
+            if (p->u_mv >= 0) glUniform4fv(p->u_mv, p->n_mv, u.mv);
             if (p->u_fogplane >= 0) glUniform4fv(p->u_fogplane, 1, u.fogplane);
             if (p->u_fog0 >= 0) glUniform4fv(p->u_fog0, 1, u.fog0);
             if (p->u_fog1 >= 0) glUniform4fv(p->u_fog1, 1, u.fog1);
-            if (p->u_tscale >= 0) glUniform2fv(p->u_tscale, 4, &u.tscale[0][0]);
-            if (p->u_c0 >= 0) glUniform4fv(p->u_c0, 8, &u.c0[0][0]);
-            if (p->u_c1 >= 0) glUniform4fv(p->u_c1, 8, &u.c1[0][0]);
+            if (p->u_tscale >= 0) glUniform2fv(p->u_tscale, p->n_tscale, &u.tscale[0][0]);
+            if (p->u_c0 >= 0) glUniform4fv(p->u_c0, p->n_c0, &u.c0[0][0]);
+            if (p->u_c1 >= 0) glUniform4fv(p->u_c1, p->n_c1, &u.c1[0][0]);
             if (p->u_fogcolor >= 0) glUniform4fv(p->u_fogcolor, 1, u.fog);
             if (p->u_fc0 >= 0) glUniform4fv(p->u_fc0, 1, u.fc[0]);
             if (p->u_fc1 >= 0) glUniform4fv(p->u_fc1, 1, u.fc[1]);
@@ -3475,7 +3614,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
                 fprintf(stderr, "  [WATCH] watching %s from frame %u, up to %d draws\n",
                         watch_all ? "every draw" : w, watch_all ? watch_frame : 0, watch_max);
         }
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#if (!defined(_WIN32) || defined(XBOXRECOMP_SDL_HOST)) && !defined(__SWITCH__)
         if (watch_all && watch_key && watch_frame == 0xFFFFFFFFu
             && xbox_sdl_keyboard_down(SDL_SCANCODE_F12)) {
             watch_frame = s_frame;
@@ -3823,6 +3962,7 @@ static void gl_clear(const Nv2aSurface *sf, const Nv2aRenderState *rs,
     }
     if (flags & 0xF0) {
         argb_vec4(argb, c);
+        if (gl_probe()) { c[0] = 1.0f; c[1] = 0.0f; c[2] = 0.0f; c[3] = 1.0f; }   /* red */
         glColorMask((flags & 0x10) != 0, (flags & 0x20) != 0,
                     (flags & 0x40) != 0, (flags & 0x80) != 0);
         glClearColor(c[0], c[1], c[2], c[3]);
@@ -4330,6 +4470,18 @@ static void gl_flip(void)
         glDisable(GL_SCISSOR_TEST);
     }
 swap:
+    if (gl_probe()) {
+        /* A blue square straight into the window: does anything we draw
+         * reach the screen? */
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        glColorMask(1, 1, 1, 1);
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(16, 16, 96, 96);
+        glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glDisable(GL_SCISSOR_TEST);
+        state_dirty();
+    }
     gl_step_done("present");
     SDL_GL_SwapWindow(s_win);
     gl_step_done("swap");
@@ -4350,7 +4502,7 @@ swap:
                 fflush(stderr);
                 exit(0);
             }
-#if !defined(_WIN32) && !defined(__SWITCH__)
+#if (!defined(_WIN32) || defined(XBOXRECOMP_SDL_HOST)) && !defined(__SWITCH__)
             xbox_sdl_keyboard_handle(&e);       /* RECOMP_KEYBOARD (input/) */
 #endif
         }
