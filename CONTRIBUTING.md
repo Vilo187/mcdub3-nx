@@ -16,7 +16,7 @@ make lift         # parse the XBE, write config/xbe_facts.h, lift to C
 make build run    # Linux or macOS build + run in a window
 make switch       # Switch NRO + SD staging in work/switch_sd (HD=1: with the texture pack)
 make nsp          # NSP forwarder for the home menu
-make mac-app      # Mac app (SCALE=1.5, SETTINGS="K=V ...", HD=1): work/mac_app/
+make mac-app      # Mac app (SCALE=5 default, SETTINGS="K=V ...", HD=1): work/mac_app/
 make hd-dump      # texture packs: dump, then make hd-tools hd-upscale
 make              # every target, grouped
 ```
@@ -348,7 +348,8 @@ it), `hd/textures/`, `save/`, `mcdub3_env.txt` (settings, written from the
 documented template on first launch), `mcdub3_log.txt`.
 
 ```sh
-make mac-app SCALE=1.5                                   # default resolution 1280x720
+make mac-app                                             # default resolution: scale 5 (3600x2400)
+make mac-app SCALE=1.5                                   # 1280x720, for a slower Mac
 make mac-app SCALE=2 SETTINGS="RECOMP_GL_SHARPEN=0.3 MC3_MOVIE_VOLUME=80"
 make mac-app HD=1                                        # texture pack inside the app
 make mac-app GAME=$PWD/game                              # link this disc on first launch

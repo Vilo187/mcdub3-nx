@@ -12,6 +12,11 @@
 #   tools/build_windows.sh               x86-64
 #   WIN_ARCH=aarch64 tools/build_windows.sh  Windows on ARM
 #
+#   SCALE=2 SETTINGS="K=V ..."           defaults for the installed game (SCALE
+#                                        5 unless given), as
+#                                        make mac-app: written to
+#                                        dist/mcdub3_defaults.txt; the player's
+#                                        dist/mcdub3_env.txt still wins
 #   DEBUG=1 ...                          -O0 for the hand-written code
 #   TARGET="xbox_kernel ..."             only these ninja targets (no dist/)
 set -euo pipefail
@@ -83,6 +88,19 @@ rm -rf "$DIST"; mkdir -p "$DIST"
 cp "$BUILD/mcdub3.exe" "$DIST/"
 "$PY" "$MC3_REPO/tools/windows/copy_dlls.py" "$DIST/mcdub3.exe" "${DLL_DIRS[@]}" "$DIST"
 
+# Settings, later wins: mcdub3_defaults.txt (this build's SCALE / SETTINGS,
+# rewritten every build), then mcdub3_env.txt (the player's: kept across
+# builds, made once from the documented template, every option commented).
+{
+    echo "# Defaults of this build (make build SCALE=... SETTINGS=...)."
+    echo "# Rewritten by every build: change settings in mcdub3_env.txt instead."
+    echo "RECOMP_GL_SCALE=${SCALE:-5}"        # 5 by default, as the Mac app
+    for kv in ${SETTINGS:-}; do echo "$kv"; done
+} | sed 's/$/\r/' > "$DIST/mcdub3_defaults.txt"
+if [ ! -f "$DIST/mcdub3_env.txt" ]; then
+    sed 's/$/\r/' "$MC3_REPO/switch/mcdub3_env.example.txt" > "$DIST/mcdub3_env.txt"
+fi
+
 # The launcher: the disc from MC3_GAME_DIR, else game\ beside the exe, else
 # the repo's game\ (dist\ sits in work\build-windows-<arch>\); saves' drive
 # letters in the repo's work\save\, a log per run in work\logs\windows_run_<time>.log
@@ -91,7 +109,9 @@ printf '%s\r\n' \
   '@echo off' \
   'rem mcdub3-nx on Windows.' \
   'pushd "%~dp0"' \
-  'rem Settings: NAME=value lines in mcdub3_env.txt beside the exe (# comments), as on the Switch.' \
+  'rem Settings: NAME=value lines (# comments), as on the Switch. First the defaults of the' \
+  'rem build (mcdub3_defaults.txt), then mcdub3_env.txt, which wins.' \
+  'if exist "%~dp0mcdub3_defaults.txt" for /f "usebackq eol=# tokens=* delims=" %%l in ("%~dp0mcdub3_defaults.txt") do set "%%l"' \
   'if exist "%~dp0mcdub3_env.txt" for /f "usebackq eol=# tokens=* delims=" %%l in ("%~dp0mcdub3_env.txt") do set "%%l"' \
   'if not defined MC3_GAME_DIR if exist "%~dp0game\default.xbe" set "MC3_GAME_DIR=%~dp0game"' \
   'if not defined MC3_GAME_DIR if exist "%~dp0..\..\..\game\default.xbe" set "MC3_GAME_DIR=%~dp0..\..\..\game"' \

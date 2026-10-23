@@ -77,7 +77,7 @@ lift-report:  ## Summarise the last lift (functions, stubs, unimplemented)
 	    || echo "no lift yet: make lift"
 
 ## Linux (the debug loop)
-build:  ## Build the desktop binary (OpenGL): Linux, macOS, or Windows in MSYS2
+build:  ## Build the desktop binary (OpenGL): Linux, macOS, or Windows in MSYS2 (Windows: SCALE=, SETTINGS= as defaults, like mac-app)
 	@mkdir -p $(LOGS)
 	@case "$$(uname -s)" in \
 	   MINGW*|MSYS*|CYGWIN*) bash tools/build_windows.sh ;; \
@@ -135,7 +135,7 @@ trap:  ## Run, stopping at the first untranslated instruction reached
 
 ## macOS app
 
-mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=1.5, SETTINGS="K=V ...", HD=1, GAME=<disc dir>)
+mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=5 default, SETTINGS="K=V ...", HD=1, GAME=<disc dir>)
 	@mkdir -p $(LOGS)
 	$(MAKE) build
 	bash tools/mac_app.sh 2>&1 | tee $(LOGS)/mac_app_$(NOW).log
