@@ -35,7 +35,7 @@ Playing on the Mac and Linux, 30 FPS is consistently achieved with 5x upscale se
 | Nintendo Switch | ✅       | 21.0.0         | V1                                    |
 | Linux           | ✅       | Ubuntu 22.04.5 | Virtual Machine                       |
 | Mac             | ✅       | Sequoia 15.6   | M1                                    |
-| PC              | ✅       | Windows 11     | Virtual Machine and Intel i7 Hardware |
+| PC              | ⚠️       | Windows 11     | Virtual Machine and Intel i7 Hardware |
 
 ## Supported Editions
 
