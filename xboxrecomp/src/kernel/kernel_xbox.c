@@ -11,6 +11,7 @@
 
 #include "kernel.h"
 #include <string.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 /* ============================================================================
@@ -121,7 +122,7 @@ NTSTATUS __stdcall xbox_XeUnloadSection(PXBE_SECTION_HEADER Section)
  * SMBus. For recompilation, we return sensible defaults:
  *   - Region: North America
  *   - Video: NTSC, widescreen (RECOMP_WIDESCREEN=0 for 4:3)
- *   - Language: English
+ *   - Language: English (RECOMP_LANGUAGE for another)
  *   - Audio: Stereo, Dolby Digital
  *   - DVD Region: Region 1 (North America)
  * ============================================================================ */
@@ -136,6 +137,32 @@ int xbox_video_widescreen(void)
     return ws;
 }
 
+/* The dashboard language the title reads (XC_LANGUAGE): RECOMP_LANGUAGE=
+ * en, ja, de, fr, es, it, ko, zh, pt, or the number (1-9). English unless
+ * set. A multi-language disc (MC3's European one) picks its text and speech
+ * from this, as from a console's settings. */
+static ULONG xbox_language(void)
+{
+    static const char *const names[] = { "en", "ja", "de", "fr", "es", "it", "ko", "zh", "pt" };
+    static ULONG lang;
+    if (!lang) {
+        const char *e = getenv("RECOMP_LANGUAGE");
+        int i;
+        lang = 1;
+        if (e && *e) {
+            if (e[0] >= '1' && e[0] <= '9' && !e[1])
+                lang = (ULONG)(e[0] - '0');
+            else
+                for (i = 0; i < 9; i++)
+                    if ((e[0] | 0x20) == names[i][0] && (e[1] | 0x20) == names[i][1])
+                        lang = (ULONG)i + 1;
+            fprintf(stderr, "  [XBOX] dashboard language %s (RECOMP_LANGUAGE=%s)\n",
+                    names[lang - 1], e);
+        }
+    }
+    return lang;
+}
+
 NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
     ULONG ValueIndex, PULONG Type, PVOID Value, ULONG ValueLength, PULONG ResultLength)
 {
@@ -147,9 +174,9 @@ NTSTATUS __stdcall xbox_ExQueryNonVolatileSetting(
 
     switch (ValueIndex) {
     case XC_LANGUAGE:
-        /* English = 1 */
+        /* English = 1, unless RECOMP_LANGUAGE says otherwise */
         if (ValueLength >= sizeof(ULONG)) {
-            *(PULONG)Value = 1;
+            *(PULONG)Value = xbox_language();
             if (Type) *Type = 4; /* REG_DWORD */
             if (ResultLength) *ResultLength = sizeof(ULONG);
         }
