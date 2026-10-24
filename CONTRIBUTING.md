@@ -170,10 +170,16 @@ game (lifted code)        \Device\CdRom0\..., D:\..., \Device\Harddisk0\Partitio
 
 |            | Linux (debug)                                            | Switch                                                   |
 | ---------- | -------------------------------------------------------- | -------------------------------------------------------- |
-| `game_dir` | `<repo>/game` (tools/env.sh → `MC3_GAME_DIR`)            | `sdmc:/switch/mcdub3-nx/game`                            |
+| `game_dir` | `<repo>/game`, or `<repo>/game-<edition>` with `EDITION=` (tools/env.sh → `MC3_GAME_DIR`) | `sdmc:/switch/mcdub3-nx/game`                            |
 | `save_dir` | `<repo>/work/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3-nx/save`                            |
 | chosen by  | the scripts, through environment variables               | `src/main.c` defaults (`#ifdef __SWITCH__`)              |
 | override   | `MC3_GAME_DIR=…`, `MC3_SAVE_DIR=…`                       | the same keys in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` |
+
+Editions: the USA and European discs carry the same program (config/xbe_editions.h lists
+every accepted default.xbe; the boot check names the one found, `disc: edition eur`). One lift
+and one build run them all; the discs sit side by side in `game/` and `game-<edition>/`
+(gitignored), `EDITION=eur` picks one for `make extract`, `make run` and `make build` on Windows.
+A new edition needs a comparison of its XBE first: different code needs a lift of its own.
 
 So nothing about files is decided twice: the scripts in `tools/` only exist on
 the development machine and set the Linux folders; `switch/build.sh` stages the

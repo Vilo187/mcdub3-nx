@@ -35,7 +35,7 @@ cert, = struct.unpack_from("<I", raw, 0x118)
 region, = struct.unpack_from("<I", raw, cert - base + 0xA0)
 version, = struct.unpack_from("<I", raw, cert - base + 0xAC)
 if not edition:
-    edition = {1: "usa", 2: "jpn", 4: "pal"}.get(region, "region%x" % region)
+    edition = {1: "usa", 2: "jpn", 4: "eur"}.get(region, "region%x" % region)
 # FNV-1a 64 of the whole file: the lifted code fits this XBE and no other,
 # so main.c refuses another edition's disc instead of crashing in it.
 h = 0xcbf29ce484222325

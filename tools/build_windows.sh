@@ -97,16 +97,17 @@ cp "$BUILD/mcdub3.exe" "$DIST/"
     echo "# Rewritten by every build: change settings in mcdub3_env.txt instead."
     echo "RECOMP_GL_SCALE=${SCALE:-5}"        # 5 by default, as the Mac app
     echo "RECOMP_GL_UI_SCALE=${UI_SCALE:-5}"  # 5 by default; SETTINGS below can override
+    [ -n "${EDITION:-}" ] && echo "EDITION=$EDITION"   # the disc in game-<edition>\ (windows_host.c)
     for kv in ${SETTINGS:-}; do echo "$kv"; done
 } | sed 's/$/\r/' > "$DIST/mcdub3_defaults.txt"
 if [ ! -f "$DIST/mcdub3_env.txt" ]; then
     sed 's/$/\r/' "$MC3_REPO/switch/mcdub3_env.example.txt" > "$DIST/mcdub3_env.txt"
 fi
 
-# The launcher: the disc from MC3_GAME_DIR, else game\ beside the exe, else
-# the repo's game\ (dist\ sits in work\build-windows-<arch>\); saves' drive
-# letters in the repo's work\save\, a log per run in work\logs\windows_run_<time>.log
-# (else mcdub3_log.txt beside the exe); refuses a second start.
+# The launcher, optional (the exe finds the disc and saves itself,
+# src/windows_host.c): the settings files, a log per run in
+# work\logs\windows_run_<time>.log (else mcdub3_log.txt beside the exe), and
+# it refuses a second start.
 printf '%s\r\n' \
   '@echo off' \
   'rem mcdub3-nx on Windows.' \
@@ -115,15 +116,10 @@ printf '%s\r\n' \
   'rem build (mcdub3_defaults.txt), then mcdub3_env.txt, which wins.' \
   'if exist "%~dp0mcdub3_defaults.txt" for /f "usebackq eol=# tokens=* delims=" %%l in ("%~dp0mcdub3_defaults.txt") do set "%%l"' \
   'if exist "%~dp0mcdub3_env.txt" for /f "usebackq eol=# tokens=* delims=" %%l in ("%~dp0mcdub3_env.txt") do set "%%l"' \
-  'if not defined MC3_GAME_DIR if exist "%~dp0game\default.xbe" set "MC3_GAME_DIR=%~dp0game"' \
-  'if not defined MC3_GAME_DIR if exist "%~dp0..\..\..\game\default.xbe" set "MC3_GAME_DIR=%~dp0..\..\..\game"' \
-  'if not defined MC3_GAME_DIR (echo No game folder: put the extracted disc in the game\ folder of the repo, or set MC3_GAME_DIR & pause & exit /b 1)' \
-  'if not defined MC3_SAVE_DIR if exist "%~dp0..\..\save\" set "MC3_SAVE_DIR=%~dp0..\..\save"' \
   'tasklist /fi "imagename eq mcdub3.exe" | find /i "mcdub3.exe" >nul && (echo The game is already running: close it first, or end mcdub3.exe in Task Manager & pause & exit /b 1)' \
   'for /f %%t in ('"'"'powershell -NoProfile -Command "Get-Date -Format yyyyMMdd_HHmmss"'"'"') do set "TS=%%t"' \
   'set "LOG=%~dp0mcdub3_log.txt"' \
   'if exist "%~dp0..\..\logs\" set "LOG=%~dp0..\..\logs\windows_run_%TS%.log"' \
-  'echo Game: %MC3_GAME_DIR%' \
   'echo Log:  %LOG%' \
   'mcdub3.exe > "%LOG%" 2>&1' \
   'set "RC=%ERRORLEVEL%"' \

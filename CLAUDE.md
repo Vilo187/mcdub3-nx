@@ -90,7 +90,16 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
 (Fill in from tools/first_lift.sh and bring-up.)
 
 - Disc: NTSC-U retail, `default.xbe` "Midnight Club 3: DUB edition" (TT-121),
-  4.9 MB XBE, 3.4 GB extracted. Data: `assets_x.dat` (+ `_1`..`_5`),
+  4.9 MB XBE, 3.4 GB extracted. The European (PAL) disc (Redump "Europe
+  (En,Fr,De,Es,It)") runs on the same lift (2026-10-24): its XBE differs in
+  531 header bytes only (signature, certificate region 0x4 and version 2,
+  section digests; code identical), its data in three files
+  (flash/pause_x.xbck, video/Story/Suschamp.bik, video/Tutorial/Trlogos.bik).
+  config/xbe_editions.h lists every accepted XBE (FNV-1a 64) for the boot
+  check, which logs `disc: edition <name>`. Discs side by side: game/ and
+  game-<edition>/ (gitignored), EDITION=eur (tools/env.sh). Languages come
+  from XC_LANGUAGE: RECOMP_LANGUAGE=fr|de|es|it (kernel_xbox.c; the title
+  screen's "Press Start" stays English). Data: `assets_x.dat` (+ `_1`..`_5`),
   `banks.dat`, `audio/` (XACT `.xwb`/`.xsb`), `flash/`, `resources/`.
   Other XBEs on the disc (`dashupdate.xbe`, `downloader.xbe`, `update.xbe`)
   are Xbox system/online tools: not lifted.

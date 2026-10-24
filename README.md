@@ -39,9 +39,11 @@ Playing on the Mac and Linux, 30 FPS is consistently achieved with 5x upscale se
 
 ## Supported Editions
 
-| File              | Edition |
-| ----------------- | ------- |
-| mcdub3-nx-usa.nro | NTSC-U  |
+| File              | Edition                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| mcdub3-nx-usa.nro | NTSC-U (USA) and PAL (Europe: English, French, German, Spanish, Italian) |
+
+Both discs run with the same build: their program is identical, only the disc's header and three data files differ. Several editions can live side by side on a computer: the first disc in `game/`, another in `game-<edition>/` beside it (`game-eur/` for the European disc), picked with `EDITION=eur` (see the installation steps below). The European disc's other languages follow the console language: `RECOMP_LANGUAGE=fr`, `de`, `es` or `it` (default `en`).
 
 ## Installation
 
@@ -53,7 +55,7 @@ Visit the [installation](https://laureladastra.github.io/mcdub3-homepage/) page 
 sdmc:/switch/mcdub3-nx/
 ├── mcdub3-nx-usa.nro       the downloaded NRO
 ├── mcdub3_env.txt          optional settings                            
-└── /game                   the extracted disc (not the ISO)
+└── /game                   the extracted disc (not the ISO), USA or Europe
 ```
 
 Copy the game files to the `/game` directory within this folder. Move this folder to `sdmc:/switch/mcdub3-nx/` on the Nintendo Switch. Install the .nsp to get a plug-and-play experience.
@@ -78,7 +80,9 @@ The Mac application can be packaged and installed by following these instruction
    ```sh
    make extract ISO=<file.iso>
    ```
-4. Lift the game's code to C, once per disc (10 to 20 minutes):
+
+   A second edition goes beside it in `game-<edition>/`: `make extract ISO=<file.iso> EDITION=eur` unpacks the European disc into `game-eur/`, `make mac-app GAME=$PWD/game-eur` builds the app with it, and `make run EDITION=eur` plays it from the repo.
+4. Lift the game's code to C, once (10 to 20 minutes; every edition uses the same lift):
 
    ```sh
    make lift
@@ -106,7 +110,7 @@ The game can be run locally without packaging:
    make setup
    ```
 
-2. Put the extracted disc in `game/` (`make extract ISO=<file.iso>` from an ISO).
+2. Put the extracted disc in `game/` (`make extract ISO=<file.iso>` from an ISO). A second edition goes in `game-<edition>/` beside it (`make extract ISO=<file.iso> EDITION=eur`) and plays with `make run EDITION=eur`.
 3. Lift the game's code to C, then build and play:
 
    ```sh
@@ -125,7 +129,7 @@ The game can be run locally or packaged by following these instructions:
    ```sh
    git clone https://github.com/laureladastra/mcdub3-nx.git
    ```
-2. Put your extracted disc (`default.xbe` and the rest) or `.iso` in the `game` folder. The installer will automatically unpack the .iso.
+2. Put your extracted disc (`default.xbe` and the rest) or `.iso` in the `game` folder. The installer will automatically unpack the .iso. A second edition goes in a `game-<edition>` folder beside it (`game-eur` for the European disc); `make build EDITION=eur` makes the game start that one.
 3. Double-click the installer **`install_windows.bat`**. The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it doesn't exist, lifts the game's code, builds it and puts a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and requires an internet connection to install the dependencies.
 
 The game lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe` and its DLLs. Start it with the desktop shortcut or by double-clicking `mcdub3.exe`. Every build makes or refreshes the shortcut. Keep the exe in that folder (it needs its DLLs and finds the disc in the repo's `game` folder). Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line, for example `RECOMP_GL_SCALE=2`, according to the specifications in [Settings](#settings). By default the game renders at scale 5 (3600x2400) with menu and HUD art at 5 too. The keyboard plays as player 1 and SDL game controllers are supported.
