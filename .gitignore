@@ -29,6 +29,7 @@ drafts
 assets/*
 !assets/game-logo.jpeg
 !preview.png
+!switch.png
 TODO.md
 # Your own Switch settings (the template is switch/mcdub3_env.example.txt).
 /switch/mcdub3_env.txt
