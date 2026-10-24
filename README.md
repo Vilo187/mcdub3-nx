@@ -44,8 +44,6 @@ Playing on the Mac and Linux, 30 FPS is consistently achieved with 5x upscale se
 | mcdub3-nx-usa.nro | NTSC-U (English)                                        |
 | mcdub3-nx-eur.nro | PAL (Europe: English, French, German, Spanish, Italian) |
 
-Both editions are built from the same lift: their program is identical, only the disc's header and three data files differ. Several editions can live side by side, on a computer and on the Switch's SD card: a disc in `game/` and others in `game-<edition>/` beside it (`game-eur/` for the European disc). Which one plays: `EDITION=eur` if given; otherwise the only disc there is; of several, `game/`, then `game-usa/`, then the first by name (the game says which it picked). Each NRO looks in its own `game-<edition>/` first, then in `game/`. The European disc's other languages follow the console language: `RECOMP_LANGUAGE=fr`, `de`, `es` or `it` (default `en`).
-
 ## Installation
 
 ### Nintendo Switch
