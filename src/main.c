@@ -375,6 +375,16 @@ static void *perf_thread(void *arg)
             last_p = p;
             last_f = fr;
         }
+        {   /* the renderer's own thread (RECOMP_GL_THREAD, the Switch's
+             * default): how long it sat idle, and how long the executor was
+             * held back by a full queue. Idle near 0 = the GPU side limits. */
+            extern void nv2a_gl_queue_stats(double secs, int *gl_idle_pct, int *exec_wait_pct);
+            int idle, held;
+            nv2a_gl_queue_stats(secs, &idle, &held);
+            if (idle >= 0)
+                fprintf(stderr, "[perf] GL thread idle %d%%, executor held back by it %d%%\n",
+                        idle, held);
+        }
         {   /* D3D's flip queue (sub_003E4EF0 retires entry i when the vblank
              * count +0x1C0 reaches its target +0x178+12i): target - count is
              * the presentation interval the title asked for. Our executor

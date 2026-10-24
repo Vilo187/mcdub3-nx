@@ -1119,8 +1119,42 @@ extern void sub_00122DB0_gen(void);
 void sub_00122DB0(void) { ls_call(sub_00122DB0_gen, "advance", 0); }
 extern void sub_002A3270_gen(void);
 void sub_002A3270(void) { ls_call(sub_002A3270_gen, "present", 1); }
+/* ── The heartbeat thread sleeps instead of spinning (MC3_HEARTBEAT_MS) ──
+ *
+ * sub_00196230 (its own thread) is a one-second watchdog: enter a critical
+ * section, compare the CPU clock with the last beat (ticks / 733 MHz >=
+ * 1.0 s: sub_00044B90), leave, Sleep(0) at 0x001962AC, again. On the
+ * Switch each turn took the guest lock from the main thread: 4,200 turns
+ * a second, the main thread waiting behind it 3,400 times a second at
+ * ~50 us a hand-over -- most of its 30% waiting in the menus (19.5 fps,
+ * 2026-10-21 log). A beat checked every few milliseconds is as good.
+ * This turns that one Sleep(0) into Sleep(MC3_HEARTBEAT_MS), default 8;
+ * 0 restores the game's own. */
+static uint32_t heartbeat_ms(void)
+{
+    static int ms = -1;
+    if (ms < 0) {
+        const char *e = getenv("MC3_HEARTBEAT_MS");
+        ms = e ? atoi(e) : 8;
+        if (ms < 0) ms = 0;
+    }
+    return (uint32_t)ms;
+}
+
 extern void sub_0001739C_gen(void);
-void sub_0001739C(void) { ls_call(sub_0001739C_gen, "sleep", 0); }
+void sub_0001739C(void)
+{
+    if (MEM32(g_esp) == 0x001962B3u && MEM32(g_esp + 4) == 0) {   /* the heartbeat's Sleep(0) */
+        static int said;
+        MEM32(g_esp + 4) = heartbeat_ms();
+        if (!said++) {
+            const char *l = xbox_gil_my_label();
+            fprintf(stderr, "[MC3] heartbeat thread (%s): Sleep(0) -> Sleep(%u) (MC3_HEARTBEAT_MS)\n",
+                    l ? l : "?", heartbeat_ms());
+        }
+    }
+    ls_call(sub_0001739C_gen, "sleep", 0);
+}
 
 /* The way out: once the game sets the stop flag (+0x2004 of the loop's
  * object), each turn sends the Flash movie to "StartOfTransitionOut"
