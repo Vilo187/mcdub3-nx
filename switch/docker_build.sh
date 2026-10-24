@@ -20,7 +20,17 @@ source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
 IMAGE=$(grep -v '^#' "$MC3_REPO/switch/devkitpro-image" | head -1)
 command -v docker >/dev/null || mc3_fail "no docker: sudo apt install docker.io (or make setup), or NATIVE=1 with devkitPro installed"
 DOCKER=(docker)
-docker info >/dev/null 2>&1 || DOCKER=(sudo docker)   # not in the docker group yet
+if ! docker info >/dev/null 2>&1; then
+    # No daemon to talk to. On a Mac that is Docker Desktop not running (a
+    # CI runner then failed on "sudo: a terminal is required", 2026-10-24);
+    # on Linux it can be a user not yet in the docker group, where sudo
+    # helps -- but only with a terminal to ask for the password.
+    case "$(uname -s)" in
+        Darwin) mc3_fail "Docker is not running: start Docker Desktop (and enable 'Start Docker Desktop when you sign in' for a CI runner)" ;;
+    esac
+    [ -t 0 ] || mc3_fail "cannot reach the Docker daemon (is it running? is this user in the docker group?), and no terminal for sudo"
+    DOCKER=(sudo docker)                                # not in the docker group yet
+fi
 
 ENVS=()
 SCRIPT="${1:-switch/build.sh}"
