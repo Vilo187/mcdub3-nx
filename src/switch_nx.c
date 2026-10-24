@@ -2,7 +2,8 @@
  * switch_nx.c -- Nintendo Switch (Horizon / libnx) boot glue.
  *
  *   log       nxlink to the PC when launched with `nxlink -s`, otherwise
- *             sdmc:/switch/<MC3_SD_DIR>/<MC3_APP>_log.txt
+ *             sdmc:/switch/<MC3_SD_DIR>/<MC3_APP>_log.txt (the run before
+ *             it: <MC3_APP>_log_prev.txt)
  *   settings  sdmc:/switch/<MC3_SD_DIR>/<MC3_APP>_env.txt, KEY=VALUE per line,
  *             '#' starts a comment; applied with setenv before boot, so every
  *             RECOMP_* / MC3_* switch works on the console without a rebuild
@@ -194,6 +195,10 @@ static void log_open(void)
 
     s_t0 = armGetSystemTick();
     mkdir(APP_DIR, 0777);
+    /* The last run's log survives one more start: a hang reported after
+     * the game was started again (2026-10-24) was gone otherwise. */
+    remove(APP_DIR "/" MC3_APP "_log_prev.txt");
+    rename(APP_DIR "/" MC3_APP "_log.txt", APP_DIR "/" MC3_APP "_log_prev.txt");
     s_log_fd = open(APP_DIR "/" MC3_APP "_log.txt", O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (s_log_fd < 0)
         return;

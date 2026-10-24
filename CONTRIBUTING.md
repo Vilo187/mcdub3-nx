@@ -38,6 +38,7 @@ sdmc:/switch/mcdub3-nx/
 ├── mcdub3_env.txt   settings: KEY=VALUE per line, every switch explained inside
 │                    (template: switch/mcdub3_env.example.txt)
 ├── mcdub3_log.txt   written when not launched through nxlink
+├── mcdub3_log_prev.txt  the run before (kept one start, for hangs reported late)
 ├── game/            the extracted disc (not the ISO)
 └── hd/textures/     optional texture pack (make switch HD=1)
 ```
