@@ -1058,16 +1058,96 @@ void sub_0001B740(void)
  * at 4:3 and switched to 16:9 halfway (2026-10-20). */
 extern void nv2a_gl_fill_hold(int delta) __attribute__((weak));
 extern void sub_0001B500_gen(void);
+static RECOMP_TLS int t_ls_thread;          /* this is the loading-screen thread */
 void sub_0001B500(void)
 {
     const char *e = getenv("MC3_FILL_SKIP");
     int hold = nv2a_gl_fill_hold && e && strstr(e, "legal");   /* opt-in: see above */
     if (hold)
         nv2a_gl_fill_hold(1);
+    t_ls_thread = 1;
     sub_0001B500_gen();
+    t_ls_thread = 0;
     if (hold)
         nv2a_gl_fill_hold(-1);
 }
+
+/* ── The loading screen's loop, timed (MC3_LS_TRACE=1) ──
+ *
+ * Each turn of sub_0001B500: the Flash movie advances a fixed 1/30 s
+ * (sub_00122DB0, 0x3D08882F), is drawn and presented (sub_002A3270), then
+ * Sleep(24) (sub_0001739C). Logs every call on the loading thread with
+ * its time, and presents from any other thread. It showed the loop turning
+ * evenly every 33 ms while the circles stuttered (2026-10-24): the cause
+ * was the renderer, which ignored the 2D blit that carries each frame into
+ * the next back buffer (xboxrecomp, nv2a_pb_exec.c). */
+static int ls_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_LS_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+static double ls_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6;
+}
+const char *xbox_gil_my_label(void);
+static void ls_log(const char *what, double t0)
+{
+    double t1 = ls_now();
+    const char *l = xbox_gil_my_label();
+    fprintf(stderr, "[LS] @%.3f %s %s %.1f ms\n", t0 / 1e3, t_ls_thread ? "ls" : l ? l : "?",
+            what, t1 - t0);
+}
+static void ls_call(void (*fn)(void), const char *what, int any_thread)
+{
+    double t0;
+    if (!ls_trace_on() || !(t_ls_thread || any_thread)) {
+        fn();
+        return;
+    }
+    t0 = ls_now();
+    fn();
+    ls_log(what, t0);
+}
+extern void sub_00122DB0_gen(void);
+void sub_00122DB0(void) { ls_call(sub_00122DB0_gen, "advance", 0); }
+extern void sub_002A3270_gen(void);
+void sub_002A3270(void) { ls_call(sub_002A3270_gen, "present", 1); }
+extern void sub_0001739C_gen(void);
+void sub_0001739C(void) { ls_call(sub_0001739C_gen, "sleep", 0); }
+
+/* The way out: once the game sets the stop flag (+0x2004 of the loop's
+ * object), each turn sends the Flash movie to "StartOfTransitionOut"
+ * (sub_001221F0, this = movie, label, 1) and leaves when sub_00122360
+ * says it has reached "EndOfTransitionOut" (returns 1). Logged with their
+ * arguments and results on the loading thread. A load that ends while the
+ * intro still plays (fast storage: 0.5 s) gets a transition-out with its
+ * shapes still off stage, so the screen cuts away with the spinner up; at
+ * a DVD's pace (RECOMP_IO_MBPS=8 RECOMP_IO_SEEK_MS=80) it plays out. */
+static void ls_label(void (*fn)(void), const char *what)
+{
+    uint32_t movie = g_ecx, label = MEM32(g_esp + 4), arg2 = MEM32(g_esp + 8);
+    char name[40];
+    uint32_t i;
+    fn();
+    if (!ls_trace_on() || !t_ls_thread)
+        return;
+    for (i = 0; i + 1 < sizeof name && label && MEM8(label + i); i++)
+        name[i] = (char)MEM8(label + i);
+    name[i] = 0;
+    fprintf(stderr, "[LS] @%.3f ls %s(movie %08X, \"%s\", %u) -> %u\n", ls_now() / 1e3,
+            what, movie, name, arg2, g_eax);
+}
+extern void sub_001221F0_gen(void);
+void sub_001221F0(void) { ls_label(sub_001221F0_gen, "goto"); }
+extern void sub_00122360_gen(void);
+void sub_00122360(void) { ls_label(sub_00122360_gen, "reached"); }
 
 /* ── Save-game deletion, traced (MC3_SAVE_TRACE=1) ──
  *

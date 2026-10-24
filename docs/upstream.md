@@ -38,6 +38,7 @@ Nothing here has been sent yet.
 | 5n | Executor: without reported flip retires, FLIP_STALL never waited; `RECOMP_FLIP_VBLANK=1` caps flips at the vblank | `7208296` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
 | 5o | Renderer: uniform arrays uploaded at their declared size; strict drivers (Parallels' GL) refuse the whole call when the compiler kept fewer elements, so `u_tscale` stayed 0 and linear textures (movies) sampled black. Live sizes recorded at link time | `55730a8` | nfsu2-sw (nv2a_gl) | not checked |
 | 5p | Windows: no desktop path for executor titles (only D3D11/XAudio2/XInput/VEH). `XBOXRECOMP_WIN_SDL_GL`: nv2a_gl + SDL + MMIO registry on the Win32 kernel, title off the main thread, native stack dumps | `719da1d` | xboxrecomp + nfsu2-sw | yes |
+| 5q | Executor: the 2D engine (subchannels other than 0) ignored, so NV062/NV09F image blits never happened; titles that carry a frame into the next back buffer with a blit and draw only what changed (MC3's loading-screen spinner) showed every other update. Blit in guest memory plus an optional `Nv2aBackend.blit` (nv2a_gl: glBlitFramebuffer) | `98318e9` | xboxrecomp + nfsu2-sw (nv2a_pb_exec.c, nv2a_backend.h, nv2a_gl; nv2a_vk needs its own) | not checked |
 
 1. **`movsx` from `bp`/`sp`** (`tools/recomp/lifter.py`, `_lift_movsx`). The
    16-bit source list has ax, bx, cx, dx, si, di but not bp, sp, so

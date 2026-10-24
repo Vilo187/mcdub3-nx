@@ -276,6 +276,22 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   0x00512C4D, about half. The tool names them and refuses. CodeBreaker
   .cbs (RC4 + zlib) is not read.
 
+- Loading-screen circles (fixed 2026-10-24, every host): the loading
+  thread (sub_0001B500) advances its Flash movie a fixed 1/30 s a turn
+  and, each frame, copies the frame just shown into the next back buffer
+  with the 2D engine (NV062 surfaces on subchannel 3, NV09F blit on 2,
+  720x480) before drawing the spinner's new segment. The toolkit ignored
+  subchannels other than 0, so each buffer got every other segment
+  (stutter, circles never closing). The executor now does the blit, in
+  guest memory and in nv2a_gl (RECOMP_BLIT=0 off). On fast storage the
+  load ends during the screen's intro, and the transition-out plays with
+  its shapes off stage: the screen cuts away with the spinner up. At a
+  DVD's pace (RECOMP_IO_MBPS=8 RECOMP_IO_SEEK_MS=80) it plays out: that
+  is the game, not the port. Tools: RECOMP_GL_FRAMETIME=2 (per frame:
+  draws/clears/blits per surface, the one shown), RECOMP_PB_FRAMESTATS=1
+  (methods per subchannel, batches culled/drawn, off-screen vertices),
+  MC3_LS_TRACE=1 (the loop's turns, its transition labels).
+
 - Windows (2026-10-23, in testing): MinGW/clang builds, x86-64 and ARM64
   (`make windows` cross from the Mac with llvm-mingw + MSYS2 libraries,
   tools/win_deps.py; natively in MSYS2 `make setup build`;
