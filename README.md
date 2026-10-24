@@ -1,6 +1,6 @@
 <p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="500"></p>
 
-<p align="center"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg"> <img src="https://img.shields.io/badge/Nintendo Switch-21.0.0-orange"> <img src="https://img.shields.io/badge/Mac-%20Sequoia%2015.6-green?logo=apple"> <img src="https://img.shields.io/badge/Linux-Ubuntu 22.04-purple?logo=linux"> <img src="https://img.shields.io/badge/Windows-11-blue"> <img src="https://img.shields.io/badge/OpenGL-renderer-blue?logo=opengl"></p>
+<p align="center"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg"> <img src="https://img.shields.io/badge/Nintendo%20Switch-21.0.0-orange?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPGcgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTkuNSAxLjVINi4yQTQuNyA0LjcgMCAwIDAgMS41IDYuMnYxMS42YTQuNyA0LjcgMCAwIDAgNC43IDQuN2gzLjN6TTggM3YxOEg2LjJBMy4yIDMuMiAwIDAgMSAzIDE3LjhWNi4yQTMuMiAzLjIgMCAwIDEgNi4yIDN6Ii8%2BPGNpcmNsZSBjeD0iNS44IiBjeT0iNy40IiByPSIxLjkiLz48cGF0aCBkPSJNMTQuNSAxLjVoMy4zYTQuNyA0LjcgMCAwIDEgNC43IDQuN3YxMS42YTQuNyA0LjcgMCAwIDEtNC43IDQuN2gtMy4zeiIvPjwvZz48Y2lyY2xlIGN4PSIxOC4yIiBjeT0iMTQuNiIgcj0iMS45IiBmaWxsPSIjNTU1Ii8%2BPC9zdmc%2BCg%3D%3D"> <img src="https://img.shields.io/badge/Mac-%20Sequoia%2015.6-green?logo=apple"> <img src="https://img.shields.io/badge/Linux-Ubuntu 22.04-purple?logo=linux"> <img src="https://img.shields.io/badge/Windows-11-blue?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTIgMmg5LjV2OS41SDJ6TTEyLjUgMkgyMnY5LjVoLTkuNXpNMiAxMi41aDkuNVYyMkgyek0xMi41IDEyLjVIMjJWMjJoLTkuNXoiLz48L3N2Zz4K"> <img src="https://img.shields.io/badge/OpenGL-renderer-blue?logo=opengl"></p>
 
 <hr>
 
@@ -14,7 +14,7 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 
 ## ✨ Status
 
-The Switch build can play towards the end until 100% career progress. Playing on requires maximum overclock with the game running at 20-25 FPS of the games' maximum 30 FPS. Improvements are focused on performance.
+The Switch build can play towards the end until 100% career progress. Playing on requires maximum overclock with the game running at 20-25 FPS of the game's maximum 30 FPS. Improvements are focused on performance.
 
 <p align="center"><img src="assets/switch.png" alt="Midnight Club 3: DUB Edition" width="450"></p>
 
@@ -47,7 +47,7 @@ Playing on the Mac and Linux, 30 FPS is consistently achieved with 5x upscale se
 
 ### Nintendo Switch
 
-Visit the [installation](https://laureladastra.github.io/mcdub3-homepage/) page for a guided experience or manually package the folder by downloading the files from our [releases](https://github.com/laureladastra/mcdub3-nx/releases) and organise the folder according to the following hiërarchy:
+Visit the [installation](https://laureladastra.github.io/mcdub3-homepage/) page for a guided experience or manually package the folder by downloading the files from our [releases](https://github.com/laureladastra/mcdub3-nx/releases) and organise the folder according to the following hierarchy:
 
 ```
 sdmc:/switch/mcdub3-nx/
@@ -92,11 +92,11 @@ The Mac application can be packaged and installed by following these instruction
 
    The application file lands in `work/mac_app/Midnight Club 3.app`. Drag it to your `Applications folder`. By default the app renders at scale 5 (3600x2400) with menu and HUD art at 5 too; a slower Mac plays more smoothly with lower values, for example `make mac-app SCALE=1.5 UI_SCALE=2` (see [Upscaling](#upscaling)). `SETTINGS` bakes in any other setting from the [Settings](#settings) tables as a default, space-separated: `make mac-app SETTINGS="RECOMP_GL_SHARPEN=0.3 MC3_MOVIE_VOLUME=80"`. Without `GAME`, the first start opens the folder where the app wants the disc: `~/Library/Application Support/mcdub3/game/`. Settings, saves and the log live in that `mcdub3` folder too.
 
-You can also play the game without making the app by running `make build run`
+You can also play the game without making the app by running `make build run`.
 
 ### Linux
 
-The game can be ran locally without packaging:
+The game can be run locally without packaging:
 
 1. Get the code and install what the build needs:
 
@@ -118,17 +118,17 @@ The game can be ran locally without packaging:
 
 ### Windows
 
-The game can be ran locally or packaged by following these instructions:
+The game can be run locally or packaged by following these instructions:
 
-1. Copy the code to a folder without spaces in its path (i.e. `C:\Games\mcdub3-nx`):
+1. Copy the code to a folder without spaces in its path (e.g. `C:\Games\mcdub3-nx`):
 
    ```sh
    git clone https://github.com/laureladastra/mcdub3-nx.git
    ```
-2. Put your extracted disc (`default.xbe` and the rest) or `.iso`  in the `game` folder. The installer will automatically unpack the .iso.
-3. Double-click the installer **`install_windows.bat`**. The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it doesn't exist, lift the game's code, build it and put a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and requires an internet connection to install the dependencies.
+2. Put your extracted disc (`default.xbe` and the rest) or `.iso` in the `game` folder. The installer will automatically unpack the .iso.
+3. Double-click the installer **`install_windows.bat`**. The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it doesn't exist, lifts the game's code, builds it and puts a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and requires an internet connection to install the dependencies.
 
-The game lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe` and its DLLs. Start it with the desktop shortcut or by double-clicking `mcdub3.exe`. Every build makes or refreshes the shortcut. Keep the exe in that folder (it needs its DLLs and finds the disc in the repo's `game` folder). Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line, for example `RECOMP_GL_SCALE=2`, according to the specifications in [Settings](##Settings). By default the game renders at scale 5 (3600x2400) with menu and HUD art at 5 too. The keyboard plays as player 1 and SDL game controllers are supported.
+The game lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe` and its DLLs. Start it with the desktop shortcut or by double-clicking `mcdub3.exe`. Every build makes or refreshes the shortcut. Keep the exe in that folder (it needs its DLLs and finds the disc in the repo's `game` folder). Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line, for example `RECOMP_GL_SCALE=2`, according to the specifications in [Settings](#settings). By default the game renders at scale 5 (3600x2400) with menu and HUD art at 5 too. The keyboard plays as player 1 and SDL game controllers are supported.
 
 For developers: `make` and the other tools come with MSYS2 and only work in its own shell, not in Command Prompt or PowerShell (there, "make" is not recognised). Double-click **`tools\windows\shell.bat`**: it opens that shell in the repo folder, for x86-64 or ARM as your PC needs (by hand: `C:\msys64\msys2_shell.cmd -clang64 -here`, or `-clangarm64` on Windows on ARM). Then the same commands as on Mac and Linux: `make setup`, `make lift`, `make build run`, `make run RECOMP_GL_SCALE=2`. `make build` also takes the app defaults, like `make mac-app`: `make build SCALE=2 UI_SCALE=3 SETTINGS="RECOMP_GL_SHARPEN=0.3"`.
 
@@ -181,13 +181,13 @@ The PS2 release of the same game (SLUS-21029) stores its profiles in its own lay
 | Audio         | XACT sound effects and the WMA music                                                                                                                                |
 | Graphics      | OpenGL renderer: up to 3x resolution, square pixels in 16:9, 4:3 screens filled to widescreen, mipmaps and 16x anisotropic filtering, FXAA, sharpening, motion blur |
 | Texture packs | Optional HD replacements. Dumped from the game, upscaled (Real-ESRGAN), loaded in the background and DXT-compressed.                                                |
-| Input         | Nintendo Switch controllers; on Mac/Linux the keyboard and SDL pads (DualSense, Xbox). Vibration supported.                                                         |  |
+| Input         | Nintendo Switch controllers; on Mac/Linux the keyboard and SDL pads (DualSense, Xbox). Vibration supported.                                                         |
 
 ## ⚠️ &nbsp;Known Bugs
 
 * loading screen can hang sometimes with a restart required
 * intro menu navigation rendering is slow
-* we're currently at v0.1.0, expect craches and latency
+* we're currently at v0.1.0, expect crashes and latency
 
 ## Settings
 
