@@ -104,3 +104,43 @@ def test_padding_after_ordinary_code_is_not_a_boundary():
     # next function starts; accepting it would split functions at random.
     found, expected = _run("mov", 4, is_ret=False, is_jump=False)
     assert expected not in found, "split a function at non-terminating padding"
+
+
+def _run_after_tables(index_bytes):
+    """<function body><dword table><byte table><int3 padding><next function>,
+    as the Remix's 0x0028B804 / 0x0028B82C before 0x0028B850."""
+    base = _Section.virtual_addr
+    tbl, n = 0x20, 4                       # four case addresses
+    idx_at = tbl + 4 * n
+    pad_at = idx_at + len(index_bytes)
+    next_at = (pad_at + 2 + 15) & ~15
+
+    data = bytearray(b"\x90" * 0x80)
+    data[idx_at:pad_at] = bytes(index_bytes)
+    for i in range(pad_at, next_at):
+        data[i] = config.CC_PADDING
+
+    det = FunctionDetector.__new__(FunctionDetector)
+    det.engine = _Engine([_Insn(base + next_at, 4)])
+    det.engine.jump_tables = {base + tbl: base + idx_at}
+    det.image = _Image(bytes(data))
+    found = []
+    det._add_candidate = lambda addr, conf, why: found.append(addr)
+    det._pass_cc_boundaries(_Section())
+    return found, base + next_at
+
+
+def test_padding_after_a_switch_table_starts_a_function():
+    found, expected = _run_after_tables([])
+    assert expected in found, f"{expected:#x} not in {[hex(a) for a in found]}"
+
+
+def test_padding_after_a_switch_byte_table_starts_a_function():
+    found, expected = _run_after_tables([0, 1, 1, 3, 2, 0, 3])
+    assert expected in found, f"{expected:#x} not in {[hex(a) for a in found]}"
+
+
+def test_padding_after_bytes_that_are_no_index_is_not_a_boundary():
+    # 0x90 is no index into a four-entry table: ordinary code, not tables.
+    found, expected = _run_after_tables([0, 1, 0x90, 2])
+    assert expected not in found, "took code after a table for its byte map"

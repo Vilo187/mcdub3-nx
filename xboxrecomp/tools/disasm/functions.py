@@ -341,6 +341,9 @@ class FunctionDetector:
 
         va_start = section.virtual_addr
         i = 0
+        # Switch tables parked at a function's end: end -> entries.
+        table_ends = {end: (end - start) // 4
+                      for start, end in getattr(self.engine, "jump_tables", {}).items()}
 
         while i < len(data):
             # Look for CC padding runs
@@ -378,6 +381,20 @@ class FunctionDetector:
                             found_ret = True
                             break
 
+                    # A function whose switch tables come last ends in data,
+                    # not in an instruction: MSVC parks the dword table of case
+                    # addresses after the body, often followed by a byte table
+                    # mapping case values to its entries, and pads after that
+                    # as after a ret. The Remix's cell converter 0x0028B850
+                    # follows such a pair (0x0028B804 dwords, 0x0028B82C bytes,
+                    # int3 from 0x0028B842); missed here, the whole function
+                    # was a gap and the gap-prologue pass split it at each of
+                    # its rets into ten fragments, which lost the epilogue and
+                    # handed the caller garbage loop counters (2026-10-24).
+                    if not found_ret:
+                        found_ret = self._tables_end_at(data, va_start, before_addr,
+                                                        table_ends)
+
                     if found_ret:
                         next_addr = va_start + i
                         if next_addr in self.engine.instructions:
@@ -388,6 +405,20 @@ class FunctionDetector:
                             )
             else:
                 i += 1
+
+    @staticmethod
+    def _tables_end_at(data, va_start: int, addr: int, table_ends: dict) -> bool:
+        """Do a switch's tables end at `addr`: a recorded dword table, and
+        after it at most a byte table whose every byte is a valid index into
+        it?"""
+        for back in range(0, 257):
+            end = addr - back
+            n = table_ends.get(end)
+            if n is None:
+                continue
+            idx = data[end - va_start:addr - va_start]
+            return all(b < n for b in idx)
+        return False
 
     def _pass_call_targets(self, sections: List[SectionInfo]) -> None:
         """
