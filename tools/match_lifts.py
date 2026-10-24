@@ -202,6 +202,75 @@ def shifted(xb, md, A, m, fa, xa_secs=()):
     return None
 
 
+class Mapper:
+    """Map any address of A to B: a function start (the match), a place
+    inside a matched function (same offset), a shifted function (no start in
+    B), or data an identical function refers to (the same operand of the
+    same instruction in B's twin)."""
+
+    def __init__(self, xa, A, xb, B, m):
+        self.xa, self.A, self.xb, self.B, self.m = xa, A, xb, B, m
+        self.md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_32)
+        self.md.detail = True
+        self.starts = {f["start"]: f for f in A}
+        self.refs = None
+
+    def _index_refs(self):
+        """Every address-sized operand of every identically matched function
+        of A, with where it sits: value -> [(A start, insn #, operand #)]."""
+        self.refs = {}
+        for f in self.A:
+            r = self.m.get(f["start"])
+            if not r or r[1] not in ("exact", "order"):
+                continue
+            code = self.xa.read(f["start"], f["end"] - f["start"])
+            for k, ins in enumerate(self.md.disasm(code, f["start"])):
+                for j, h in enumerate(HEX.findall(ins.op_str)):
+                    v = int(h, 16)
+                    if self.xa.lo <= v < self.xa.hi:
+                        self.refs.setdefault(v, []).append((f["start"], k, j))
+
+    def _operand_in_b(self, a_start, k, j):
+        b_start = self.m[a_start][0]
+        fa = self.starts[a_start]
+        code = self.xb.read(b_start, fa["end"] - fa["start"] + 16)
+        for kk, ins in enumerate(self.md.disasm(code, b_start)):
+            if kk == k:
+                hs = HEX.findall(ins.op_str)
+                return int(hs[j], 16) if j < len(hs) else None
+        return None
+
+    def map(self, ad):
+        """(B address or None, how)."""
+        r = self.m.get(ad)
+        if r:
+            return r[0], r[1] + ("" if r[1] != "similar" else " %.2f" % r[2])
+        f = self.starts.get(ad)
+        if f:
+            b = shifted(self.xb, self.md, self.A, self.m, f, self.xa.secs)
+            return (b, "shifted") if b is not None else (None, "function not found")
+        cont = next((g for g in self.A if g["start"] < ad < g["end"]), None)
+        if cont:
+            rc = self.m.get(cont["start"])
+            if rc and rc[1] in ("exact", "order"):
+                return rc[0] + (ad - cont["start"]), "inside sub_%08X" % cont["start"]
+            b = shifted(self.xb, self.md, self.A, self.m, cont, self.xa.secs) if not rc else None
+            if b is not None:
+                return b + (ad - cont["start"]), "inside shifted sub_%08X" % cont["start"]
+            return None, "inside a changed function (sub_%08X)" % cont["start"]
+        if self.refs is None:
+            self._index_refs()
+        votes = {}
+        for a_start, k, j in self.refs.get(ad, [])[:40]:
+            v = self._operand_in_b(a_start, k, j)
+            if v is not None:
+                votes[v] = votes.get(v, 0) + 1
+        if votes:
+            v, n = max(votes.items(), key=lambda kv: kv[1])
+            return v, "data, %d of %d references agree" % (n, sum(votes.values()))
+        return None, "data, no reference in identical code"
+
+
 def manual_addrs(path):
     """Addresses src/recomp_manual.c replaces, as the lift reads them."""
     import os

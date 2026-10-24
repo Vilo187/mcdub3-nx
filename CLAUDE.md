@@ -7,9 +7,14 @@ Keep this file current: findings, rules, status. It is the project's memory.
 ## Rules
 
 - Never commit game data (ISO, `default.xbe`, disc files) or generated C.
-  Every path is relative to the repo root: the disc in `game/`, everything
-  generated in `work/` (both gitignored; tools/env.sh). No default paths
-  outside the repo.
+  Every path is relative to the repo root: the discs in `game*/`, everything
+  generated in `work-<game>/` (both gitignored; tools/env.sh). No default
+  paths outside the repo.
+- Two games share the repo (ADR 0006): `GAME=dub` (default) and
+  `GAME=remix` on every target. A game's own things live in
+  `config/<game>/` and `src/games/<game>/` and nowhere else; shared code
+  takes no game's addresses (`config/<game>/game.h` gives them). A fix for
+  one game must not change the other's behaviour.
 - Never commit, upload or store on GitHub the console keys: `keys/prod.keys`
   (gitignored; the NSP forwarder build reads them from there). Not as a
   secret, not as an artifact, never on GitHub's runners. The one exception
@@ -25,7 +30,7 @@ Keep this file current: findings, rules, status. It is the project's memory.
   xboxrecomp-upstream/main`), never routine.
 - After toolkit header changes (`templates/runtime/recomp_types.h`), regen:
   it rewrites `gen/recomp_types.h`. Then rebuild all generated code.
-- Every seed added to `config/seed_functions.json` gets a note, and is
+- Every seed added to `config/<game>/seed_functions.json` gets a note, and is
   reviewed: a seed inside a function splits it.
 - Record decisions in `docs/decisions/` (short ADRs). Open work, bugs and
   decisions still to evaluate live in `TODO.md` (gitignored, personal);
@@ -33,15 +38,16 @@ Keep this file current: findings, rules, status. It is the project's memory.
 
 ## Workflow
 
-Run `make` in the repo root for every target. Logs land in `work/logs/`.
+Run `make` in the repo root for every target (`GAME=remix` for the Remix).
+Logs land in `work-<game>/logs/`.
 Technical docs (stages, what sits where, VM, the loop): CONTRIBUTING.md, the source of truth.
 
 | Change | Then |
 |---|---|
 | `src/*.c` (not overrides) | `make build run` |
-| body of an existing override in `src/recomp_manual.c` | `make build run` |
+| body of an existing override in `src/games/<game>/recomp_manual.c` | `make build run` |
 | added/removed an override, translator | `make relift build run` |
-| `config/seed_functions.json`, disasm/func_id | `make regen build run` |
+| `config/<game>/seed_functions.json`, disasm/func_id | `make regen build run` |
 | runtime (`xboxrecomp/src`) | `make build run` |
 | ready for console | `make switch send`, Eden, then hardware |
 
@@ -95,7 +101,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   531 header bytes only (signature, certificate region 0x4 and version 2,
   section digests; code identical), its data in three files
   (flash/pause_x.xbck, video/Story/Suschamp.bik, video/Tutorial/Trlogos.bik).
-  config/xbe_editions.h lists every accepted XBE (FNV-1a 64) for the boot
+  config/dub/xbe_editions.h lists every accepted XBE (FNV-1a 64) for the boot
   check, which logs `disc: edition <name>`. Discs side by side: game/ and
   game-<edition>/ (gitignored). Which plays (tools/env.sh, windows_host.c):
   EDITION= first; else the only disc; of several game/, then the lifted
@@ -109,7 +115,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   `banks.dat`, `audio/` (XACT `.xwb`/`.xsb`), `flash/`, `resources/`.
   Other XBEs on the disc (`dashupdate.xbe`, `downloader.xbe`, `update.xbe`)
   are Xbox system/online tools: not lifted.
-- XBE: entry 0x000129DF, title ID 0x54540079 (config/xbe_facts.h), retail,
+- XBE: entry 0x000129DF, title ID 0x54540079 (config/dub/xbe_facts.h), retail,
   built 2005-03-25 (`C:\soft\mc3\src\mcproduct\xbox_final\mc.exe`), XDK
   5849 (same as NFSU2's era), image 5.23 MB, base 0x10000, 154 kernel imports.
 - Code: `.text` 3.35 MB (game). Statically linked XDK/middleware, each its own
@@ -233,7 +239,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   thread spun in D3D's fence wait (sub_003DF4D0, loop at 0x003DF607) while
   the loading-screen thread kept drawing. The loop keeps the time handed out
   (+0x2C of the push-buffer state 0x003ECAF0) from before its poll yield;
-  the GPU ran past it and `handed - gpu` wrapped. src/recomp_manual.c ends
+  the GPU ran past it and `handed - gpu` wrapped. src/games/dub/recomp_manual.c ends
   the loop through a spin hook (recomp_set_spin_hook) once the GPU has
   passed the fence (MC3_FENCE_FIX=0 off). `pkill -USR1 mcdub3` now also
   prints the main thread's kernel call and that fence state.
@@ -247,7 +253,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   RELEASE_NOTES.md; ci.yml (tests) -> switch-build.yml (self-hosted runner
   with the disc, label mcdub3-disc) -> switch-release.yml (environment
   `release`, approval). NROs are mcdub3-nx-<edition>.nro; the boot check
-  (MC3_XBE_SIZE / MC3_XBE_FNV64 in config/xbe_facts.h) refuses another XBE.
+  (MC3_XBE_SIZE / MC3_XBE_FNV64 in config/<game>/xbe_facts.h) refuses another XBE.
 
 - Career race crash (found 2026-10-21, fixed 2026-10-22; every career race,
   every host): the race-event listener sub_0023D630 leaves through `jne`
@@ -256,7 +262,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   ret-only stub that skipped both pops. The broadcast loop (sub_00251CD0,
   called by mcPgCareer::ReportRaceResult sub_0024F8C0) then walked on with
   a garbage esi into a null call. The translator now lifts such epilogues
-  (21 in MC3; test_stub_epilogue.py). Found with src/recomp_manual.c's
+  (21 in MC3; test_stub_epilogue.py). Found with src/games/dub/recomp_manual.c's
   broadcast replacement, which checks every listener call for a broken
   calling convention (`[LISTEN]`, MC3_LISTEN_TRACE=1; MC3_LISTENER_CHECK=0
   runs the game's own loop).
@@ -306,6 +312,23 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   Diagnose with `mcdub3_env.txt` beside the exe (read by run_mcdub3.bat):
   RECOMP_GL_ERRORS=2, RECOMP_GL_PROBE=1, RECOMP_WATCHDOG_SECS (+ every
   thread's native stack; tools/windows/symbolize.sh resolves it).
+
+- **Remix** (`GAME=remix`, from 2026-10-24; ADR 0006): *Midnight Club 3:
+  DUB Edition Remix*, Europe (Redump "Europe (En,Fr,De,Es,It)"), XBE built
+  2005-11-18, region 4, version 6, the same title ID 0x54540079 and XDK
+  5849. Its libraries are the DUB Edition's code at new addresses (D3D
+  277/281 functions identical, DSOUND 468/473, XACT 353/366, Bink decoder
+  0x0037CCD0 -> 0x003B2F40); its game code is 3.57 MB (+222 KB), 10,733 of
+  17,839 DUB functions identical, 3,050 changed. Lift: 21,424 functions,
+  0 failed, 327 unresolved, 271 unimplemented. Disc: 909 files, 4.5 GB,
+  +160 Flash screens, +42 movies, +10 resource packs, same formats.
+  Overrides: ported from the DUB Edition's by tools/port_overrides.py
+  (123 of 129 addresses by themselves; config/remix/port_map.txt: memmove
+  0x002DB4C0, loading-screen thread start 0x0001BC10, heartbeat Sleep
+  return 0x001B1654). Data: D3D push-buffer state 0x00422D80, frame time
+  0x004B2D70 (config/remix/game.h). Watch: the disassembler starts a
+  function at 0x0001BC1C, inside 0x0001BC10 (a false split, as the career
+  race crash's).
 
 ### First lift (2026-10-14)
 
