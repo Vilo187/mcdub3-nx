@@ -55,6 +55,12 @@ static int setenv(const char *name, const char *value, int overwrite)
 #ifndef MC3_EDITION
 #  define MC3_EDITION "unknown"   /* facts from before 2026-10-21: make lift */
 #endif
+/* The edition this package is for (make switch EDITION=eur:
+ * mcdub3-nx-eur.nro): its disc folder on the SD card, game-<edition>/, is
+ * looked for first. Default: the lifted one. */
+#ifndef MC3_PACKAGE_EDITION
+#  define MC3_PACKAGE_EDITION MC3_EDITION
+#endif
 
 #ifndef MC3_SD_DIR
 #  define MC3_SD_DIR "mcdub3-nx"
@@ -585,14 +591,29 @@ static int game_main(void)
     setvbuf(stderr, NULL, _IONBF, 0);
 #endif
     printf("=== " MC3_XBE_TITLE_NAME " (Xbox) - static recompilation ===\n");
-    printf("mcdub3-nx %s, lifted from the %s disc, %s\n", MC3_VERSION, MC3_EDITION, MC3_BUILD_ID);
+    printf("mcdub3-nx %s, %s package, lifted from the %s disc, %s\n", MC3_VERSION,
+           MC3_PACKAGE_EDITION, MC3_EDITION, MC3_BUILD_ID);
     install_crash_reporter();
     set_runtime_defaults();
     log_settings();
 
     game_dir = getenv("MC3_GAME_DIR");
-    if (!game_dir || !game_dir[0])
+    if (!game_dir || !game_dir[0]) {
         game_dir = MC3_DEFAULT_GAME_DIR;
+#ifdef __SWITCH__
+        /* Several editions on one card, as on a computer: this NRO's
+         * game-<edition>/ if it holds a disc, else game/. */
+        static char ed_dir[256];
+        FILE *probe;
+        snprintf(ed_dir, sizeof ed_dir, "sdmc:/switch/" MC3_SD_DIR "/game-%s/default.xbe",
+                 MC3_PACKAGE_EDITION);
+        if ((probe = fopen(ed_dir, "rb")) != NULL) {
+            fclose(probe);
+            *strrchr(ed_dir, '/') = 0;
+            game_dir = ed_dir;
+        }
+#endif
+    }
     snprintf(xbe_path, sizeof(xbe_path), "%s/default.xbe", game_dir);
     {
         /* Replacement textures (renderer, hd_pack.c) live beside the game,

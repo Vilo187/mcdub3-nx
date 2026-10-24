@@ -627,7 +627,7 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
 
   ```sh
   # actions-runner/.env
-  MC3_DISCS=/home/<you>/mcdub3-discs      # contains usa/default.xbe ...
+  MC3_DISCS=/home/<you>/mcdub3-discs      # contains usa/default.xbe (the lifted disc)
   MC3_KEYS=/home/<you>/keys/prod.keys     # your console's keys, for the NSPs
   ```
 
@@ -639,11 +639,15 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
   Run it as a service (`sudo ./svc.sh install && sudo ./svc.sh start`). Each
   build lifts the disc again in a work folder beside the checkout
   (`mcdub3-work-<edition>`, kept between runs: Python venv, build trees).
-- *Editions*: `config/xbe_facts.h` names the edition this lift is for
-  (`MC3_EDITION`, from the XBE's region) and its size and hash; the NRO
-  refuses any other `default.xbe` with a message. A second edition needs a
-  disc folder on the runner, an entry in the build matrix, and its own lift
-  configuration (ADR 0005).
+- *Editions*: `config/xbe_facts.h` names the disc this lift was made from
+  (`MC3_EDITION`, from the XBE's region), `config/xbe_editions.h` every
+  edition whose code is the same (usa, eur); the NRO refuses any other
+  `default.xbe` with a message. The build matrix builds one NRO per edition
+  (`make switch EDITION=<edition>`: mcdub3-nx-<edition>.nro, looking in
+  `game-<edition>/` on the card first, then `game/`), all from the lifted
+  disc, so the runner needs only that one in `MC3_DISCS`. An edition with
+  other code would need a lift of its own (ADR 0005). Each edition's NSP
+  has its own title ID and name in `switch/app.env`.
 
 ## Texture packs (HD)
 

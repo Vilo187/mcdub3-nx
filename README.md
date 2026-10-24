@@ -39,11 +39,12 @@ Playing on the Mac and Linux, 30 FPS is consistently achieved with 5x upscale se
 
 ## Supported Editions
 
-| File              | Edition                                                                  |
-| ----------------- | ------------------------------------------------------------------------ |
-| mcdub3-nx-usa.nro | NTSC-U (USA) and PAL (Europe: English, French, German, Spanish, Italian) |
+| File              | Edition                                                 |
+| ----------------- | ------------------------------------------------------- |
+| mcdub3-nx-usa.nro | NTSC-U (English)                                        |
+| mcdub3-nx-eur.nro | PAL (Europe: English, French, German, Spanish, Italian) |
 
-Both discs run with the same build: their program is identical, only the disc's header and three data files differ. Several editions can live side by side on a computer: the first disc in `game/`, another in `game-<edition>/` beside it (`game-eur/` for the European disc), picked with `EDITION=eur` (see the installation steps below). The European disc's other languages follow the console language: `RECOMP_LANGUAGE=fr`, `de`, `es` or `it` (default `en`).
+Both editions are built from the same lift: their program is identical, only the disc's header and three data files differ. Several editions can live side by side, on a computer and on the Switch's SD card: a disc in `game/` and others in `game-<edition>/` beside it (`game-eur/` for the European disc). Which one plays: `EDITION=eur` if given; otherwise the only disc there is; of several, `game/`, then `game-usa/`, then the first by name (the game says which it picked). Each NRO looks in its own `game-<edition>/` first, then in `game/`. The European disc's other languages follow the console language: `RECOMP_LANGUAGE=fr`, `de`, `es` or `it` (default `en`).
 
 ## Installation
 
@@ -53,9 +54,10 @@ Visit the [installation](https://laureladastra.github.io/mcdub3-homepage/) page 
 
 ```
 sdmc:/switch/mcdub3-nx/
-├── mcdub3-nx-usa.nro       the downloaded NRO
+├── mcdub3-nx-usa.nro       the downloaded NRO (mcdub3-nx-eur.nro for the European disc)
 ├── mcdub3_env.txt          optional settings                            
-└── /game                   the extracted disc (not the ISO), USA or Europe
+├── /game                   the extracted disc (not the ISO), USA or Europe
+└── /game-eur               optional: a second edition's disc beside it
 ```
 
 Copy the game files to the `/game` directory within this folder. Move this folder to `sdmc:/switch/mcdub3-nx/` on the Nintendo Switch. Install the .nsp to get a plug-and-play experience.

@@ -8,10 +8,12 @@
  *             then mcdub3_env.txt beside the exe, NAME=value per line, #
  *             comments; the later file wins, the real environment (make run
  *             RECOMP_GL_SCALE=2, a launcher) over both
- *   the disc  MC3_GAME_DIR, else the repo's game-<EDITION>\ (EDITION from
- *             the settings), else game\ beside the exe, else the repo's
- *             game\, game-usa\, game-eur\ (dist\ sits in
- *             work\build-windows-<arch>\)
+ *   the disc  as tools/env.sh picks it: MC3_GAME_DIR; else EDITION (the
+ *             settings; make build EDITION=eur writes it): the repo's
+ *             game-<edition>\; else the only disc there is (game\ beside
+ *             the exe, the repo's game\ or game-*\); of several, game\,
+ *             then the lifted edition's, then the first by name
+ *             (dist\ sits in work\build-windows-<arch>\)
  *   saves     MC3_SAVE_DIR, else the repo's work\save\ if there is one
  *   the log   started without a console of its own to report to (a
  *             double-click gives it a fresh one): stdout and stderr go to
@@ -22,6 +24,7 @@
 #if defined(_WIN32)
 #include <windows.h>
 #include <stdio.h>
+#include "xbe_facts.h"         /* MC3_EDITION: the edition the code was lifted from */
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -132,10 +135,77 @@ static void log_to_file_if_alone(void)
     }
 }
 
+static int has_disc(const char *dir)
+{
+    char xbe[sizeof s_exe_dir + 96];
+    snprintf(xbe, sizeof xbe, "%s\\default.xbe", dir);
+    return is_file(xbe);
+}
+
+static void pick_game_dir(void)
+{
+    char repo[sizeof s_exe_dir + 16], cand[16][sizeof s_exe_dir + 64], pick[sizeof s_exe_dir + 64] = "";
+    const char *ed = getenv("EDITION"), *e = getenv("MC3_GAME_DIR");
+    int n = 0, i;
+    WIN32_FIND_DATAA fd;
+    HANDLE h;
+    if (e && *e)
+        return;
+    snprintf(repo, sizeof repo, "%s\\..\\..\\..", s_exe_dir);
+    if (ed && *ed) {                                       /* EDITION first */
+        snprintf(pick, sizeof pick, "%s\\game-%s", repo, ed);
+        if (!has_disc(pick) && !strcmp(ed, "usa"))         /* the folder before editions */
+            snprintf(pick, sizeof pick, "%s\\game", repo);
+        _putenv_s("MC3_GAME_DIR", pick);
+        return;
+    }
+    snprintf(cand[n], sizeof cand[n], "%s\\game", s_exe_dir);
+    if (has_disc(cand[n])) n++;
+    snprintf(cand[n], sizeof cand[n], "%s\\game", repo);
+    if (has_disc(cand[n])) n++;
+    {
+        char pat[sizeof repo + 16];
+        snprintf(pat, sizeof pat, "%s\\game-*", repo);
+        if ((h = FindFirstFileA(pat, &fd)) != INVALID_HANDLE_VALUE) {
+            do {
+                if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && n < 16) {
+                    snprintf(cand[n], sizeof cand[n], "%s\\%s", repo, fd.cFileName);
+                    if (has_disc(cand[n])) n++;
+                }
+            } while (FindNextFileA(h, &fd));
+            FindClose(h);
+        }
+    }
+    if (n == 0)
+        return;                                            /* fatal() at the XBE says so */
+    if (n == 1) {
+        _putenv_s("MC3_GAME_DIR", cand[0]);
+        return;
+    }
+    /* Several: game\, then the lifted edition's, then the first by name. */
+    for (i = 0; i < n && !pick[0]; i++) {
+        const char *base = strrchr(cand[i], '\\');
+        if (base && !strcmp(base + 1, "game"))
+            strcpy(pick, cand[i]);
+    }
+    for (i = 0; i < n && !pick[0]; i++) {
+        const char *base = strrchr(cand[i], '\\');
+        if (base && !strncmp(base + 1, "game-", 5) && !strcmp(base + 6, MC3_EDITION))
+            strcpy(pick, cand[i]);
+    }
+    if (!pick[0]) {
+        strcpy(pick, cand[0]);
+        for (i = 1; i < n; i++)
+            if (strcmp(cand[i], pick) < 0)
+                strcpy(pick, cand[i]);
+    }
+    fprintf(stderr, "note: several discs; %s is used (EDITION=<name> in mcdub3_env.txt picks game-<name>)\n",
+            strrchr(pick, '\\') + 1);
+    _putenv_s("MC3_GAME_DIR", pick);
+}
+
 void windows_boot(void)
 {
-    static const char *const game[] = { "game", "..\\..\\..\\game", "..\\..\\..\\game-usa",
-                                        "..\\..\\..\\game-eur", NULL };
     static const char *const save[] = { "..\\..\\save", NULL };
     char *slash;
     GetModuleFileNameA(NULL, s_exe_dir, sizeof s_exe_dir);
@@ -145,18 +215,7 @@ void windows_boot(void)
     remember_environment();
     load_settings("mcdub3_defaults.txt");
     load_settings("mcdub3_env.txt");
-    {
-        /* EDITION (make build EDITION=eur writes it to the defaults): the
-         * repo's game-<edition>\ first, as tools/env.sh picks it. */
-        const char *ed = getenv("EDITION");
-        if (ed && *ed) {
-            char rel[64];
-            const char *const one[] = { rel, NULL };
-            snprintf(rel, sizeof rel, "..\\..\\..\\game-%s", ed);
-            find_dir("MC3_GAME_DIR", one);
-        }
-    }
-    find_dir("MC3_GAME_DIR", game);
+    pick_game_dir();
     find_dir("MC3_SAVE_DIR", save);
 }
 

@@ -37,10 +37,13 @@ jobs:
     timeout-minutes: 240
     strategy:
       matrix:
-        # One entry per edition of the game. The runner keeps each disc in
-        # $MC3_DISCS/<edition>/ (CONTRIBUTING.md, Releases); a new edition
-        # also needs its own lift configuration (docs/decisions/0005).
-        edition: [usa]
+        # One entry per edition (switch/app.env APP_EDITIONS): an NRO each,
+        # mcdub3-nx-<edition>.nro. They share one lift (config/xbe_editions.h:
+        # the discs' code is the same), made from the disc config/xbe_facts.h
+        # names, so the runner needs only that one, in $MC3_DISCS/<edition>/
+        # (CONTRIBUTING.md, Releases). An edition with other code would need
+        # a lift of its own (docs/decisions/0005).
+        edition: [usa, eur]
     env:
       # Kept between runs on the runner: the Python venv and build trees.
       MC3_WORK: ${{ github.workspace }}/../mcdub3-work-${{ matrix.edition }}
@@ -60,9 +63,11 @@ jobs:
       - name: Disc
         run: |
           : "${MC3_DISCS:?the runner needs MC3_DISCS in its .env (CONTRIBUTING.md, Releases)}"
-          test -f "$MC3_DISCS/${{ matrix.edition }}/default.xbe" \
-            || { echo "no disc for ${{ matrix.edition }} in $MC3_DISCS"; exit 1; }
-          echo "MC3_GAME_DIR=$MC3_DISCS/${{ matrix.edition }}" >> "$GITHUB_ENV"
+          # The lifted edition's disc, whichever edition this package is for.
+          lift=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' config/xbe_facts.h)
+          test -f "$MC3_DISCS/$lift/default.xbe" \
+            || { echo "no disc for $lift (the lifted edition) in $MC3_DISCS"; exit 1; }
+          echo "MC3_GAME_DIR=$MC3_DISCS/$lift" >> "$GITHUB_ENV"
 
       - name: Python for the lift
         run: |
@@ -84,7 +89,7 @@ jobs:
           DESCRIPTION: ${{ inputs.description }}       # as data, never as script
           BUILD_ID: ${{ steps.version.outputs.build_id }}
         run: |
-          make switch NO_GAME=1 RELEASE_DIR="$RUNNER_TEMP/release" MC3_BUILD_ID="$BUILD_ID"
+          make switch NO_GAME=1 EDITION="${{ matrix.edition }}" RELEASE_DIR="$RUNNER_TEMP/release" MC3_BUILD_ID="$BUILD_ID"
           printf '%s\n' "$DESCRIPTION" > "$RUNNER_TEMP/release/description.txt"
           ls -l "$RUNNER_TEMP/release"
 
