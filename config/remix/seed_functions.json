@@ -474,5 +474,21 @@
  {
   "start": "0x003D9EF3",
   "note": "The DUB Edition's seed 0x003A3C73, found here by its first 24/16 bytes (unique in the Remix XBE; tools/match_lifts.py could not anchor it, 2026-10-24). There: XNET. Indirect-call target observed on the 2026-10-14 run 8, while the game polled XNetGetTitleXnAddr (0x00395DAA) forever for a network address. Starts right after sub_003A3BEE's ret (mov dl,[ecx+0x8C8]; dec; cmp 0x19: a switch over XNet's state byte); its address is stored by XNET code at 0x003A46A6, i.e. a registered timer/DPC callback that never ran."
+ },
+ {
+  "start": "0x0013A770",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-24 Remix run, after the legal screen. push ecx; push esi; mov esi,ecx after int3 padding that follows 'jmp [eax+0x18]' at 0x0013A762 -- the twin of the DUB Edition's seed 0x00123420 (same shape; there its neighbour was a jump table misread as a function). In no function's range: a gap, so it splits nothing."
+ },
+ {
+  "start": "0x0016F9C0",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-24 Remix run, after the legal screen. sub esp,0x64; push esi; push edi after int3 padding that follows data (00 00 01 00) -- the twin of the DUB Edition's seed 0x00157850 (one of three byte matches for it; this is the one reached). In no function's range: a gap, so it splits nothing."
+ },
+ {
+  "start": "0x0018F9D0",
+  "note": "Indirect-call target that failed to resolve on the 2026-10-24 Remix run, at the title screen (PRESS START). mov eax,[0x0050F148]; push ebp; push esi right after the tail call 'jmp 0x00161C30' at 0x0018F9CB, no padding between: in no function's range, a gap, so it splits nothing; reached only through a pointer."
+ },
+ {
+  "start": "0x002AA2A0",
+  "note": "Indirect-call target that failed to resolve 1,354 times on the 2026-10-24 Remix run, in the menus. sub esp,0x5c; then SSE loads (movss) of a vector argument, right after 'jmp 0x002AA278' at 0x002AA29E with no padding: in no function's range, a gap, so it splits nothing; reached only through a pointer."
  }
 ]

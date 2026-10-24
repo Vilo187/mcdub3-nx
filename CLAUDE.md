@@ -337,10 +337,22 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   a boundary; DUB's lift changed too, still plays); (3) XACT's DSP command
   wait: doorbell per game (game.h, MC3_APU_DSP_ACK); (4) seeds 0x00027490,
   0x003D9EF3 (the DUB seeds 0x000271C0, 0x003A3C73, found by their bytes).
-  Now: the first movie (rockstar.bik) opens, Bink reads its timers for a
-  second, then the player stops calling Bink and nothing is drawn; the main
-  loop (sub_0001FA11) races without touching D3D. MC3_TABLE_TRACE=1 traces
-  the CSV table loader.
+  (5) the state machine (object at 0x00557ED0, state at +4; DUB
+  0x0051886C) never left state 1: "enter state 4" (sub_00021D30) stores
+  the state through esi, and the per-frame movie function returned with
+  esi/edi popped as zeros -- BinkDoFrame came back 0x8128 bytes of stack
+  short because Bink's audio decoder sub_003AE8C0 was split by a false
+  start at 0x003AEA35 (data in XGRPH's tail decoded as a call to it).
+  Excluded in config/remix/not_functions.json (toolkit --exclude-functions,
+  33fc84c). (6) seeds 0x0013A770, 0x0016F9C0, 0x0018F9D0 (gap functions
+  reached only through pointers; the first two are the DUB seeds
+  0x00123420 / 0x00157850's twins). The Remix then plays its boot movies
+  and reaches the title screen (PRESS START, city flythrough) at 30 fps.
+  The Remix uses SSE (movss/mulss/comiss/cvttss2si) where the DUB Edition
+  used x87; the lifter handles what was met so far. Tools: MC3_TABLE_TRACE
+  (CSV table loader), MC3_STATE_TRACE (both games: state requests and
+  changes), MC3_ABI_CHECK (Remix: callee-saved registers and stack across
+  the movie path); tools/match_lifts.py, tools/port_overrides.py.
 
 ### First lift (2026-10-14)
 
