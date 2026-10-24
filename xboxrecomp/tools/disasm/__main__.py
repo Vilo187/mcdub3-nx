@@ -86,6 +86,17 @@ def main():
              "into each other.",
     )
 
+    parser.add_argument(
+        "--exclude-functions",
+        action="append",
+        default=None,
+        metavar="JSON",
+        help="JSON file (the seed format: objects with a 'start' hex address) "
+             "of addresses that are NOT function starts, whatever a pass "
+             "finds there. The mirror image of --seed-functions: for false "
+             "starts that split a function. Repeatable.",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -101,6 +112,10 @@ def main():
             if args.verbose:
                 print(f"  Seed file {_seed_path}: {len(_got)} addresses")
         seed_funcs = sorted(set(seed_funcs))
+        exclude_funcs = []
+        for _path in (args.exclude_functions or []):
+            exclude_funcs.extend(_load_seed_functions(_path))
+            print(f"  Exclude file {_path}: {len(exclude_funcs)} addresses are no function starts")
         disassembler = Disassembler(
             xbe_path=args.xbe_path,
             analysis_json=args.analysis_json,
@@ -111,6 +126,7 @@ def main():
             force=args.force,
             extra_sections=extra,
             seed_functions=seed_funcs,
+            exclude_functions=exclude_funcs,
         )
         success = disassembler.run()
         sys.exit(0 if success else 1)

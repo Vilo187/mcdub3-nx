@@ -38,7 +38,8 @@ class Disassembler:
                  verbose: bool = False,
                  force: bool = False,
                  extra_sections: Optional[list] = None,
-                 seed_functions: Optional[list] = None):
+                 seed_functions: Optional[list] = None,
+                 exclude_functions: Optional[list] = None):
         self.xbe_path = xbe_path
         self.analysis_json = analysis_json
         self.output_dir = output_dir or config.DEFAULT_OUTPUT_DIR
@@ -48,6 +49,7 @@ class Disassembler:
         self.force = force
         self.extra_sections = extra_sections or []
         self.seed_functions = seed_functions or []
+        self.exclude_functions = set(exclude_functions or [])
 
         # Components (initialized during run)
         self.image: Optional[BinaryImage] = None
@@ -67,7 +69,7 @@ class Disassembler:
 
         # Check cache
         cache = AnalysisCache(self.output_dir)
-        if not self.force:
+        if not self.force and not self.exclude_functions:   # exclusions: no cache key, so re-run
             json_path = self._find_analysis_json()
             if json_path and cache.is_valid(self.xbe_path, json_path,
                                              self.text_only,
@@ -159,6 +161,9 @@ class Disassembler:
             print("\nPhase 5: Detecting functions...")
         self.func_detector = FunctionDetector(
             self.engine, self.image, self.xrefs, self.labels)
+        self.func_detector.excluded = self.exclude_functions
+        if self.exclude_functions and self.verbose:
+            print(f"  Excluding {len(self.exclude_functions)} addresses as function starts")
 
         # Add seed functions from vtable scanner or other sources
         if self.seed_functions:

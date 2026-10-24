@@ -274,7 +274,16 @@ class FunctionDetector:
                 self._alias_entries[addr] = body_end
 
     def _add_candidate(self, addr: int, confidence: float, method: str) -> None:
-        """Add a function start candidate, keeping highest confidence."""
+        """Add a function start candidate, keeping highest confidence.
+
+        Addresses in `excluded` (--exclude-functions) never become one: the
+        mirror image of seeds, for starts the passes get wrong and nothing
+        else can rule out -- e.g. a "call" decoded out of data that lands in
+        the middle of a real function's instruction and splits it (MC3
+        Remix: 0x003AA2B0 in XGRPH's data tail -> 0x003AEA35, inside Bink's
+        audio decoder, whose epilogue was then lost, 2026-10-24)."""
+        if addr in getattr(self, "excluded", ()):
+            return
         existing = self._candidates.get(addr)
         if existing is None or confidence > existing[0]:
             self._candidates[addr] = (confidence, method)
