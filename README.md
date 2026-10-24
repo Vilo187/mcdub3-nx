@@ -1,11 +1,8 @@
 <p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="500"></p>
 
-<p align="center"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg"> <img src="https://img.shields.io/badge/Nintendo Switch-21.0.0-orange?logo=nintendo"> <img src="https://img.shields.io/badge/Mac-%20Sequoia%2015.6-green?logo=nintendo"> <img src="https://img.shields.io/badge/Linux-Ubuntu 22.04-purple?logo=nintendo"> <img src="https://img.shields.io/badge/Windows-11-blue.svg"> <img src="https://img.shields.io/badge/OpenGL-renderer-blue?logo=opengl"> </p>
+<p align="center"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg"> <img src="https://img.shields.io/badge/Nintendo Switch-21.0.0-orange"> <img src="https://img.shields.io/badge/Mac-%20Sequoia%2015.6-green?logo=apple"> <img src="https://img.shields.io/badge/Linux-Ubuntu 22.04-purple?logo=linux"> <img src="https://img.shields.io/badge/Windows-11-blue"> <img src="https://img.shields.io/badge/OpenGL-renderer-blue?logo=opengl"></p>
 
-<p align="center"><img src="assets/preview.png" alt="Midnight Club 3: DUB Edition" width="450"></p>
-
-
-
+<hr>
 
 The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux, macOS and Windows without the requirement of emulation.
 
@@ -14,6 +11,22 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 > [!WARNING]
 > **No game data is included.** You need your own copy of the Xbox disc.
 >
+
+## ✨ Status
+
+The Switch build can play towards the end until 100% career progress. Playing on requires maximum overclock with the game running at 20-25 FPS of the games' maximum 30 FPS. Improvements are focused on performance.
+
+<p align="center"><img src="assets/switch.png" alt="Midnight Club 3: DUB Edition" width="450"></p>
+
+
+<hr>
+
+Playing on the Mac and Linux, 30 FPS is consistently achieved with 5x upscale settings (close to 4K) support. Improvements are focused on graphics and minor bug fixes.
+
+<p align="center"><img src="assets/preview.png" alt="Midnight Club 3: DUB Edition" width="450"></p>
+
+> [!WARNING]
+> Windows support is experimental and still being tested.
 
 ## Platforms
 
@@ -105,9 +118,6 @@ The game can be ran locally without packaging:
 
 ### Windows
 
-> [!WARNING]
-> Windows support is new and still being tested.
-
 The game can be ran locally or packaged by following these instructions:
 
 1. Copy the code to a folder without spaces in its path (i.e. `C:\Games\mcdub3-nx`):
@@ -115,7 +125,7 @@ The game can be ran locally or packaged by following these instructions:
    ```sh
    git clone https://github.com/laureladastra/mcdub3-nx.git
    ```
-2. Put your extracted disc (`default.xbe` and the rest) or `.iso`  in the `game` folder. The installer will automatically unpacks the .iso.
+2. Put your extracted disc (`default.xbe` and the rest) or `.iso`  in the `game` folder. The installer will automatically unpack the .iso.
 3. Double-click the installer **`install_windows.bat`**. The installer sets up [MSYS2](https://www.msys2.org) (the build tools, in `C:\msys64`) if it doesn't exist, lift the game's code, build it and put a **Midnight Club 3** shortcut on the desktop. The first run takes about an hour and requires an internet connection to install the dependencies.
 
 The game lives in `work\build-windows-<arch>\dist\` (`x86_64`, or `aarch64` on Windows on ARM): `mcdub3.exe` and its DLLs. Start it with the desktop shortcut or by double-clicking `mcdub3.exe`. Every build makes or refreshes the shortcut. Keep the exe in that folder (it needs its DLLs and finds the disc in the repo's `game` folder). Settings go in **`mcdub3_env.txt`** in that same folder, one `NAME=value` per line, for example `RECOMP_GL_SCALE=2`, according to the specifications in [Settings](##Settings). By default the game renders at scale 5 (3600x2400) with menu and HUD art at 5 too. The keyboard plays as player 1 and SDL game controllers are supported.
@@ -156,7 +166,11 @@ It takes a `.gsx` or raw memory unit dump, an extracted save folder, a bare `.mc
 
 An imported profile keeps its owner's settings, controller layout included. If driving or nitrous sit on the wrong buttons, pick the default layout in the game's controller options.
 
-**PS2 saves can't be used.** The PS2 release of the same game (SLUS-21029) stores its profiles in its own layout, about a third smaller than the Xbox's and with most fields elsewhere; the PS2 *Remix* has yet another one. `make import-save` reads PS2 saves and says which version they are. Saves made by this port won't load on a real Xbox.
+> [!warning]
+> **PS2 saves cannot be used.**
+>
+
+The PS2 release of the same game (SLUS-21029) stores its profiles in its own layout, about a third smaller than the Xbox's and with most fields elsewhere; the PS2 *Remix* has yet another one. `make import-save` reads PS2 saves and says which version they are. Saves made by this port won't load on a real Xbox.
 
 ## Technical Overview
 
