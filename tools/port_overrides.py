@@ -22,7 +22,16 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import match_lifts as ml  # noqa: E402
 
-TOKEN = re.compile(r"\bsub_([0-9A-Fa-f]{8})(?![0-9A-Fa-f])|\b0x([0-9A-Fa-f]{8})u?\b")
+TOKEN = re.compile(r"\bsub_([0-9A-Fa-f]{8})(?![0-9A-Fa-f])|\b0x([0-9A-Fa-f]{6,8})u?\b")
+
+
+def is_address(h, v, xa):
+    """A literal names an address when it lies in A's image -- and, written
+    with fewer than eight digits, from 0x100000 up: 0x482AA4 is Bink's data,
+    0x40000 a flag (2026-10-24: six-digit addresses went across unported)."""
+    if not (xa.lo <= v < xa.hi):
+        return False
+    return len(h) == 8 or (v >= 0x100000 and v & 0xFFFF)   # 0x100000: a size
 
 
 def main():
@@ -50,7 +59,7 @@ def main():
     for t in TOKEN.finditer(text):
         h = t.group(1) or t.group(2)
         v = int(h, 16)
-        if not (xa.lo <= v < xa.hi):
+        if not is_address(h, v, xa):
             continue                              # a constant, not an address
         if v not in seen:
             seen[v] = mp.map(v)
@@ -63,7 +72,8 @@ def main():
         b, _how = seen[v]
         if b is None:
             return t.group(0) + " /* PORT? */"
-        new = "%08x" % b if any(c in "abcdef" for c in h) else "%08X" % b
+        width = max(len(h), len("%x" % b))       # 0x482AA4 stays six digits wide
+        new = ("%0*x" if any(c in "abcdef" for c in h) else "%0*X") % (width, b)
         if t.group(1):
             return "sub_" + new
         return t.group(0).replace(h, new, 1)

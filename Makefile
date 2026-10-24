@@ -144,7 +144,7 @@ hoststacks:  ## Every thread's host backtrace after SECS (default 45): who waits
 	bash tools/host_stacks.sh $(or $(SECS),45)
 
 report:  ## Explain the snapshot in the newest run log (LOG=<file> for another)
-	@python3 tools/snapshot_report.py $(LOG)
+	@source tools/env.sh && python3 tools/snapshot_report.py $(LOG)
 
 trap:  ## Run, stopping at the first untranslated instruction reached
 	RECOMP_UNIMPL_TRAP=1 bash tools/run_linux.sh

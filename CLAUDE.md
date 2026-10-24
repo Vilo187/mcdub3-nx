@@ -326,9 +326,21 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   (123 of 129 addresses by themselves; config/remix/port_map.txt: memmove
   0x002DB4C0, loading-screen thread start 0x0001BC10, heartbeat Sleep
   return 0x001B1654). Data: D3D push-buffer state 0x00422D80, frame time
-  0x004B2D70 (config/remix/game.h). Watch: the disassembler starts a
-  function at 0x0001BC1C, inside 0x0001BC10 (a false split, as the career
-  race crash's).
+  0x004B2D70, DSP doorbell 0x83B10810 (config/remix/game.h). Watch: the
+  disassembler starts a function at 0x0001BC1C, inside 0x0001BC10 (a false
+  split, as the career race crash's).
+  Bring-up (2026-10-24): (1) six-digit addresses (0x482AA4) went across
+  unported -- port_overrides.py reads 6-8 digits now; (2) fault parsing
+  tune/progress/unlockingrules.csv: the cell converter 0x0028B850 (vtable
+  method after a switch's tables) was split into ten fragments by the
+  gap-prologue pass -- toolkit fix 6c829cb (padding after switch tables is
+  a boundary; DUB's lift changed too, still plays); (3) XACT's DSP command
+  wait: doorbell per game (game.h, MC3_APU_DSP_ACK); (4) seeds 0x00027490,
+  0x003D9EF3 (the DUB seeds 0x000271C0, 0x003A3C73, found by their bytes).
+  Now: the first movie (rockstar.bik) opens, Bink reads its timers for a
+  second, then the player stops calling Bink and nothing is drawn; the main
+  loop (sub_0001FA11) races without touching D3D. MC3_TABLE_TRACE=1 traces
+  the CSV table loader.
 
 ### First lift (2026-10-14)
 

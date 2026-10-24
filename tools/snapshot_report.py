@@ -23,7 +23,7 @@ import struct
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WORK = os.environ.get("MC3_WORK") or os.path.join(REPO, "work-" + os.environ.get("MC3_GAME", "dub"))
+WORK = os.environ.get("MC3_WORK") or os.path.join(REPO, "work-" + (os.environ.get("MC3_GAME") or os.environ.get("GAME") or "dub"))
 GAME = os.environ.get("MC3_GAME_DIR") or os.path.join(REPO, "game")
 ANALYSIS = os.path.join(WORK, "analysis")
 THUNK_VA_BASE = 0xFE000000      # synthetic kernel-thunk addresses (runtime)

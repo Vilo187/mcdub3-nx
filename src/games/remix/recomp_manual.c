@@ -73,25 +73,25 @@ void sub_002DB4C0(void)
  * exists, then CPUID leaf 1, EDX bit 23 = MMX. The vendored lifter emits
  * pushfd, popfd and cpuid as silent no-ops, so the ID bit never "sticks",
  * Bink decides the CPU has no MMX, never installs its pixel routines
- * (0x5209C8.. stay 0), and the blit loop -- whose stdcall calls through those
+ * (0x55FD70.. stay 0), and the blit loop -- whose stdcall calls through those
  * null pointers are skipped without popping their argument -- drifts its
  * stack and never ends (2026-10-14 runs, [BINKLOOP] trace).
  *
  * The Xbox CPU is a Pentium III: CPUID and MMX are always there. Same
  * results and side effects as the original:
- *   [0x482AA4] = cached "has MMX" (-1 until detected)
- *   [0x52A43C] = "use MMX", unless the caller's flags carry 0x40000
+ *   [0x4BA740] = cached "has MMX" (-1 until detected)
+ *   [0x5697DC] = "use MMX", unless the caller's flags carry 0x40000
  * cdecl: flags at [esp+4]; returns the detection result in eax. */
 void sub_002E9AC0(void)
 {
     uint32_t flags = MEM32(g_esp + 4);
-    uint32_t has_mmx = MEM32(0x482AA4);
+    uint32_t has_mmx = MEM32(0x4BA740);
 
     if ((int32_t)has_mmx < 0) {
         has_mmx = 1;
-        MEM32(0x482AA4) = has_mmx;
+        MEM32(0x4BA740) = has_mmx;
     }
-    MEM32(0x52A43C) = (has_mmx && !(flags & 0x40000u)) ? 1u : 0u;
+    MEM32(0x5697DC) = (has_mmx && !(flags & 0x40000u)) ? 1u : 0u;
     g_eax = has_mmx;
     g_esp += 4;
 }
@@ -102,7 +102,7 @@ void sub_002E9AC0(void)
  * the address (nv2a_pb_set_semaphore_target, xboxrecomp nv2a_backend.h);
  * until then every release is dropped and the wait never ends (2026-10-14
  * run 15: main thread here with PUT == GET). MC3's D3D keeps its device
- * pointer at 0x00422D78 (mov esi, [0x3ECAE8] at the top of this function).
+ * pointer at 0x00422D78 (mov esi, [0x422D78] at the top of this function).
  * Name the semaphore on the first wait, then run the original: its kick-off
  * queues new releases, which now land. */
 /*
@@ -777,7 +777,7 @@ static void bink_audio_decode(void)
     mc3_difftest_call(0x003AEDB0u, sub_003AEDB0_gen, &calls);
     if (mc3_bink_native_audio_active() && !mc3_difftest_wanted()) {
         uint32_t out = MEM32(out_ptr_va), bytes = MEM32(out_bytes_va);
-        if (out && bytes && bytes <= 0x100000u)
+        if (out && bytes && bytes <= 0x100000u /* PORT? */)
             memset((void *)XBOX_PTR(out), 0, bytes);
     }
 }
@@ -808,7 +808,7 @@ static int time_trace_on(void)
 }
 
 static struct { const char *name; long calls; uint64_t first, last; } s_clk[4] = {
-    { "ms clock (0x188170)" }, { "QPC (0x2F64FB)" }, { "QPF (0x2F650C)" }, { "rdtsc lo (0x1EF3D0)" },
+    { "ms clock (0x1A1C00)" }, { "QPC (0x32633B)" }, { "QPF (0x32634C)" }, { "rdtsc lo (0x20E140)" },
 };
 
 static void qpc_callers_print(void);
@@ -1686,4 +1686,105 @@ void sub_00279430(void)
 {
     if (!listener_fix_on()) { sub_00279430_gen(); return; }
     listener_broadcast(g_ecx, 0x2C, "race event");
+}
+
+/* ── Remix bring-up: the table parser that faults (MC3_TABLE_TRACE=1) ──
+ *
+ * First boot (2026-10-24) faulted in sub_00293B50 -- the same code as the
+ * DUB Edition's sub_00269CD0 -- on a row pointer 0xFA4F0322 while the
+ * game read its assets. It looks a table up (sub_00330400) and walks its
+ * rows as pairs of string pointers. Logs each call's this and arguments
+ * and the bytes they point to, so the input can be compared with the DUB
+ * Edition's. */
+static void table_dump(const char *what, uint32_t p)
+{
+    char hex[3 * 32 + 1], txt[33];
+    int i;
+    if (!((p >= 0x00010000u && p < 0x04000000u) || (p >= 0x80000000u && p < 0x84000000u))) {
+        fprintf(stderr, "        %s %08X (not a pointer)\n", what, p);
+        return;
+    }
+    for (i = 0; i < 32; i++) {
+        uint8_t b = MEM8(p + (uint32_t)i);
+        snprintf(hex + 3 * i, 4, "%02X ", b);
+        txt[i] = (b >= 32 && b < 127) ? (char)b : '.';
+    }
+    txt[32] = 0;
+    fprintf(stderr, "        %s %08X: %s|%s|\n", what, p, hex, txt);
+}
+extern void sub_00293B50_gen(void);
+void sub_00293B50(void)
+{
+    static int on = -1, n;
+    if (on < 0) {
+        const char *e = getenv("MC3_TABLE_TRACE");
+        on = e && e[0] == '1';
+    }
+    if (on && n++ < 40) {
+        uint32_t i;
+        fprintf(stderr, "[TABLE] #%d this %08X, args %08X %08X %08X %08X, from %08X\n", n, g_ecx,
+                MEM32(g_esp + 4), MEM32(g_esp + 8), MEM32(g_esp + 12), MEM32(g_esp + 16), MEM32(g_esp));
+        table_dump("this", g_ecx);
+        for (i = 1; i <= 4; i++) {
+            char what[8];
+            snprintf(what, sizeof what, "arg%u", i);
+            table_dump(what, MEM32(g_esp + 4 * i));
+        }
+    }
+    sub_00293B50_gen();
+}
+
+/* The table loader (sub_00330400, the DUB Edition's sub_003000A0): this =
+ * the table object; afterwards +0x10 holds the cell pointers (row-major),
+ * +0x0C (16 bits) the columns per row and +0x18 the row count, as
+ * sub_00293B50 reads them. With MC3_TABLE_TRACE=1: the shape, the first
+ * rows, and the first cell that is not a pointer into memory. */
+static int table_ptr_ok(uint32_t p)
+{
+    return (p >= 0x00010000u && p < 0x04000000u) || (p >= 0x80000000u && p < 0x84000000u);
+}
+static void table_str(char *out, size_t cap, uint32_t p)
+{
+    size_t i;
+    if (!table_ptr_ok(p)) { snprintf(out, cap, "<%08X>", p); return; }
+    for (i = 0; i + 1 < cap && MEM8(p + (uint32_t)i); i++) {
+        uint8_t b = MEM8(p + (uint32_t)i);
+        out[i] = (b >= 32 && b < 127) ? (char)b : '?';
+    }
+    out[i] = 0;
+}
+extern void sub_00330400_gen(void);
+void sub_00330400(void)
+{
+    static int on = -1, n;
+    uint32_t obj = g_ecx;
+    if (on < 0) {
+        const char *e = getenv("MC3_TABLE_TRACE");
+        on = e && e[0] == '1';
+    }
+    sub_00330400_gen();
+    if (on && n++ < 40) {
+        uint32_t cells = MEM32(obj + 0x10), cols = MEM16(obj + 0x0C), rows = MEM32(obj + 0x18), r, c;
+        char a[40], b[40];
+        fprintf(stderr, "[TABLE] load #%d -> %u: obj %08X cells %08X, %u columns x %u rows\n",
+                n, g_eax & 0xFF, obj, cells, cols, rows);
+        if (!table_ptr_ok(cells) || cols == 0 || rows > 100000)
+            return;
+        for (r = 0; r < rows && r < 3; r++) {
+            table_str(a, sizeof a, MEM32(cells + 4 * (r * cols)));
+            table_str(b, sizeof b, MEM32(cells + 4 * (r * cols + 1)));
+            fprintf(stderr, "        row %u: \"%s\" \"%s\" ...\n", r, a, b);
+        }
+        for (r = 0; r < rows; r++)
+            for (c = 0; c < cols; c++) {
+                uint32_t p = MEM32(cells + 4 * (r * cols + c));
+                if (p && !table_ptr_ok(p)) {                /* 0: an empty field */
+                    table_str(a, sizeof a, r ? MEM32(cells + 4 * ((r - 1) * cols)) : 0);
+                    fprintf(stderr, "        first bad cell: row %u column %u = %08X (row before starts \"%s\")\n",
+                            r, c, p, a);
+                    return;
+                }
+            }
+        fprintf(stderr, "        every cell a pointer\n");
+    }
 }

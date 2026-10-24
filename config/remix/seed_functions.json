@@ -466,5 +466,13 @@
  {
   "start": "0x002AC080",
   "note": "Ported from the DUB Edition's seed 0x0027F7F0 (tools/match_lifts.py: shifted, 2026-10-24). There: Not hit yet; found 2026-10-16 by scanning .rdata/.data for pointers to real function starts (after padding or a ret) that the static pass never lifted -- the same scan that found the targets hit at run time. mov eax,[esp+4] after int3 padding; two pointers in .rdata (0x0041DF94)."
+ },
+ {
+  "start": "0x00027490",
+  "note": "The DUB Edition's seed 0x000271C0, found here by its first 24/16 bytes (unique in the Remix XBE; tools/match_lifts.py could not anchor it, 2026-10-24). Hit at the Remix's first movie: [ICALL] Failed to resolve VA 0x00027490. There: Indirect-call target observed on the 2026-10-14 run 7. push ebp; mov ebp,esp after int3 padding; listed in a vtable in .rdata at 0x0041304C (a virtual method, only ever called indirectly)."
+ },
+ {
+  "start": "0x003D9EF3",
+  "note": "The DUB Edition's seed 0x003A3C73, found here by its first 24/16 bytes (unique in the Remix XBE; tools/match_lifts.py could not anchor it, 2026-10-24). There: XNET. Indirect-call target observed on the 2026-10-14 run 8, while the game polled XNetGetTitleXnAddr (0x00395DAA) forever for a network address. Starts right after sub_003A3BEE's ret (mov dl,[ecx+0x8C8]; dec; cmp 0x19: a switch over XNet's state byte); its address is stored by XNET code at 0x003A46A6, i.e. a registered timer/DPC callback that never ran."
  }
 ]
