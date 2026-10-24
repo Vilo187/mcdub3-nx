@@ -33,5 +33,5 @@ PY=/opt/homebrew/bin/python3
 echo
 echo "done. Next: put the extracted disc in game/ (or make extract ISO=<file>), then"
 echo "  make lift        lift the game's code to C (once per disc; 10-20 minutes)"
-echo "  make mac-app     the app, in work/mac_app/ (or make build run)"
+echo "  make mac-app     the app, in work-dub/mac_app/ (or make build run)"
 echo "Docker Desktop is only needed for Switch builds (make switch, make nsp)."

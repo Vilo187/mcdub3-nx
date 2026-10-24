@@ -37,4 +37,4 @@ make build
 
 echo
 echo "done. Start the game with the 'Midnight Club 3' shortcut on the desktop"
-echo "(or $(cygpath -w "$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist/mcdub3.exe"))."
+echo "(or $(cygpath -w "$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist/$MC3_APP.exe"))."

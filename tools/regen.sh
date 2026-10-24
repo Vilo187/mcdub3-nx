@@ -4,13 +4,13 @@
 #
 #   tools/regen.sh                  full run
 #   LIFT_ONLY=1 tools/regen.sh      recomp only: enough after editing
-#                                   src/recomp_manual.c or the translator;
+#                                   src/games/<game>/recomp_manual.c or the translator;
 #                                   seed changes need the full run
 #
 # Analysis goes to $MC3_ANALYSIS_DIR and the C to $MC3_GEN_DIR, both outside
 # the repo (tools/env.sh), so the vendored toolkit tree stays clean.
 #
-# Seeds (config/seed_functions.json) are entry points the static pass cannot
+# Seeds (config/<game>/seed_functions.json) are entry points the static pass cannot
 # see: thread start routines and indirect-call targets found at runtime. Grow
 # them from a run log with the toolkit's tools.seed_from_log and review every
 # addition -- a seed inside a function splits it.
@@ -22,10 +22,10 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 mc3_python
 
-# MC3_SEEDS / MC3_MANUAL: another game's seeds and overrides (a lift of the
-# Remix must not take the DUB Edition's addresses).
-SEEDS="${MC3_SEEDS:-$MC3_REPO/config/seed_functions.json}"
-MANUAL="${MC3_MANUAL:-$MC3_REPO/src/recomp_manual.c}"
+# The game's seeds and overrides (tools/env.sh: config/<game>/,
+# src/games/<game>/; MC3_SEEDS / MC3_MANUAL point elsewhere).
+SEEDS="$MC3_SEEDS"
+MANUAL="$MC3_MANUAL"
 # TRACE=<sections>: failure-tracing wrappers for every function in them
 # (tools/trace_wrappers.py), lifted and compiled with the game; empty: none.
 TRACE_C="$MC3_GEN_DIR/zz_trace_wrappers.c"

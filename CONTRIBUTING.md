@@ -12,11 +12,11 @@ Put the extracted disc (`default.xbe` + data) in `game/`, run the following comm
 
 ```sh
 make setup        # once: build deps, devkitPro, Python venv
-make lift         # parse the XBE, write config/xbe_facts.h, lift to C
+make lift         # parse the XBE, write config/<game>/xbe_facts.h, lift to C
 make build run    # Linux or macOS build + run in a window
-make switch       # Switch NRO + SD staging in work/switch_sd (HD=1: with the texture pack)
+make switch       # Switch NRO + SD staging in work-<game>/switch_sd (HD=1: with the texture pack)
 make nsp          # NSP forwarder for the home menu
-make mac-app      # Mac app (SCALE=5, UI_SCALE=5 by default, SETTINGS="K=V ...", HD=1): work/mac_app/
+make mac-app      # Mac app (SCALE=5, UI_SCALE=5 by default, SETTINGS="K=V ...", HD=1): work-<game>/mac_app/
 make hd-dump      # texture packs: dump, then make hd-tools hd-upscale
 make              # every target, grouped
 ```
@@ -26,7 +26,7 @@ make              # every target, grouped
 Build the software and copy the files to the console with the following commands:
 
 ```sh
-make switch       # Switch NRO + SD staging in work/switch_sd (HD=1: with the texture pack)
+make switch       # Switch NRO + SD staging in work-<game>/switch_sd (HD=1: with the texture pack)
 make nsp          # NSP forwarder for the home menu
 ```
 
@@ -49,7 +49,7 @@ Start with title takeover (hold **R** while launching a game) if the NRO forward
 
 ```
 STAGE 1: LIFT (Python)                            STAGE 2: BUILD (C)
-game/default.xbe ─► xboxrecomp/tools ─► work/gen/*.c ─► CMake + GCC ─► work/build-linux/mcdub3
+game/default.xbe ─► xboxrecomp/tools ─► work-<game>/gen/*.c ─► CMake + GCC ─► work-<game>/build-linux/mcdub3
  (x86 machine code)  parse, disassemble,  (the game as C)  + src/*.c          or devkitA64 ─► .nro (Switch)
                      identify, translate                   + toolkit runtime
 ```
@@ -60,27 +60,27 @@ read the Xbox executable, disassemble it (with the *capstone* library), find
 every function, recognise library code, recover how each function takes its
 arguments, and translate every x86 function into a C function. Purpose: turn
 machine code that only runs on an Xbox CPU into portable C that any compiler
-can build. Output: `work/gen/` (~90 files, ~3 M lines) plus intermediate
-results in `work/analysis/`. It runs once, then again only when the C must be
-regenerated: after changing seeds (`config/seed_functions.json`, full
-`make regen`), or hand-written overrides in `src/recomp_manual.c` / the
+can build. Output: `work-<game>/gen/` (~90 files, ~3 M lines) plus intermediate
+results in `work-<game>/analysis/`. It runs once, then again only when the C must be
+regenerated: after changing seeds (`config/<game>/seed_functions.json`, full
+`make regen`), or hand-written overrides in `src/games/<game>/recomp_manual.c` / the
 translator (`make relift`, skips the analysis steps).
 
 The stage-1 steps, each a Python tool in `xboxrecomp/tools/`:
 
 | Step        | Tool (`xboxrecomp/tools/`)                              | Does                                                        | Output                   |
 | ----------- | ------------------------------------------------------- | ----------------------------------------------------------- | ------------------------ |
-| parse       | `xbe_parser`                                            | reads the XBE header: sections, entry point, kernel imports | `work/analysis/xbe_*`    |
-| disassemble | `disasm` (uses **capstone**, a Python x86 disassembler) | finds every function and jump target                        | `work/analysis/disasm/`  |
-| identify    | `func_id`                                               | recognises library code (C runtime, XDK)                    | `work/analysis/func_id/` |
-| ABI         | `abi_analysis`                                          | recovers calling conventions and argument counts            | `work/analysis/abi/`     |
-| translate   | `recomp`                                                | turns each x86 function into a C function                   | `work/gen/`              |
+| parse       | `xbe_parser`                                            | reads the XBE header: sections, entry point, kernel imports | `work-<game>/analysis/xbe_*`    |
+| disassemble | `disasm` (uses **capstone**, a Python x86 disassembler) | finds every function and jump target                        | `work-<game>/analysis/disasm/`  |
+| identify    | `func_id`                                               | recognises library code (C runtime, XDK)                    | `work-<game>/analysis/func_id/` |
+| ABI         | `abi_analysis`                                          | recovers calling conventions and argument counts            | `work-<game>/analysis/abi/`     |
+| translate   | `recomp`                                                | turns each x86 function into a C function                   | `work-<game>/gen/`              |
 | (helpers)   | `seed_from_log`, `xiso`                                 | seed candidates from a run log; ISO unpacking               | `config/`, `game/`       |
 
 **Stage 2, the build (`make build`, `make switch`).** Plain C: CMake + GCC
 (Linux) or devkitA64 (Switch) compile three things into one program:
 
-- `work/gen/`: the game itself, as generated C;
+- `work-<game>/gen/`: the game itself, as generated C;
 - `xboxrecomp/src/`: the toolkit's runtime, which stands in for the Xbox: its
   kernel, memory map, GPU, sound chip and controllers;
 - `src/`: our own code: boot (`main.c`), hand-written function replacements
@@ -96,7 +96,7 @@ an ordinary code change never re-runs the lift.
 
 ## How our changes sit on top of the game
 
-**The generated C in `work/gen/` is never edited.** It is a build product,
+**The generated C in `work-<game>/gen/` is never edited.** It is a build product,
 like an object file: rewritten from scratch by every lift, and never committed.
 The game itself (`game/default.xbe`) is never edited either. Everything we
 change lives in our own files, applied on top of the untouched base every
@@ -106,14 +106,14 @@ time:
    game/default.xbe  (the base: never changes)
           │
           │  stage 1 lift, steered by our inputs:
-          │    config/seed_functions.json   extra function starts
-          │    src/recomp_manual.c          which functions NOT to generate
+          │    config/<game>/seed_functions.json   extra function starts
+          │    src/games/<game>/recomp_manual.c          which functions NOT to generate
           │    xboxrecomp/tools/            translator fixes
           ▼
-   work/gen/*.c  (disposable output)
+   work-<game>/gen/*.c  (disposable output)
           │
           │  stage 2 build, linked with our code:
-          │    src/recomp_manual.c          our versions of those functions
+          │    src/games/<game>/recomp_manual.c          our versions of those functions
           │    src/main.c, src/switch_nx.c  boot, data patches, platform glue
           │    xboxrecomp/src/              the runtime: the "Xbox hardware"
           ▼
@@ -124,35 +124,35 @@ How each kind of change is applied:
 
 | To change                                           | Put it in                                                                                                    | How it takes effect                                                                                                                                         |
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| a game function (bug fix, native replacement, stub) | `src/recomp_manual.c`: define `void sub_XXXXXXXX(void)`                                                      | the lift skips that function (`--exclude-manual`); the linker uses ours, for direct calls and indirect calls (the dispatch table points at the same symbol) |
+| a game function (bug fix, native replacement, stub) | `src/games/<game>/recomp_manual.c`: define `void sub_XXXXXXXX(void)`                                                      | the lift skips that function (`--exclude-manual`); the linker uses ours, for direct calls and indirect calls (the dispatch table points at the same symbol) |
 | a game function, but keep the original              | declare `extern void sub_XXXXXXXX_gen(void);`, define `sub_XXXXXXXX` and call `sub_XXXXXXXX_gen()` inside it | the lift emits the original body under the `_gen` name, so ours wraps it (trace, fix up arguments or results)                                               |
 | keep an override around but switched off            | wrap it in `#if 0 … #endif`                                                                                  | the lift ignores it and generates the original again (relift)                                                                                               |
-| a missing function                                  | `config/seed_functions.json` (with a note)                                                                   | the disassembler treats it as a function start; it gets lifted like the rest                                                                                |
+| a missing function                                  | `config/<game>/seed_functions.json` (with a note)                                                                   | the disassembler treats it as a function start; it gets lifted like the rest                                                                                |
 | game data or settings (a constant, a limit)         | `src/main.c`, after the memory is mapped: write to the guest address                                         | patched in memory at boot; the XBE file stays untouched                                                                                                     |
 | how the Xbox hardware or kernel behaves             | `xboxrecomp/src/` (commit as `xboxrecomp:`)                                                                  | rebuilt and linked                                                                                                                                          |
 | how x86 is translated                               | `xboxrecomp/tools/recomp/` (commit as `xboxrecomp:`)                                                         | the next lift produces different C                                                                                                                          |
 
 So "moving our changes back into the source" never happens: our changes *are*
 source (`src/`, `config/`, `xboxrecomp/`), and each lift re-creates the base
-from the XBE. A new lift never loses a fix, because no fix lives in `work/gen/`.
+from the XBE. A new lift never loses a fix, because no fix lives in `work-<game>/gen/`.
 
 ### Regen or just build?
 
 | You changed                                                                        | Run                 | Why                                                                             |
 | ---------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------- |
 | `src/main.c`, `src/switch_nx.c`, `xboxrecomp/src/` (runtime)                       | `make build`        | plain C; the lift is unaffected                                                 |
-| the *body* of an existing override in `src/recomp_manual.c`                        | `make build`        | same set of functions replaced; only our code changed                           |
-| *added or removed* an override in `src/recomp_manual.c`                            | `make relift build` | the lift must drop (or restore) the lifted body; fast: skips the analysis steps |
+| the *body* of an existing override in `src/games/<game>/recomp_manual.c`                        | `make build`        | same set of functions replaced; only our code changed                           |
+| *added or removed* an override in `src/games/<game>/recomp_manual.c`                            | `make relift build` | the lift must drop (or restore) the lifted body; fast: skips the analysis steps |
 | `xboxrecomp/tools/recomp/` (translator)                                            | `make relift build` | same analysis, different C                                                      |
-| `config/seed_functions.json`, `xboxrecomp/tools/disasm`, `func_id`, `abi_analysis` | `make regen build`  | the analysis itself changes (which functions exist)                             |
+| `config/<game>/seed_functions.json`, `xboxrecomp/tools/disasm`, `func_id`, `abi_analysis` | `make regen build`  | the analysis itself changes (which functions exist)                             |
 | the disc (`game/`)                                                                 | `make lift build`   | new base                                                                        |
 
 `make build` checks this for you: it stops, and names the step to run, when
 the seeds are newer than the lifted C or the set of overrides in
-`src/recomp_manual.c` differs from the one the last lift saw (read with the
+`src/games/<game>/recomp_manual.c` differs from the one the last lift saw (read with the
 toolkit's own scanner, `xboxrecomp/tools/recomp/manual_scan.py`, so the check
 and the lifter always agree). Any of `relift`
-and `regen` rewrites `work/gen/`, so the next build recompiles every chunk
+and `regen` rewrites `work-<game>/gen/`, so the next build recompiles every chunk
 (the long build); a plain `make build` only recompiles what changed.
 
 ### Files and paths on Linux and the Switch
@@ -172,11 +172,11 @@ game (lifted code)        \Device\CdRom0\..., D:\..., \Device\Harddisk0\Partitio
 |            | Linux (debug)                                            | Switch                                                   |
 | ---------- | -------------------------------------------------------- | -------------------------------------------------------- |
 | `game_dir` | `<repo>/game`, or `<repo>/game-<edition>` with `EDITION=` (tools/env.sh → `MC3_GAME_DIR`) | `sdmc:/switch/mcdub3-nx/game`                            |
-| `save_dir` | `<repo>/work/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3-nx/save`                            |
+| `save_dir` | `<repo>/work-<game>/save` (tools/run_linux.sh → `MC3_SAVE_DIR`) | `sdmc:/switch/mcdub3-nx/save`                            |
 | chosen by  | the scripts, through environment variables               | `src/main.c` defaults (`#ifdef __SWITCH__`)              |
 | override   | `MC3_GAME_DIR=…`, `MC3_SAVE_DIR=…`                       | the same keys in `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` |
 
-Editions: the USA and European discs carry the same program (config/xbe_editions.h lists
+Editions: the USA and European discs carry the same program (config/<game>/xbe_editions.h lists
 every accepted default.xbe; the boot check names the one found, `disc: edition eur`). One lift
 and one build run them all; the discs sit side by side in `game/` and `game-<edition>/`
 (gitignored), `EDITION=eur` picks one for `make extract`, `make run` and `make build` on Windows.
@@ -184,14 +184,54 @@ A new edition needs a comparison of its XBE first: different code needs a lift o
 
 So nothing about files is decided twice: the scripts in `tools/` only exist on
 the development machine and set the Linux folders; `switch/build.sh` stages the
-same layout on the SD card (`work/switch_sd/switch/mcdub3-nx/`); the game code and
+same layout on the SD card (`work-<game>/switch_sd/switch/mcdub3-nx/`); the game code and
 the path layer are identical on both.
 
 Profiles (`game_dir/UDATA/54540079/<12 hex>/`) are signed with the port's
 all-zero key, so they move freely between Linux, Mac and Switch. Profiles
 from a real Xbox are signed with its key and need `make import-save FILE=…`
 (tools/save_import.py: reads memory unit dumps, `.gsx`, folders, `.mc3`; PS2 `.max`/`.sps` read and refused, another format;
-re-signs; backs up to `work/saves-backup/`). Details in CLAUDE.md, Saves.
+re-signs; backs up to `work-<game>/saves-backup/`). Details in CLAUDE.md, Saves.
+
+## Two games: GAME=dub and GAME=remix
+
+The repo builds two games (docs/decisions/0006): *Midnight Club 3: DUB
+Edition* (`GAME=dub`, the default) and *DUB Edition Remix* (`GAME=remix`).
+Add `GAME=remix` to any target: `make lift build run GAME=remix`,
+`make switch GAME=remix EDITION=eur`.
+
+| | DUB Edition | Remix |
+|---|---|---|
+| config | `config/dub/` | `config/remix/` |
+| overrides | `src/games/dub/recomp_manual.c` | `src/games/remix/recomp_manual.c` |
+| discs | `game/`, `game-<edition>/` | `game-remix/`, `game-remix-<edition>/` |
+| generated | `work-dub/` | `work-remix/` |
+| executable, Switch folder | `mcdub3`, `mcdub3-nx/` | `mcdub3remix`, `mcdub3remix-nx/` |
+| NRO | `mcdub3-nx-<edition>.nro` | `mcdub3remix-nx-<edition>.nro` |
+| Switch identity | `switch/app.env` | `switch/app-remix.env` |
+
+A fix for one game goes in its own `config/<game>/` or `src/games/<game>/`;
+the other game never builds it. A fix that holds for both goes in shared
+code (everything else). Shared code takes no game's addresses: what it needs
+comes from `config/<game>/game.h`.
+
+The Remix's overrides started as a port of the DUB Edition's, every address
+rewritten (2026-10-24):
+
+```
+tools/match_lifts.py  game-usa/default.xbe work-dub/analysis/disasm/functions.json \
+    game-remix-eur/default.xbe work-remix/analysis/disasm/functions.json \
+    --manual src/games/dub/recomp_manual.c --seeds config/dub/seed_functions.json
+tools/port_overrides.py <the same four> --src src/games/dub/recomp_manual.c \
+    --out src/games/remix/recomp_manual.c --map config/remix/port_map.txt
+```
+
+`match_lifts.py` pairs the two lifts' functions (identical code with addresses
+masked, neighbours in order, similar code, shifted code) and reports where
+each override and seed of one build sits in the other. `port_overrides.py`
+rewrites a file through it, data addresses too (the same operand of the twin
+instruction); what it cannot map stays and is marked `PORT?`. Use them to
+carry a new DUB Edition fix over, or to find a function in the other build.
 
 ## Project layout
 
@@ -213,21 +253,26 @@ mcdub3-nx/
 │
 ├── src/                      [git] OUR C code, compiled with the lifted code
 │   ├── main.c                  boot: load XBE, map Xbox memory, start devices, jump to the game
-│   ├── recomp_manual.c         hand-written replacements for specific lifted functions
+│   ├── games/<game>/           per game (dub, remix): only the selected game's is built
+│   │   └── recomp_manual.c       hand-written replacements for specific lifted functions
 │   ├── ac97_nabm.c             AC'97 audio controller registers (reset bits complete at once)
 │   ├── difftest.c              guest snapshot around one call, for tools/difftest.py
 │   ├── bink_native.c           movies: FFmpeg decodes Bink video and plays the soundtrack
 │   └── switch_nx.c             Switch only: log file, settings file, crash handler
 │
-├── config/                   [git] per-game inputs to stage 1 and 2
+├── config/<game>/            [git] per-game inputs to stage 1 and 2 (dub, remix)
+│   ├── game.env                names and folders: app name, Switch folder, disc folders
+│   ├── game.h                  the guest addresses shared code needs (main.c)
 │   ├── seed_functions.json     extra function start addresses for the disassembler (see "seeds")
-│   └── xbe_facts.h             entry point + title ID, written by `make lift`, used by main.c
+│   ├── xbe_editions.h          every disc (edition) the lift runs, checked at boot
+│   ├── xbe_facts.h             entry point + title ID, written by `make lift`, used by main.c
+│   └── port_map.txt            remix only: hand-found DUB -> Remix addresses (tools/port_overrides.py)
 │
 ├── tools/                    [git] scripts behind the make targets
-│   ├── env.sh                  shared paths (game/, work/), picks a Python with capstone
+│   ├── env.sh                  shared paths (game/, work-<game>/), picks a Python with capstone
 │   ├── first_lift.sh           make lift: parse + write xbe_facts.h + full regen
 │   ├── regen.sh                make regen / relift: the stage-1 pipeline
-│   ├── build_linux.sh          make build: CMake + Ninja into work/build-linux*
+│   ├── build_linux.sh          make build: CMake + Ninja into work-<game>/build-linux*
 │   ├── run_linux.sh            make run / run-gdb / run-headless / snapshot / trap
 │   ├── snapshot_report.py      make report: a crash/watchdog snapshot, explained
 │   ├── difftest.py             make difftest: replay a captured call on x86, diff vs lifted
@@ -274,7 +319,7 @@ mcdub3-nx/
 │   ├── assets_x.dat(_1.._5), banks.dat, audio/, flash/, media/, resources/, video/ (Bink .bik)
 │   └── dashupdate.xbe, downloader.xbe, update.xbe   Xbox system tools on the disc; not used
 │
-└── work/                     [ignored] EVERYTHING GENERATED; delete any part and rebuild it
+└── work-<game>/                     [ignored] EVERYTHING GENERATED; delete any part and rebuild it
     ├── analysis/             [generated] stage-1 intermediate results (make lift / regen)
     │   ├── xbe_summary.txt, xbe_analysis.json    the XBE parse
     │   ├── disasm/             functions.json, labels.json, xrefs.json, strings.json, asm/
@@ -306,12 +351,12 @@ mcdub3-nx/
 
 | Want to              | Delete                                         | Then         |
 | -------------------- | ---------------------------------------------- | ------------ |
-| Rebuild from scratch | `make clean-build` (`work/build-*`)            | `make build` |
-| Re-lift from scratch | `make clean-gen` (`work/gen`, `work/analysis`) | `make lift`  |
-| Free disk            | old `work/build-*`, `work/logs/*`              | nothing      |
-| Reset Python         | `work/venv`                                    | `make setup` |
+| Rebuild from scratch | `make clean-build` (`work-<game>/build-*`)            | `make build` |
+| Re-lift from scratch | `make clean-gen` (`work-<game>/gen`, `work-<game>/analysis`) | `make lift`  |
+| Free disk            | old `work-<game>/build-*`, `work-<game>/logs/*`              | nothing      |
+| Reset Python         | `work-<game>/venv`                                    | `make setup` |
 
-Never needed: deleting anything outside `work/` (and `game/` only holds the disc).
+Never needed: deleting anything outside `work-<game>/` (and `game/` only holds the disc).
 
 ## Development environment
 
@@ -322,10 +367,10 @@ UTM both work. Why: [ADR 0003](docs/decisions/0003-linux-vm-debug-loop.md).
 ## Native macOS build (Apple Silicon)
 
 The same lifted C builds and runs natively on an Apple Silicon Mac
-(2026-10-21), next to the VM: the trees are `work/build-mac*`, so the Mac
-and the VM can share `work/`. The lift itself still runs in the VM (or
+(2026-10-21), next to the VM: the trees are `work-<game>/build-mac*`, so the Mac
+and the VM can share `work-<game>/`. The lift itself still runs in the VM (or
 anywhere with the Python pipeline); `make build run` on the Mac needs only
-the lifted C in `work/gen/`.
+the lifted C in `work-<game>/gen/`.
 
 ```sh
 /opt/homebrew/bin/brew install cmake ninja pkgconf sdl2 ffmpeg libepoxy
@@ -346,7 +391,7 @@ make build run
 
 ### The Mac app
 
-`make mac-app` packages the build as `work/mac_app/Midnight Club 3.app`
+`make mac-app` packages the build as `work-<game>/mac_app/Midnight Club 3.app`
 (tools/mac_app.sh): self-contained (Homebrew's libraries copied in with
 dylibbundler, ad-hoc signed), so it can go to /Applications. It keeps its
 data like the Switch's SD folder, in `~/Library/Application Support/mcdub3/`:
@@ -359,7 +404,7 @@ make mac-app                                             # defaults: SCALE=5 (36
 make mac-app SCALE=1.5 UI_SCALE=2                        # 1280x720, for a slower Mac
 make mac-app SCALE=2 SETTINGS="RECOMP_GL_SHARPEN=0.3 MC3_MOVIE_VOLUME=80"
 make mac-app HD=1                                        # texture pack inside the app
-make mac-app GAME=$PWD/game                              # link this disc on first launch
+make mac-app DISC=$PWD/game                              # link this disc on first launch
 ```
 
 Settings apply in order, later wins: the defaults built in (SCALE,
@@ -370,7 +415,7 @@ SETTINGS, HD), then `mcdub3_env.txt` in Application Support. Every
 
 Windows builds the same lifted C with MSYS2's clang: x86-64 in the CLANG64
 environment, Windows on ARM in CLANGARM64. Trees are
-`work/build-windows-<arch>/`; `dist/` in there holds `mcdub3.exe`, the DLLs
+`work-<game>/build-windows-<arch>/`; `dist/` in there holds `mcdub3.exe`, the DLLs
 it needs (tools/windows/copy_dlls.py reads the import tables), the
 settings (`mcdub3_defaults.txt` from SCALE / UI_SCALE / SETTINGS, rewritten
 by each build; `mcdub3_env.txt`, the player's, kept) and `run_mcdub3.bat`.
@@ -391,10 +436,10 @@ build makes or refreshes the desktop shortcut to it.
   entries), then the usual `make setup`, `make lift`, `make build run`.
 - **Cross build from macOS or Linux:** `make windows` (`WIN_ARCH=aarch64`
   for ARM), tools/build_windows.sh with llvm-mingw (a release unpacked in
-  `work/tools/`) and tools/windows/toolchain.cmake; tools/win_deps.py
+  `work-<game>/tools/`) and tools/windows/toolchain.cmake; tools/win_deps.py
   fetches MSYS2's packages and their dependencies into
-  `work/win-sysroot/<arch>/` (Python 3.14+ for zstd). Its tree is
-  `work/build-wincross-<arch>/`, apart from the native one: a `work/`
+  `work-<game>/win-sysroot/<arch>/` (Python 3.14+ for zstd). Its tree is
+  `work-<game>/build-wincross-<arch>/`, apart from the native one: a `work-<game>/`
   shared with a Windows VM would otherwise hold one CMake tree for two
   paths. Fast for build errors; run the result on Windows (Parallels: the
   repo is `\\Mac\Home\...`).
@@ -430,7 +475,7 @@ win32_compat.c); threads are not pinned (platform/win32_host.c).
    graphics driver need it.
 3. Symlink the share somewhere short: `ln -s /media/psf/mcdub3-nx ~/mcdub3-nx`.
    Every path is relative to the repo root: the disc in `game/`, everything
-   generated in `work/` (both gitignored). Run the scripts from the root.
+   generated in `work-<game>/` (both gitignored). Run the scripts from the root.
 4. `cd ~/mcdub3-nx && bash vm/setup-ubuntu.sh`, then open a new shell.
 
 ### Ubuntu 22.04
@@ -440,7 +485,7 @@ tools/build_linux.sh`): the toolkit's Vulkan renderer needs glslang 12+ (the
 `glslang-default-resource-limits` CMake target), and 22.04 ships 11.8. The
 default OpenGL build, the lift pipeline (Python 3.10 is the minimum) and the
 Switch builds (devkitPro brings its own toolchain) are unaffected. If you
-need Linux Vulkan later, build glslang from source into `work/deps` and
+need Linux Vulkan later, build glslang from source into `work-<game>/deps` and
 pass `-Dglslang_DIR`, or move to 24.04.
 
 ### Check the VM (5 minutes, before anything else)
@@ -466,23 +511,23 @@ other options; otherwise run with `LIBGL_ALWAYS_SOFTWARE=1` (llvmpipe, GL 4.5).
 
 ### Disk budget
 
-`game/` and `work/` live in the repo, i.e. on the **Mac's** disk (through the
+`game/` and `work-<game>/` live in the repo, i.e. on the **Mac's** disk (through the
 shared folder); the VM disk only holds Ubuntu and the tools.
 
 | What                                                   | Size                                  |
 | ------------------------------------------------------ | ------------------------------------- |
 | VM: Ubuntu desktop + build deps + devkitPro            | ~20 GB                                |
 | Mac: extracted disc (`game/`)                          | 3.4 GB                                |
-| Mac: lifted C + analysis (`work/gen`, `work/analysis`) | ~0.5 GB                               |
-| Mac: one Linux build tree (`work/build-linux`)         | ~2–4 GB (lifted C without debug info) |
+| Mac: lifted C + analysis (`work-<game>/gen`, `work-<game>/analysis`) | ~0.5 GB                               |
+| Mac: one Linux build tree (`work-<game>/build-linux`)         | ~2–4 GB (lifted C without debug info) |
 | Mac: one Switch build tree                             | ~2–4 GB                               |
-| Mac: SD staging (`work/switch_sd`)                     | ~3.4 GB once you build for the Switch |
+| Mac: SD staging (`work-<game>/switch_sd`)                     | ~3.4 GB once you build for the Switch |
 
 Disk savers, already the default: the lifted C is built without debug info
 (backtraces and breakpoints still name every `sub_XXXXXXXX`;
 `GEN_DEBUGINFO=1 tools/build_linux.sh` turns it on when you need line-level
 stepping, at a few GB). Delete build trees you're not using
-(`rm -rf work/build-*-lto`); `du -sh work/*` shows where space went.
+(`rm -rf work-<game>/build-*-lto`); `du -sh work-<game>/*` shows where space went.
 
 **If builds through the shared folder are slow:** `export MC3_WORK=<a folder
 on the VM disk>` moves only the generated files (lifted C, builds) off the
@@ -497,20 +542,20 @@ same CPU/RAM/disk/sharing as above. Then the same checks.
 ## The loop
 
 Every step is a `make` target in the repo root (`make` lists them all; logs go
-to `work/logs/`). The scripts in `tools/` behind them also work on their own.
+to `work-<game>/logs/`). The scripts in `tools/` behind them also work on their own.
 
 ```
-make lift          # once: parse the XBE, config/xbe_facts.h, full lift (disc in game/)
+make lift          # once: parse the XBE, config/<game>/xbe_facts.h, full lift (disc in game/)
 make build run     # after a change to src/ or the runtime (window; SECS=n to stop)
 make snapshot      # a hang: headless run, guest call stack dumped after 30 s
 make report        # explain the newest snapshot: call chain by section, kernel calls
 make hoststacks    # every thread's host backtrace after 45 s: who waits on what
 make profile       # where the time goes: hottest functions per thread (Linux perf)
-make record        # frames + audio of a headless run -> work/capture/<time>/capture.mp4
+make record        # frames + audio of a headless run -> work-<game>/capture/<time>/capture.mp4
 make difftest CALL=n  # replay call n of a wrapped function on real x86 (Unicorn), diff vs lifted
 make run-gdb       # under gdb; also run-headless, trap
 make relift build  # after adding/removing an override, or a translator change
-make regen build   # after changing config/seed_functions.json
+make regen build   # after changing config/<game>/seed_functions.json
 make switch send   # when it's time for Eden / the console
 ```
 
@@ -553,20 +598,20 @@ the same path and runs `switch/build.sh` as your user.
 To move to a newer devkitPro: put the new tag and its index digest in
 `switch/devkitpro-image`, build, test, commit. `NATIVE=1` uses a devkitPro
 installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
-`VULKAN=1` still needs the NVK SDK in `work/deps` (not in the image).
+`VULKAN=1` still needs the NVK SDK in `work-<game>/deps` (not in the image).
 
 ## Sending builds to the Switch
 
 - **nxlink** (fastest): open hbmenu, press **Y** (netloader), then
-  `nxlink -s work/switch_sd/switch/mcdub3-nx/mcdub3-nx-usa.nro` (or `make send`). `-s` keeps the
+  `nxlink -s work-<game>/switch_sd/switch/mcdub3-nx/mcdub3-nx-usa.nro` (or `make send`). `-s` keeps the
   connection open and streams the log to your terminal. The game data must
   already be on the card at `sdmc:/switch/mcdub3-nx/game/`.
-- **SD card**: copy `work/switch_sd/switch/mcdub3-nx/` to the card.
+- **SD card**: copy `work-<game>/switch_sd/switch/mcdub3-nx/` to the card.
 - Start with **title takeover** (hold R while launching a game). Applet mode
   leaves too little memory.
 - Or install an **NSP forwarder**: `make nsp` builds one per edition in
   `APP_EDITIONS` (switch/app.env; `EDITION=usa make nsp` for one),
-  `work/nsp/mcdub3-nx-<edition>-<version>.nsp`: a home-menu app that starts
+  `work-<game>/nsp/mcdub3-nx-<edition>-<version>.nsp`: a home-menu app that starts
   `sdmc:/switch/mcdub3-nx/mcdub3-nx-<edition>.nro` as an application (full
   memory). Each edition has its own title ID (`APP_TITLE_ID_<edition>`), so
   editions install side by side; reinstalling one replaces it. It is
@@ -640,8 +685,8 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
   Run it as a service (`sudo ./svc.sh install && sudo ./svc.sh start`). Each
   build lifts the disc again in a work folder beside the checkout
   (`mcdub3-work-<edition>`, kept between runs: Python venv, build trees).
-- *Editions*: `config/xbe_facts.h` names the disc this lift was made from
-  (`MC3_EDITION`, from the XBE's region), `config/xbe_editions.h` every
+- *Editions*: `config/<game>/xbe_facts.h` names the disc this lift was made from
+  (`MC3_EDITION`, from the XBE's region), `config/<game>/xbe_editions.h` every
   edition whose code is the same (usa, eur); the NRO refuses any other
   `default.xbe` with a message. The build matrix builds one NRO per edition
   (`make switch EDITION=<edition>`: mcdub3-nx-<edition>.nro, looking in
@@ -673,5 +718,5 @@ Making or growing a pack:
    replacement textures`).
 4. **Switch**: `make switch` builds the plain version (no pack staged, and a
    previously staged one removed); `make switch HD=1` stages `hd/textures/`
-   to `work/switch_sd/switch/mcdub3-nx/hd/textures/`. Copy that folder to
+   to `work-<game>/switch_sd/switch/mcdub3-nx/hd/textures/`. Copy that folder to
    the card, or delete `sdmc:/switch/mcdub3-nx/hd/` there to go back.

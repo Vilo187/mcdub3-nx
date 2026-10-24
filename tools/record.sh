@@ -23,7 +23,7 @@ source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 
 SECS="${1:-${SECS:-60}}"
 EVERY="${EVERY:-1}"
-BIN="${BIN:-$MC3_WORK/build-linux/mcdub3}"
+BIN="${BIN:-$MC3_WORK/build-linux/$MC3_APP}"
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (make build)"
 mc3_need_game
 

@@ -31,7 +31,9 @@
 # work/venv); the build itself then runs offline in the container.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
-source "$MC3_REPO/switch/app.env"
+APP_ENV="$MC3_REPO/switch/app.env"                  # switch/app-<game>.env for another game
+[ "$MC3_GAME" = dub ] || APP_ENV="$MC3_REPO/switch/app-$MC3_GAME.env"
+source "$APP_ENV"
 TOOLS="$MC3_WORK/tools"
 STAGE="$MC3_WORK/nsp-stage"
 OUT="$MC3_WORK/nsp"
@@ -119,9 +121,9 @@ build_nsp() {
     local tid_var="APP_TITLE_ID_$key" name_var="APP_NAME_$key"
     TITLE_ID="${!tid_var:-}"
     NAME="${!name_var:-$APP_NAME}"
-    NRO="$APP_NRO_DIR/mcdub3-nx-$EDITION.nro"
+    NRO="$APP_NRO_DIR/$MC3_SD_DIR-$EDITION.nro"
     [[ "$TITLE_ID" =~ ^01[0-9a-f]{11}000$ ]] \
-        || mc3_fail "switch/app.env: APP_TITLE_ID_$EDITION missing or not 01xxxxxxxxxxx000"
+        || mc3_fail "${APP_ENV#$MC3_REPO/}: APP_TITLE_ID_$EDITION missing or not 01xxxxxxxxxxx000"
     echo
     echo "==== $EDITION: $NAME, title $TITLE_ID"
     rm -rf "$STAGE"
@@ -174,7 +176,7 @@ PY
     (cd "$STAGE" && "$HBP_DIR/hacbrewpack" -k "$KEYS" --titleid "$TITLE_ID" \
         --exefsdir exefs --romfsdir romfs --controldir control --logodir logo \
         --nspdir nsp --ncadir nca --tempdir tmp --backupdir backup)
-    NSP="$OUT/mcdub3-nx-$EDITION-$APP_VERSION.nsp"
+    NSP="$OUT/$MC3_SD_DIR-$EDITION-$APP_VERSION.nsp"
     mv "$STAGE/nsp/$TITLE_ID.nsp" "$NSP"
     rm -rf "$STAGE"
     echo

@@ -37,4 +37,4 @@ fi
 cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja ${UNSET[@]+"${UNSET[@]}"} -DCMAKE_BUILD_TYPE="$TYPE" \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" "${ARGS[@]}" >/dev/null
 ninja -C "$BUILD" -j"${JOBS:-$(mc3_default_jobs)}"
-echo "built $BUILD/mcdub3   (run: tools/run_linux.sh)"
+echo "built $BUILD/$MC3_APP   (run: make run${GAME:+ GAME=$GAME})"

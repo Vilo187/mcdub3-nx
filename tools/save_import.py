@@ -301,7 +301,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
     ap.add_argument('file')
     ap.add_argument('--udata', help='the port\'s UDATA folder (default: $MC3_GAME_DIR/UDATA)')
-    ap.add_argument('--backup', help='where the existing saves are copied first (default: work/saves-backup/<time>)')
+    ap.add_argument('--backup', help='where the existing saves are copied first (default: work-<game>/saves-backup/<time>)')
     ap.add_argument('--replace', action='store_true', help='overwrite a save folder that exists already')
     ap.add_argument('--list', action='store_true', help='only show what is in the file')
     a = ap.parse_args()
@@ -354,7 +354,7 @@ def main():
         else:
             write.append((d, name, data, meta))
     if write and os.path.isdir(title_dir):
-        backup = a.backup or os.path.join(os.environ.get('MC3_WORK') or os.path.join(repo, 'work'),
+        backup = a.backup or os.path.join(os.environ.get('MC3_WORK') or os.path.join(repo, 'work-dub'),
                                           'saves-backup', time.strftime('%Y%m%d_%H%M%S'))
         shutil.copytree(title_dir, os.path.join(backup, TITLE_ID))
         print(f'  existing saves copied to {backup}')

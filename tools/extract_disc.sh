@@ -25,7 +25,7 @@ cd "$XBOXRECOMP_DIR"
 echo
 echo "extracted to $MC3_GAME_DIR ($(du -sh "$MC3_GAME_DIR" | cut -f1))"
 if [ -f "$MC3_GEN_DIR/recomp_funcs.h" ]; then
-    echo "next: make run${EDITION:+ EDITION=$EDITION} (the editions in config/xbe_editions.h share one lift)"
+    echo "next: make run GAME=$MC3_GAME${EDITION:+ EDITION=$EDITION} (the editions in config/$MC3_GAME/xbe_editions.h share one lift)"
 else
-    echo "next: make lift"
+    echo "next: make lift GAME=$MC3_GAME"
 fi

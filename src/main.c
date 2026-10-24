@@ -46,7 +46,8 @@ static int setenv(const char *name, const char *value, int overwrite)
 #endif
 #include <xbox/xboxrecomp.h>
 
-#include "xbe_editions.h"   /* every disc this lift runs (config/) */
+#include "xbe_editions.h"   /* every disc this lift runs (config/<game>/) */
+#include "game.h"           /* the game's guest addresses (config/<game>/) */
 #if __has_include("xbe_facts.h")
 #  include "xbe_facts.h"            /* config/, written by tools/first_lift.sh */
 #else
@@ -67,6 +68,9 @@ static int setenv(const char *name, const char *value, int overwrite)
 #endif
 #ifndef MC3_APP
 #  define MC3_APP "mcdub3"
+#endif
+#ifndef MC3_GAME_TITLE                       /* per game, from CMake (config/<game>) */
+#  define MC3_GAME_TITLE "Midnight Club 3: DUB Edition"
 #endif
 
 #ifdef __SWITCH__
@@ -189,7 +193,7 @@ static void crash_signal(int sig, siginfo_t *si, void *uc)
  * the time the GPU has reached at +0x30 and the event the GPU interrupt
  * sets at +0x1DCC. A main thread stuck there (career loading screen hang,
  * 2026-10-21) waits for one of them: these say which. */
-#define MC3_PB_STATE 0x003ECAF0u
+#define MC3_PB_STATE MC3_ADDR_PB_STATE
 static uint32_t snap_rd32(uint32_t va)
 {
     return *(volatile uint32_t *)((uintptr_t)va + g_xbox_mem_offset);
@@ -277,7 +281,7 @@ static pthread_mutex_t s_gs_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int code_addr(uint32_t v)
 {
-    return v >= 0x00011000u && v < 0x00411000u;  /* .text .. last code section */
+    return v >= MC3_CODE_LO && v < MC3_CODE_HI;  /* .text .. last code section */
 }
 
 static void *gil_sampler(void *arg)
@@ -358,10 +362,10 @@ static void *perf_thread(void *arg)
              * steps by it; if nothing refreshes it during a load, it stays
              * whatever the last frame before the load measured. */
             extern ptrdiff_t g_xbox_mem_offset;          /* xbox_memory_layout.c */
-            uint32_t raw = *(volatile uint32_t *)((uintptr_t)0x0047C404u + g_xbox_mem_offset);
+            uint32_t raw = *(volatile uint32_t *)((uintptr_t)MC3_ADDR_FRAME_TIME + g_xbox_mem_offset);
             float dt;
             memcpy(&dt, &raw, sizeof dt);
-            fprintf(stderr, "[perf] game frame time (0x47C404): %.4f s\n", dt);
+            fprintf(stderr, "[perf] game frame time (0x%X): %.4f s\n", MC3_ADDR_FRAME_TIME, dt);
         }
         {   /* main-loop passes against frames presented, per second */
             extern volatile long g_mc3_loop_passes;
@@ -600,8 +604,8 @@ static int game_main(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
 #endif
-    printf("=== " MC3_XBE_TITLE_NAME " (Xbox) - static recompilation ===\n");
-    printf("mcdub3-nx %s, %s package, lifted from the %s disc, %s\n", MC3_VERSION,
+    printf("=== " MC3_GAME_TITLE " (Xbox) - static recompilation ===\n");
+    printf(MC3_SD_DIR " %s, %s package, lifted from the %s disc, %s\n", MC3_VERSION,
            MC3_PACKAGE_EDITION, MC3_EDITION, MC3_BUILD_ID);
     install_crash_reporter();
     set_runtime_defaults();

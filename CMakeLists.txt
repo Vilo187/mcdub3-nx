@@ -18,12 +18,29 @@ add_compile_definitions(WIN32_LEAN_AND_MEAN NOMINMAX)
 set(XBOXRECOMP_DIR "${CMAKE_CURRENT_SOURCE_DIR}/xboxrecomp" CACHE PATH
     "xboxrecomp toolkit (vendored; see docs/decisions/0002)")
 
+# Which game: dub (Midnight Club 3: DUB Edition) or remix (DUB Edition
+# Remix). Each has its own config/<game>/ (XBE facts, editions, seeds,
+# game.h), src/games/<game>/recomp_manual.c (the overrides, at its own
+# addresses) and work-<game>/ (lift and builds); tools/env.sh sets
+# MC3_GAME from GAME=. Everything else is shared.
+if(DEFINED ENV{MC3_GAME})
+    set(_mc3_game "$ENV{MC3_GAME}")
+else()
+    set(_mc3_game "dub")
+endif()
+set(MC3_GAME "${_mc3_game}" CACHE STRING "Game: dub or remix")
+set(MC3_CONFIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/config/${MC3_GAME}")
+set(MC3_MANUAL_C "${CMAKE_CURRENT_SOURCE_DIR}/src/games/${MC3_GAME}/recomp_manual.c")
+if(NOT EXISTS "${MC3_MANUAL_C}")
+    message(FATAL_ERROR "No overrides for game '${MC3_GAME}' (${MC3_MANUAL_C}).")
+endif()
+
 # The lifted C (~100 MB) is generated from the retail XBE by tools/regen.sh
-# and never committed. Default matches tools/env.sh: <repo>/work.
+# and never committed. Default matches tools/env.sh: <repo>/work-<game>.
 if(DEFINED ENV{MC3_WORK})
     set(_mc3_work "$ENV{MC3_WORK}")
 else()
-    set(_mc3_work "${CMAKE_CURRENT_SOURCE_DIR}/work")
+    set(_mc3_work "${CMAKE_CURRENT_SOURCE_DIR}/work-${MC3_GAME}")
 endif()
 set(MC3_GEN_DIR "${_mc3_work}/gen" CACHE PATH
     "tools.recomp output (recomp_*.c, recomp_funcs.h, recomp_types.h)")
@@ -31,14 +48,26 @@ if(NOT EXISTS "${MC3_GEN_DIR}/recomp_funcs.h")
     message(FATAL_ERROR "No generated code in ${MC3_GEN_DIR}. Run tools/first_lift.sh "
                         "(or tools/regen.sh), or pass -DMC3_GEN_DIR=<dir>.")
 endif()
-if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/config/xbe_facts.h")
-    message(FATAL_ERROR "config/xbe_facts.h is missing: run tools/first_lift.sh.")
+if(NOT EXISTS "${MC3_CONFIG_DIR}/xbe_facts.h")
+    message(FATAL_ERROR "config/${MC3_GAME}/xbe_facts.h is missing: run make lift GAME=${MC3_GAME}.")
 endif()
 
 # On the Switch: sdmc:/switch/<MC3_SD_DIR>/ for the game, saves, settings and
 # caches; files in it are named after MC3_APP (<MC3_APP>.nro, _env.txt, _log.txt).
-set(MC3_APP "mcdub3" CACHE STRING "Application name: the NRO and its files")
-set(MC3_SD_DIR "mcdub3-nx" CACHE STRING "Switch data directory, sdmc:/switch/<this>")
+# Per game: mcdub3 / mcdub3-nx for the DUB Edition, mcdub3remix /
+# mcdub3remix-nx for the Remix (config/<game>/game.env says the same for
+# the scripts). The executable is named after MC3_APP too.
+if(MC3_GAME STREQUAL "remix")
+    set(_app "mcdub3remix")
+    set(MC3_GAME_TITLE "Midnight Club 3: DUB Edition Remix")
+    set(MC3_DISC_PREFIX "game-remix")
+else()
+    set(_app "mcdub3")
+    set(MC3_GAME_TITLE "Midnight Club 3: DUB Edition")
+    set(MC3_DISC_PREFIX "game")
+endif()
+set(MC3_APP "${_app}" CACHE STRING "Application name: the NRO, the executable and their files")
+set(MC3_SD_DIR "${_app}-nx" CACHE STRING "Switch data directory, sdmc:/switch/<this>")
 set(XBOXRECOMP_APP_NAME "${MC3_SD_DIR}" CACHE STRING "" FORCE)
 
 # Vulkan (nv2a_vk; NVK on the Switch) instead of OpenGL (nv2a_gl).
@@ -57,7 +86,7 @@ file(GLOB MC3_GEN_SOURCES CONFIGURE_DEPENDS "${MC3_GEN_DIR}/*.c")
 
 set(MC3_SOURCES
     src/main.c
-    src/recomp_manual.c
+    ${MC3_MANUAL_C}
     src/ac97_nabm.c
     src/difftest.c
     src/bink_native.c
@@ -70,8 +99,10 @@ if(WIN32)
 endif()
 
 add_executable(${PROJECT_NAME} ${MC3_SOURCES} ${MC3_GEN_SOURCES})
+set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${MC3_APP}")
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)
-target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_APP="${MC3_APP}" MC3_SD_DIR="${MC3_SD_DIR}")
+target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_APP="${MC3_APP}" MC3_SD_DIR="${MC3_SD_DIR}"
+    MC3_GAME_TITLE="${MC3_GAME_TITLE}" MC3_DISC_PREFIX="${MC3_DISC_PREFIX}")
 # Version (switch/app.env) and build ID (CI: the run; locally "local"),
 # printed at boot so a log names exactly what ran.
 set(MC3_VERSION "dev" CACHE STRING "Release version (switch/app.env APP_VERSION)")
@@ -97,7 +128,7 @@ if(WIN32)
         string(REGEX MATCHALL "[0-9]+" _v "${MC3_VERSION}.0.0.0.0")
         list(SUBLIST _v 0 4 _v)
         string(REPLACE ";" "," _vnum "${_v}")
-        set(_rc "${CMAKE_BINARY_DIR}/mcdub3.rc")
+        set(_rc "${CMAKE_BINARY_DIR}/${MC3_APP}.rc")
         set(_rc_text "")
         if(MC3_WIN_ICON AND EXISTS "${MC3_WIN_ICON}")
             string(APPEND _rc_text "1 ICON \"${MC3_WIN_ICON}\"\n")
@@ -111,11 +142,11 @@ BEGIN
   BEGIN
     BLOCK \"040904B0\"
     BEGIN
-      VALUE \"FileDescription\", \"Midnight Club 3: DUB Edition (mcdub3-nx)\"
-      VALUE \"ProductName\", \"mcdub3-nx\"
+      VALUE \"FileDescription\", \"Midnight Club 3: DUB Edition (${MC3_SD_DIR})\"
+      VALUE \"ProductName\", \"${MC3_SD_DIR}\"
       VALUE \"ProductVersion\", \"${MC3_VERSION}\"
       VALUE \"FileVersion\", \"${MC3_VERSION}\"
-      VALUE \"OriginalFilename\", \"mcdub3.exe\"
+      VALUE \"OriginalFilename\", \"${MC3_APP}.exe\"
     END
   END
   BLOCK \"VarFileInfo\"
@@ -134,7 +165,7 @@ endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/config
+    ${MC3_CONFIG_DIR}
     ${MC3_GEN_DIR}
     ${XBOXRECOMP_DIR}/include
 )
@@ -162,7 +193,7 @@ option(MC3_LTO "Link-time optimisation of the lifted code" OFF)
 set(MC3_LTO_JOBS "4" CACHE STRING "Parallel LTO link jobs")
 if(MC3_LTO)
     list(APPEND MC3_GEN_FLAGS "-flto=auto")
-    set_property(SOURCE src/recomp_manual.c APPEND PROPERTY
+    set_property(SOURCE ${MC3_MANUAL_C} APPEND PROPERTY
         COMPILE_OPTIONS "-flto=auto;-fno-strict-aliasing;-fwrapv")
     target_link_options(${PROJECT_NAME} PRIVATE
         "-flto=${MC3_LTO_JOBS}" "-flto-partition=balanced" ${MC3_GEN_OPT})
@@ -210,7 +241,7 @@ endif()
 # ── Nintendo Switch homebrew (devkitA64 + libnx) ────────────────
 if(NINTENDO_SWITCH)
     set(MC3_SWITCH_TITLE "Midnight Club 3 (Xbox recomp)" CACHE STRING "Title in hbmenu")
-    set(MC3_SWITCH_AUTHOR "mcdub3-nx" CACHE STRING "Author in hbmenu")
+    set(MC3_SWITCH_AUTHOR "${MC3_SD_DIR}" CACHE STRING "Author in hbmenu")
     set(MC3_SWITCH_VERSION "0.0.1" CACHE STRING "Version in hbmenu")   # switch/app.env sets all four
     set(MC3_SWITCH_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg" CACHE FILEPATH
         "256x256 JPEG icon (libnx default when missing)")

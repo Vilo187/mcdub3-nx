@@ -29,6 +29,16 @@
 #include <string.h>
 #include <time.h>
 
+#ifndef MC3_APP                              /* per game, from CMake */
+#  define MC3_APP "mcdub3"
+#endif
+#ifndef MC3_DISC_PREFIX
+#  define MC3_DISC_PREFIX "game"
+#endif
+#ifndef MC3_GAME_TITLE
+#  define MC3_GAME_TITLE "Midnight Club 3: DUB Edition"
+#endif
+
 static char s_exe_dir[MAX_PATH * 3];
 
 static int is_dir(const char *p)
@@ -127,7 +137,7 @@ static void log_to_file_if_alone(void)
     if (is_dir(logs))
         snprintf(path, sizeof path, "%s\\windows_run_%s.log", logs, ts);
     else
-        snprintf(path, sizeof path, "%s\\mcdub3_log.txt", s_exe_dir);
+        snprintf(path, sizeof path, "%s\\" MC3_APP "_log.txt", s_exe_dir);
     if (freopen(path, "w", stdout) && freopen(path, "a", stderr)) {
         setvbuf(stdout, NULL, _IONBF, 0);
         setvbuf(stderr, NULL, _IONBF, 0);
@@ -153,21 +163,24 @@ static void pick_game_dir(void)
         return;
     snprintf(repo, sizeof repo, "%s\\..\\..\\..", s_exe_dir);
     if (ed && *ed) {                                       /* EDITION first */
-        snprintf(pick, sizeof pick, "%s\\game-%s", repo, ed);
-        if (!has_disc(pick) && !strcmp(ed, "usa"))         /* the folder before editions */
-            snprintf(pick, sizeof pick, "%s\\game", repo);
+        snprintf(pick, sizeof pick, "%s\\" MC3_DISC_PREFIX "-%s", repo, ed);
+        if (!has_disc(pick) && (strcmp(MC3_DISC_PREFIX, "game") || !strcmp(ed, "usa")))
+            snprintf(pick, sizeof pick, "%s\\" MC3_DISC_PREFIX, repo);   /* the folder before editions */
         _putenv_s("MC3_GAME_DIR", pick);
         return;
     }
     snprintf(cand[n], sizeof cand[n], "%s\\game", s_exe_dir);
     if (has_disc(cand[n])) n++;
-    snprintf(cand[n], sizeof cand[n], "%s\\game", repo);
+    snprintf(cand[n], sizeof cand[n], "%s\\" MC3_DISC_PREFIX, repo);
     if (has_disc(cand[n])) n++;
     {
         char pat[sizeof repo + 16];
-        snprintf(pat, sizeof pat, "%s\\game-*", repo);
+        snprintf(pat, sizeof pat, "%s\\" MC3_DISC_PREFIX "-*", repo);
         if ((h = FindFirstFileA(pat, &fd)) != INVALID_HANDLE_VALUE) {
             do {
+                /* game-* holds the Remix's folders too: not the DUB Edition's */
+                if (!strcmp(MC3_DISC_PREFIX, "game") && !strncmp(fd.cFileName, "game-remix", 10))
+                    continue;
                 if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) && n < 16) {
                     snprintf(cand[n], sizeof cand[n], "%s\\%s", repo, fd.cFileName);
                     if (has_disc(cand[n])) n++;
@@ -185,12 +198,13 @@ static void pick_game_dir(void)
     /* Several: game\, then the lifted edition's, then the first by name. */
     for (i = 0; i < n && !pick[0]; i++) {
         const char *base = strrchr(cand[i], '\\');
-        if (base && !strcmp(base + 1, "game"))
+        if (base && (!strcmp(base + 1, "game") || !strcmp(base + 1, MC3_DISC_PREFIX)))
             strcpy(pick, cand[i]);
     }
     for (i = 0; i < n && !pick[0]; i++) {
         const char *base = strrchr(cand[i], '\\');
-        if (base && !strncmp(base + 1, "game-", 5) && !strcmp(base + 6, MC3_EDITION))
+        if (base && !strncmp(base + 1, MC3_DISC_PREFIX "-", sizeof MC3_DISC_PREFIX)
+            && !strcmp(base + sizeof MC3_DISC_PREFIX + 1, MC3_EDITION))
             strcpy(pick, cand[i]);
     }
     if (!pick[0]) {
@@ -199,7 +213,8 @@ static void pick_game_dir(void)
             if (strcmp(cand[i], pick) < 0)
                 strcpy(pick, cand[i]);
     }
-    fprintf(stderr, "note: several discs; %s is used (EDITION=<name> in mcdub3_env.txt picks game-<name>)\n",
+    fprintf(stderr, "note: several discs; %s is used (EDITION=<name> in " MC3_APP "_env.txt picks "
+            MC3_DISC_PREFIX "-<name>)\n",
             strrchr(pick, '\\') + 1);
     _putenv_s("MC3_GAME_DIR", pick);
 }
@@ -213,8 +228,8 @@ void windows_boot(void)
         *slash = 0;
     log_to_file_if_alone();
     remember_environment();
-    load_settings("mcdub3_defaults.txt");
-    load_settings("mcdub3_env.txt");
+    load_settings(MC3_APP "_defaults.txt");
+    load_settings(MC3_APP "_env.txt");
     pick_game_dir();
     find_dir("MC3_SAVE_DIR", save);
 }
@@ -222,6 +237,6 @@ void windows_boot(void)
 /* fatal() in main.c: the log is not where a player looks. */
 void windows_error_dialog(const char *msg)
 {
-    MessageBoxA(NULL, msg, "Midnight Club 3", MB_OK | MB_ICONERROR);
+    MessageBoxA(NULL, msg, MC3_GAME_TITLE, MB_OK | MB_ICONERROR);
 }
 #endif

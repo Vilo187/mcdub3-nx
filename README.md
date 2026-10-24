@@ -81,7 +81,7 @@ The Mac application can be packaged and installed by following these instruction
    make extract ISO=<file.iso>
    ```
 
-   A second edition goes beside it in `game-<edition>/`: `make extract ISO=<file.iso> EDITION=eur` unpacks the European disc into `game-eur/`, `make mac-app GAME=$PWD/game-eur` builds the app with it, and `make run EDITION=eur` plays it from the repo.
+   A second edition goes beside it in `game-<edition>/`: `make extract ISO=<file.iso> EDITION=eur` unpacks the European disc into `game-eur/`, `make mac-app DISC=$PWD/game-eur` builds the app with it, and `make run EDITION=eur` plays it from the repo.
 4. Lift the game's code to C, once (10 to 20 minutes; every edition uses the same lift):
 
    ```sh
@@ -91,10 +91,10 @@ The Mac application can be packaged and installed by following these instruction
 5. Build the app:
 
    ```sh
-   make mac-app GAME=$PWD/game
+   make mac-app DISC=$PWD/game
    ```
 
-   The application file lands in `work/mac_app/Midnight Club 3.app`. Drag it to your `Applications folder`. By default the app renders at scale 5 (3600x2400) with menu and HUD art at 5 too; a slower Mac plays more smoothly with lower values, for example `make mac-app SCALE=1.5 UI_SCALE=2` (see [Upscaling](#upscaling)). `SETTINGS` bakes in any other setting from the [Settings](#settings) tables as a default, space-separated: `make mac-app SETTINGS="RECOMP_GL_SHARPEN=0.3 MC3_MOVIE_VOLUME=80"`. Without `GAME`, the first start opens the folder where the app wants the disc: `~/Library/Application Support/mcdub3/game/`. Settings, saves and the log live in that `mcdub3` folder too.
+   The application file lands in `work-dub/mac_app/Midnight Club 3.app`. Drag it to your `Applications folder`. By default the app renders at scale 5 (3600x2400) with menu and HUD art at 5 too; a slower Mac plays more smoothly with lower values, for example `make mac-app SCALE=1.5 UI_SCALE=2` (see [Upscaling](#upscaling)). `SETTINGS` bakes in any other setting from the [Settings](#settings) tables as a default, space-separated: `make mac-app SETTINGS="RECOMP_GL_SHARPEN=0.3 MC3_MOVIE_VOLUME=80"`. Without `GAME`, the first start opens the folder where the app wants the disc: `~/Library/Application Support/mcdub3/game/`. Settings, saves and the log live in that `mcdub3` folder too.
 
 You can also play the game without making the app by running `make build run`.
 
@@ -158,7 +158,7 @@ make save-sync-down HOST_IP=192.168.1.20   # Switch -> computer
 make save-sync-up   HOST_IP=192.168.1.20   # computer -> Switch
 ```
 
-Before copying, both show the direction (Switch to computer, or computer to Switch) and which profiles will be created or overwritten, and ask to confirm (`YES=1` skips the question). `HOST_IP` is the Switch's address, shown by its FTP server. The port is 21 by default; for another, add it after the IP: `HOST_IP=192.168.1.20:5000`. Profiles are added or replaced, never deleted, and the receiving side is backed up to `work/saves-backup/` first. `PROFILE=` syncs one profile, by folder or by name (`PROFILE=laurd`), `LIST=1` only shows both sides, `FTP_USER=`/`FTP_PASS=` if the server asks for a login (a server that requires encryption, FTPS, works too). The Mac app keeps its saves elsewhere: add `UDATA="$HOME/Library/Application Support/mcdub3/game/UDATA"`. On a Mac, "No route to host" while `ping` works means the app you run `make` in lacks macOS's Local Network permission. It's per app (Terminal, iTerm, VS Code, VSCodium): allow it in System Settings > Privacy & Security > Local Network, then restart that app.
+Before copying, both show the direction (Switch to computer, or computer to Switch) and which profiles will be created or overwritten, and ask to confirm (`YES=1` skips the question). `HOST_IP` is the Switch's address, shown by its FTP server. The port is 21 by default; for another, add it after the IP: `HOST_IP=192.168.1.20:5000`. Profiles are added or replaced, never deleted, and the receiving side is backed up to `work-dub/saves-backup/` first. `PROFILE=` syncs one profile, by folder or by name (`PROFILE=laurd`), `LIST=1` only shows both sides, `FTP_USER=`/`FTP_PASS=` if the server asks for a login (a server that requires encryption, FTPS, works too). The Mac app keeps its saves elsewhere: add `UDATA="$HOME/Library/Application Support/mcdub3/game/UDATA"`. On a Mac, "No route to host" while `ping` works means the app you run `make` in lacks macOS's Local Network permission. It's per app (Terminal, iTerm, VS Code, VSCodium): allow it in System Settings > Privacy & Security > Local Network, then restart that app.
 
 **Importing a save from a real Xbox.** Profiles from an original Xbox, such as a memory unit dump (`.gsx`) from a save site, need re-signing first: the game calls them "damaged" otherwise. One command does both:
 
@@ -166,7 +166,7 @@ Before copying, both show the direction (Switch to computer, or computer to Swit
 make import-save FILE=~/Downloads/midnight-club-3-dub-edition.gsx
 ```
 
-It takes a `.gsx` or raw memory unit dump, an extracted save folder, a bare `.mc3`, or a PS2 save (`.max`, `.sps`, `.xps`) to check. Your saves are backed up to `work/saves-backup/` first, and an existing profile is never overwritten (`REPLACE=1` to do so). `LIST=1` only shows what is in the file. `UDATA=<folder>` installs elsewhere, for example the Mac app's folder. For the Switch, import on a computer and copy the new folder to the SD card.
+It takes a `.gsx` or raw memory unit dump, an extracted save folder, a bare `.mc3`, or a PS2 save (`.max`, `.sps`, `.xps`) to check. Your saves are backed up to `work-dub/saves-backup/` first, and an existing profile is never overwritten (`REPLACE=1` to do so). `LIST=1` only shows what is in the file. `UDATA=<folder>` installs elsewhere, for example the Mac app's folder. For the Switch, import on a computer and copy the new folder to the SD card.
 
 An imported profile keeps its owner's settings, controller layout included. If driving or nitrous sit on the wrong buttons, pick the default layout in the game's controller options.
 

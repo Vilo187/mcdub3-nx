@@ -7,7 +7,7 @@
 # Writes:
 #   $MC3_ANALYSIS_DIR/xbe_summary.txt   parser report (sections, kernel
 #                                        imports, entry point, XDK version)
-#   config/xbe_facts.h                   entry point + title ID for main.c;
+#   config/<game>/xbe_facts.h            entry point + title ID for main.c;
 #                                        committed (addresses, not game data);
 #                                        MC3_FACTS_H=<file> writes elsewhere
 #                                        (tests on other XBEs)
@@ -23,7 +23,7 @@ XBE_JSON="${MC3_XBE%.xbe}_analysis.json"
 cd "$XBOXRECOMP_DIR"
 "$MC3_PYTHON" -m tools.xbe_parser "$MC3_XBE" --json "$XBE_JSON" | tee "$MC3_ANALYSIS_DIR/xbe_summary.txt"
 
-"$MC3_PYTHON" - "$XBE_JSON" "${MC3_FACTS_H:-$MC3_REPO/config/xbe_facts.h}" "$MC3_XBE" "${MC3_EDITION:-}" <<'EOF'
+"$MC3_PYTHON" - "$XBE_JSON" "$MC3_FACTS_H" "$MC3_XBE" "${MC3_EDITION:-}" <<'EOF'
 import json, struct, sys
 src, dst, xbe, edition = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 d = json.load(open(src))

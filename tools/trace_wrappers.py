@@ -2,7 +2,7 @@
 """Generate failure-tracing wrappers for every function of some XBE sections.
 
     tools/trace_wrappers.py --sections XACTENG,DSOUND --out <file.c>
-                            [--manual src/recomp_manual.c]
+                            [--manual src/games/<game>/recomp_manual.c]
 
 Each wrapper calls the lifted body (sub_X_gen) and, when it returns an
 HRESULT failure, logs the function, its call depth on that thread and the
@@ -72,7 +72,8 @@ def main():
     ap.add_argument("--sections", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--functions", required=True, help="disasm functions.json")
-    ap.add_argument("--manual", default=os.path.join(HERE, "..", "src", "recomp_manual.c"))
+    ap.add_argument("--manual", default=os.environ.get("MC3_MANUAL") or os.path.join(
+        HERE, "..", "src", "games", os.environ.get("MC3_GAME", "dub"), "recomp_manual.c"))
     args = ap.parse_args()
 
     sections = [s.strip() for s in args.sections.split(",") if s.strip()]

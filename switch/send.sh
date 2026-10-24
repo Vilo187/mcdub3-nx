@@ -18,7 +18,7 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
 
 EDITION="${EDITION:-$(mc3_lift_edition)}"          # make send EDITION=eur: mcdub3-nx-eur.nro
-NRO="${1:-$MC3_WORK/switch_sd/switch/$MC3_SD_DIR/mcdub3-nx-${EDITION:-usa}$([ "${VULKAN:-0}" = 1 ] && echo -vulkan).nro}"
+NRO="${1:-$MC3_WORK/switch_sd/switch/$MC3_SD_DIR/$MC3_SD_DIR-${EDITION:-usa}$([ "${VULKAN:-0}" = 1 ] && echo -vulkan).nro}"
 [ -f "$NRO" ] || mc3_fail "no $NRO: make switch first"
 ARGS=(-s)
 [ -n "${SWITCH_IP:-}" ] && ARGS+=(-a "$SWITCH_IP")

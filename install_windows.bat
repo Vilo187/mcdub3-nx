@@ -9,12 +9,12 @@ rem It installs MSYS2 (the build tools, in C:\msys64; MSYS2_ROOT to choose
 rem another folder) if it is missing, then lifts the game's code, builds it
 rem and puts a "Midnight Club 3" shortcut on the desktop. The first run takes
 rem about an hour; run it again after updating the code. Safe to re-run.
-rem The log: work\logs\install_windows.log.
+rem The log: work-dub\logs\install_windows.log.
 setlocal
 title Midnight Club 3 - Windows install
 pushd "%~dp0"
-if not exist "work\logs" mkdir "work\logs"
-set "LOG=%~dp0work\logs\install_windows.log"
+if not exist "work-dub\logs" mkdir "work-dub\logs"
+set "LOG=%~dp0work-dub\logs\install_windows.log"
 
 rem x86-64 or ARM64 (a 32-bit window on a 64-bit Windows reports the real one here)
 set "MC3_MSYSTEM=CLANG64"
@@ -57,7 +57,7 @@ if errorlevel 1 (
 )
 
 echo == Lift and build (the log: %LOG%)
-"%BASH%" -lc "bash tools/install_windows.sh 2>&1 | tee -a work/logs/install_windows.log; exit ${PIPESTATUS[0]}"
+"%BASH%" -lc "bash tools/install_windows.sh 2>&1 | tee -a work-dub/logs/install_windows.log; exit ${PIPESTATUS[0]}"
 if errorlevel 1 goto :fail
 popd
 echo.

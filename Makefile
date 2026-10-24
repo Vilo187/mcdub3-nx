@@ -4,11 +4,16 @@
 #   make lift       first lift (or after reinstalling the disc)
 #   make build run  the everyday loop
 #
+# Two games (ADR 0006): GAME=dub (DUB Edition, the default) or GAME=remix
+# (DUB Edition Remix), e.g. make lift build run GAME=remix. Each has its own
+# config/<game>/, src/games/<game>/, discs (game[-remix][-<edition>]/) and
+# work folder (work-dub/, work-remix/).
+#
 # Targets wrap the scripts in tools/, switch/ and vm/ (which also work alone).
 # Settings pass straight through, e.g.
 #   make run SECS=60 RECOMP_KEYBOARD=1
 #   make build VULKAN=1 JOBS=4
-# Logs go to work/logs/.
+# Logs go to work-<game>/logs/.
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eo pipefail -c
@@ -17,14 +22,24 @@ SHELL := /bin/bash
 # Switch build reported exit 0, 2026-10-24).
 .DEFAULT_GOAL := help
 
-WORK := $(or $(MC3_WORK),$(CURDIR)/work)
+GAME ?= dub
+# work/ was the DUB Edition's before the games were split: moved once, before
+# anything makes work-dub/logs (tools/env.sh would then leave it be).
+ifeq ($(GAME)$(MC3_WORK),dub)
+  ifneq ($(wildcard work/.),)
+    ifeq ($(wildcard work-dub/.),)
+      $(shell mv work work-dub && echo "note: work/ moved to work-dub/ (one work folder per game now)" >&2)
+    endif
+  endif
+endif
+WORK := $(or $(MC3_WORK),$(CURDIR)/work-$(GAME))
 LOGS := $(WORK)/logs
 NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
 export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE UI_SCALE SETTINGS GAME \
-       RELEASE_DIR MC3_BUILD_ID EDITION WIN_ARCH
+       RELEASE_DIR MC3_BUILD_ID EDITION WIN_ARCH DISC
 
 .PHONY: help setup nsp check-vm extract lift regen relift \
         build build-vk build-debug windows mac-app run run-gdb run-headless snapshot report hoststacks profile record difftest trap \
@@ -50,16 +65,16 @@ check-vm:  ## Print the VM checks (CPU, page size, RAM, disk, OpenGL)
 	@free -g | head -2; df -h . | tail -1
 	@glxinfo -B 2>/dev/null | grep -E 'renderer|core profile version' || echo "glxinfo: install mesa-utils"
 
-extract:  ## Unpack an ISO into game/ (EDITION=eur: game-eur/): make extract ISO=<file.iso>
+extract:  ## Unpack an ISO into game/ (EDITION=eur: game-eur/; GAME=remix: game-remix[-<edition>]/): make extract ISO=<file.iso>
 	@test -n "$(ISO)" || { echo "usage: make extract ISO=<file.iso>"; exit 1; }
 	bash tools/extract_disc.sh "$(ISO)"
 
-## Lift (XBE -> C in work/gen)
-lift:  ## Parse the XBE, write config/xbe_facts.h, full lift
+## Lift (XBE -> C in work-<game>/gen)
+lift:  ## Parse the XBE, write config/<game>/xbe_facts.h, full lift
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash tools/first_lift.sh 2>&1 | tee $(LOGS)/lift_$(NOW).log
 
-regen:  ## Full regen: after changing config/seed_functions.json
+regen:  ## Full regen: after changing config/<game>/seed_functions.json
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash tools/regen.sh 2>&1 | tee $(LOGS)/regen_$(NOW).log
 
@@ -67,13 +82,11 @@ relift:  ## Lift only: after adding/removing an override, or a translator change
 	@mkdir -p $(LOGS)
 	set -o pipefail; LIFT_ONLY=1 bash tools/regen.sh 2>&1 | tee $(LOGS)/relift_$(NOW).log
 
-seeds:  ## Propose seeds from a run log: make seeds LOG=work/logs/run_x.log (review, then make regen)
+seeds:  ## Propose seeds from a run log: make seeds LOG=work-<game>/logs/run_x.log (review, then make regen)
 	@test -n "$(LOG)" || { echo "usage: make seeds LOG=<run log>"; exit 1; }
-	cd xboxrecomp && "$(WORK)/venv/bin/python3" -m tools.seed_from_log "$(abspath $(LOG))" \
-	    "$(or $(MC3_GAME_DIR),$(CURDIR)/game)/default.xbe" \
-	    --functions "$(WORK)/analysis/disasm/functions.json" \
-	    --seeds "$(CURDIR)/config/seed_functions.json"
-	@echo "review the additions: git diff config/seed_functions.json"
+	source tools/env.sh && mc3_python && cd xboxrecomp && "$$MC3_PYTHON" -m tools.seed_from_log "$(abspath $(LOG))" \
+	    "$$MC3_XBE" --functions "$$MC3_ANALYSIS_DIR/disasm/functions.json" --seeds "$$MC3_SEEDS"
+	@echo "review the additions: git diff config/$(GAME)/seed_functions.json"
 
 lift-report:  ## Summarise the last lift (functions, stubs, unimplemented)
 	@grep -E '^(Poll loops|MMIO|[0-9]+/[0-9]+ functions|[0-9]+ unresolved|[0-9]+ instruction)' $(WORK)/analysis/recomp.log \
@@ -87,7 +100,7 @@ build:  ## Build the desktop binary (OpenGL): Linux, macOS, or Windows in MSYS2 
 	   *) bash tools/build_linux.sh ;; \
 	 esac 2>&1 | tee $(LOGS)/build_$(NOW).log
 
-windows:  ## Cross-build the Windows exe from macOS/Linux (llvm-mingw in work/tools; WIN_ARCH=aarch64 for ARM)
+windows:  ## Cross-build the Windows exe from macOS/Linux (llvm-mingw in work-<game>/tools; WIN_ARCH=aarch64 for ARM)
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash tools/build_windows.sh 2>&1 | tee $(LOGS)/build_windows_$(NOW).log
 
@@ -121,7 +134,7 @@ difftest:  ## Replay call CALL of wrapped function FUNC on x86 (Unicorn) vs the 
 	   echo "  $(WORK)/venv/bin/pip install numpy unicorn   (or replay on another machine)"; exit 0; fi; \
 	 $$py tools/difftest.py $(WORK)/difftest/$(or $(FUNC),0037CCD0)_$(CALL)_before.bin 2>&1 | tee $(LOGS)/difftest_$(NOW).log
 
-record:  ## Record frames + audio into work/capture/<time>/ (SECS, EVERY, KEEP=1, WINDOW=1, VIDEO=0)
+record:  ## Record frames + audio into work-<game>/capture/<time>/ (SECS, EVERY, KEEP=1, WINDOW=1, VIDEO=0)
 	bash tools/record.sh $(or $(SECS),60)
 
 profile:  ## Where the time goes: perf sampling of a headless run (SECS, default 40)
@@ -138,7 +151,7 @@ trap:  ## Run, stopping at the first untranslated instruction reached
 
 ## macOS app
 
-mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=5, UI_SCALE=5 by default, SETTINGS="K=V ...", HD=1, GAME=<disc dir>)
+mac-app:  ## Package the Mac build as work-<game>/mac_app/Midnight Club 3[ Remix].app (SCALE=5, UI_SCALE=5 by default, SETTINGS="K=V ...", HD=1, DISC=<disc dir>)
 	@mkdir -p $(LOGS)
 	$(MAKE) build
 	set -o pipefail; bash tools/mac_app.sh 2>&1 | tee $(LOGS)/mac_app_$(NOW).log
@@ -148,7 +161,7 @@ mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=5,
 hd-dump:  ## Run with every texture written once to hd/dump/<hash>.png (options as for run)
 	RECOMP_GL_TEX_DUMP=1 $(MAKE) run
 
-hd-tools:  ## Fetch the upscaler (Real-ESRGAN) for this OS into work/tools (macOS, x86-64 Linux)
+hd-tools:  ## Fetch the upscaler (Real-ESRGAN) for this OS into work-<game>/tools (macOS, x86-64 Linux)
 	bash tools/hd_tools.sh
 
 hd-upscale:  ## hd/dump -> hd/textures, new ones only (FACTOR=2|3|4, MIN=px, FILES="... " to redo some)
@@ -156,7 +169,7 @@ hd-upscale:  ## hd/dump -> hd/textures, new ones only (FACTOR=2|3|4, MIN=px, FIL
 	set -o pipefail; bash tools/hd_upscale.sh $(or $(FACTOR),2) 2>&1 | tee $(LOGS)/hd_upscale_$(NOW).log
 
 ## Switch
-switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work/switch_sd; HD=1: with hd/textures; NATIVE=1: local devkitPro
+switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work-<game>/switch_sd; HD=1: with hd/textures; NATIVE=1: local devkitPro
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 
@@ -171,32 +184,32 @@ switch-vk:  ## Switch build with Vulkan (NVK)
 switch-lto:  ## Switch build with link-time optimisation
 	$(MAKE) switch LTO=1
 
-send:  ## Send the NRO over nxlink (hbmenu, press Y) and log the game to work/logs/switch_*.log; SWITCH_IP=a.b.c.d, NATIVE=1
+send:  ## Send the NRO over nxlink (hbmenu, press Y) and log the game to work-<game>/logs/switch_*.log; SWITCH_IP=a.b.c.d, NATIVE=1
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash switch/send.sh 2>&1 | tee $(LOGS)/switch_run_$(NOW).log
 
 import-save:  ## Import an Xbox MC3 profile: make import-save FILE=<.gsx | memory unit dump | save folder | .mc3> (UDATA=<dir>, REPLACE=1, LIST=1)
 	@test -n "$(FILE)" || { echo "usage: make import-save FILE=<save file or folder>"; exit 2; }
-	python3 tools/save_import.py "$(FILE)" $(if $(UDATA),--udata "$(UDATA)") $(if $(REPLACE),--replace) $(if $(LIST),--list) $(if $(YES),--yes)
+	source tools/env.sh && python3 tools/save_import.py "$(FILE)" $(if $(UDATA),--udata "$(UDATA)") $(if $(REPLACE),--replace) $(if $(LIST),--list) $(if $(YES),--yes)
 
 save-sync-down:  ## Switch -> here: the profiles over FTP (HOST_IP=<ip>[:port], port 21 by default; PROFILE=<folder or name>, GAME_ID=54540079, LIST=1, YES=1 to skip the question)
 	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-down HOST_IP=<the Switch's IP>[:port] (an FTP server running on it; port 21 by default)"; exit 2; }
-	python3 tools/save_sync.py down --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list) $(if $(YES),--yes)
+	source tools/env.sh && python3 tools/save_sync.py down --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list) $(if $(YES),--yes)
 
 save-sync-up:  ## Here -> Switch: the profiles over FTP (HOST_IP=<ip>[:port], port 21 by default; PROFILE=<folder or name>, GAME_ID=54540079, LIST=1, YES=1 to skip the question)
 	@test -n "$(or $(HOST_IP),$(SWITCH_IP))" || { echo "usage: make save-sync-up HOST_IP=<the Switch's IP>[:port] (an FTP server running on it; port 21 by default)"; exit 2; }
-	python3 tools/save_sync.py up --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list) $(if $(YES),--yes)
+	source tools/env.sh && python3 tools/save_sync.py up --host "$(or $(HOST_IP),$(SWITCH_IP))" $(if $(GAME_ID),--game-id $(GAME_ID)) $(if $(PROFILE),--profile $(PROFILE)) $(if $(UDATA),--udata "$(UDATA)") $(if $(FTP_USER),--user "$(FTP_USER)") $(if $(FTP_PASS),--password "$(FTP_PASS)") $(if $(LIST),--list) $(if $(YES),--yes)
 
 ## Housekeeping
-log:  ## Show the end of the newest log in work/logs
+log:  ## Show the end of the newest log in work-<game>/logs
 	@f=$$(ls -t $(LOGS)/*.log 2>/dev/null | head -1); \
 	 if [ -n "$$f" ]; then echo "== $$f"; tail -40 "$$f"; else echo "no logs yet"; fi
 
-du:  ## Disk use of work/ and game/
-	@du -sh $(WORK)/* game 2>/dev/null | sort -h
+du:  ## Disk use of work-<game>/ and the discs
+	@du -sh $(WORK)/* game game-* 2>/dev/null | sort -h
 
 toolkit-test:  ## Run the toolkit's Python unit tests
-	cd xboxrecomp && "$(WORK)/venv/bin/python3" -m pytest -q tools/
+	source tools/env.sh && mc3_python && cd xboxrecomp && "$$MC3_PYTHON" -m pytest -q tools/
 
 clean-build:  ## Delete build trees (keeps the lift)
 	rm -rf $(WORK)/build-*

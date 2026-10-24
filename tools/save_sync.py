@@ -11,7 +11,7 @@
                  default all
   --udata DIR    the local UDATA folder (default $MC3_GAME_DIR/UDATA)
   --remote DIR   the Switch's UDATA folder, from the card's root
-                 (default /switch/mcdub3-nx/game/UDATA)
+                 (default /switch/<MC3_SD_DIR>/game/UDATA: mcdub3-nx, mcdub3remix-nx)
   --user / --password
                  only for a server that asks for a login. Without them the
                  tool logs in anonymously, or not at all if the server
@@ -20,7 +20,7 @@
   --yes          copy without asking (it asks otherwise, showing the
                  direction and which profiles are created or overwritten)
 
-The receiving side is copied to work/saves-backup/<time>-<direction>/ first,
+The receiving side is copied to work-<game>/saves-backup/<time>-<direction>/ first,
 so nothing is lost by syncing the wrong way. Profiles move as they are: the
 port signs them the same way on every platform (tools/save_import.py).
 """
@@ -251,7 +251,7 @@ def main():
     ap.add_argument('--game-id', default='54540079')
     ap.add_argument('--profile')
     ap.add_argument('--udata')
-    ap.add_argument('--remote', default='/switch/mcdub3-nx/game/UDATA')
+    ap.add_argument('--remote', default='/switch/%s/game/UDATA' % os.environ.get('MC3_SD_DIR', 'mcdub3-nx'))
     ap.add_argument('--list', action='store_true')
     ap.add_argument('--yes', action='store_true')
     a = ap.parse_args()
@@ -302,7 +302,7 @@ def main():
         return 1
 
     stamp = time.strftime('%Y%m%d_%H%M%S')
-    backup = os.path.join(os.environ.get('MC3_WORK') or os.path.join(REPO, 'work'),
+    backup = os.path.join(os.environ.get('MC3_WORK') or os.path.join(REPO, 'work-dub'),
                           'saves-backup', f'{stamp}-before-sync-{a.direction}')
     if a.direction == 'down':
         if not there:

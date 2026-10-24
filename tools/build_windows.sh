@@ -36,7 +36,7 @@ else
     LLVM_MINGW="${MC3_LLVM_MINGW:-$(ls -d "$MC3_WORK"/tools/llvm-mingw-*/ 2>/dev/null | tail -1)}"
     LLVM_MINGW="${LLVM_MINGW%/}"
     [ -x "$LLVM_MINGW/bin/$ARCH-w64-mingw32-clang" ] \
-        || mc3_fail "no llvm-mingw in work/tools: download a release (github.com/mstorsjo/llvm-mingw, *-ucrt-macos-universal or *-ucrt-ubuntu-*) and unpack it there"
+        || mc3_fail "no llvm-mingw in work-<game>/tools: download a release (github.com/mstorsjo/llvm-mingw, *-ucrt-macos-universal or *-ucrt-ubuntu-*) and unpack it there"
     SYSROOT="$MC3_WORK/win-sysroot/$ARCH"
     PY=/opt/homebrew/bin/python3; [ -x "$PY" ] || PY=python3
     if [ ! -f "$SYSROOT/lib/pkgconfig/sdl2.pc" ]; then
@@ -53,7 +53,7 @@ TYPE=RelWithDebInfo
 
 # The icon (cover art, rounded like a Windows 11 app icon) and the release
 # version, both embedded in mcdub3.exe. No Pillow: no icon, still a build.
-ICON="$MC3_WORK/mcdub3.ico"
+ICON="$MC3_WORK/$MC3_APP.ico"
 if [ ! -f "$ICON" ] || [ "$MC3_REPO/assets/cover-art.jpg" -nt "$ICON" ]; then
     ICON_OK=""
     for IPY in "$MC3_WORK/macvenv/bin/python3" "$MC3_WORK/venv/bin/python3" "$PY"; do
@@ -83,25 +83,25 @@ ninja -C "$BUILD" -j"${JOBS:-$(mc3_default_jobs)}" ${TARGET:-}
 
 # dist/: the exe and every DLL it pulls in (Windows looks beside the exe).
 DIST="$BUILD/dist"
-[ -f "$DIST/mcdub3_env.txt" ] && cp "$DIST/mcdub3_env.txt" "$BUILD/mcdub3_env.txt.keep"
+[ -f "$DIST/${MC3_APP}_env.txt" ] && cp "$DIST/${MC3_APP}_env.txt" "$BUILD/${MC3_APP}_env.txt.keep"
 rm -rf "$DIST"; mkdir -p "$DIST"
-[ -f "$BUILD/mcdub3_env.txt.keep" ] && mv "$BUILD/mcdub3_env.txt.keep" "$DIST/mcdub3_env.txt"
-cp "$BUILD/mcdub3.exe" "$DIST/"
-"$PY" "$MC3_REPO/tools/windows/copy_dlls.py" "$DIST/mcdub3.exe" "${DLL_DIRS[@]}" "$DIST"
+[ -f "$BUILD/${MC3_APP}_env.txt.keep" ] && mv "$BUILD/${MC3_APP}_env.txt.keep" "$DIST/${MC3_APP}_env.txt"
+cp "$BUILD/$MC3_APP.exe" "$DIST/"
+"$PY" "$MC3_REPO/tools/windows/copy_dlls.py" "$DIST/$MC3_APP.exe" "${DLL_DIRS[@]}" "$DIST"
 
 # Settings, later wins: mcdub3_defaults.txt (this build's SCALE / SETTINGS,
 # rewritten every build), then mcdub3_env.txt (the player's: kept across
 # builds, made once from the documented template, every option commented).
 {
     echo "# Defaults of this build (make build SCALE=... UI_SCALE=... SETTINGS=...)."
-    echo "# Rewritten by every build: change settings in mcdub3_env.txt instead."
+    echo "# Rewritten by every build: change settings in ${MC3_APP}_env.txt instead."
     echo "RECOMP_GL_SCALE=${SCALE:-5}"        # 5 by default, as the Mac app
     echo "RECOMP_GL_UI_SCALE=${UI_SCALE:-5}"  # 5 by default; SETTINGS below can override
     [ -n "${EDITION:-}" ] && echo "EDITION=$EDITION"   # the disc in game-<edition>\ (windows_host.c)
     for kv in ${SETTINGS:-}; do echo "$kv"; done
-} | sed 's/$/\r/' > "$DIST/mcdub3_defaults.txt"
-if [ ! -f "$DIST/mcdub3_env.txt" ]; then
-    sed 's/$/\r/' "$MC3_REPO/switch/mcdub3_env.example.txt" > "$DIST/mcdub3_env.txt"
+} | sed 's/$/\r/' > "$DIST/${MC3_APP}_defaults.txt"
+if [ ! -f "$DIST/${MC3_APP}_env.txt" ]; then
+    sed 's/$/\r/' "$MC3_REPO/switch/mcdub3_env.example.txt" > "$DIST/${MC3_APP}_env.txt"
 fi
 
 # The launcher, optional (the exe finds the disc and saves itself,
@@ -124,12 +124,13 @@ printf '%s\r\n' \
   'mcdub3.exe > "%LOG%" 2>&1' \
   'set "RC=%ERRORLEVEL%"' \
   'popd' \
-  'if not "%RC%"=="0" (echo The game stopped with code %RC%: see %LOG% & pause)' > "$DIST/run_mcdub3.bat"
+  'if not "%RC%"=="0" (echo The game stopped with code %RC%: see %LOG% & pause)' \
+  | sed -e "s/mcdub3-nx/$MC3_SD_DIR/g" -e "s/mcdub3\([._]\)/$MC3_APP\1/g" > "$DIST/run_$MC3_APP.bat"   # the Remix: mcdub3remix
 # On Windows: a desktop shortcut to the exe (its own icon), made or
 # refreshed by every build -- the exe needs no launcher (src/windows_host.c).
 if [ "$MC3_HOST" = windows ]; then
-    EXE_W="$(cygpath -w "$DIST/mcdub3.exe")"; DIST_W="$(cygpath -w "$DIST")"
-    powershell.exe -NoProfile -Command "\$s = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\\Midnight Club 3.lnk'); \$s.TargetPath = '$EXE_W'; \$s.WorkingDirectory = '$DIST_W'; \$s.IconLocation = '$EXE_W'; \$s.Save()" \
-        && echo "desktop shortcut: Midnight Club 3 -> $EXE_W" || echo "(no desktop shortcut)"
+    EXE_W="$(cygpath -w "$DIST/$MC3_APP.exe")"; DIST_W="$(cygpath -w "$DIST")"
+    powershell.exe -NoProfile -Command "\$s = (New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath('Desktop') + '\\$MC3_SHORT_NAME.lnk'); \$s.TargetPath = '$EXE_W'; \$s.WorkingDirectory = '$DIST_W'; \$s.IconLocation = '$EXE_W'; \$s.Save()" \
+        && echo "desktop shortcut: $MC3_SHORT_NAME -> $EXE_W" || echo "(no desktop shortcut)"
 fi
-echo "built $DIST/mcdub3.exe   (double-click it, the desktop shortcut, or make run)"
+echo "built $DIST/$MC3_APP.exe   (double-click it, the desktop shortcut, or make run)"

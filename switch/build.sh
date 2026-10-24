@@ -2,8 +2,10 @@
 # Build the Switch NRO and stage an SD-card layout:
 #
 #   <SD>/switch/mcdub3-nx/mcdub3-nx-<edition>.nro   the edition of the lift
-#                                             (config/xbe_facts.h: usa, ...);
+#                                             (config/<game>/xbe_facts.h: usa, ...);
 #                                             -vulkan / -lto added for those
+#   (GAME=remix: <SD>/switch/mcdub3remix-nx/mcdub3remix-nx-<edition>.nro,
+#   mcdub3remix_env.txt, ...: config/remix/game.env)
 #   <SD>/switch/mcdub3-nx/game/               the extracted disc (never the ISO)
 #   <SD>/switch/mcdub3-nx/mcdub3_env.txt      optional KEY=VALUE runtime switches
 #   <SD>/switch/mcdub3-nx/hd/textures/        the HD texture pack, with HD=1 only
@@ -31,14 +33,14 @@ SD="${SD_ROOT:-$MC3_WORK/switch_sd}"
 # The NRO is named for its edition (mcdub3-nx-<edition>.nro), as releases
 # and the NSP forwarders name it: EDITION=eur, else the lifted one
 # (MC3_EDITION, written by tools/first_lift.sh). Every edition in
-# config/xbe_editions.h runs on this lift; the edition only names the
+# config/<game>/xbe_editions.h runs on this lift; the edition only names the
 # package and the disc folder it looks in first (game-<edition>/).
 LIFT_EDITION=$(mc3_lift_edition)
-[ -n "$LIFT_EDITION" ] || mc3_fail "config/xbe_facts.h has no MC3_EDITION: make lift"
+[ -n "$LIFT_EDITION" ] || mc3_fail "config/$MC3_GAME/xbe_facts.h has no MC3_EDITION: make lift GAME=$MC3_GAME"
 EDITION="${EDITION:-$LIFT_EDITION}"
-KNOWN=$(sed -n 's/.*X("\([a-z0-9_-]*\)".*/\1/p' "$MC3_REPO/config/xbe_editions.h" | tr '\n' ' ')
-case " $KNOWN " in *" $EDITION "*) ;; *) mc3_fail "EDITION=$EDITION is not in config/xbe_editions.h (there: $KNOWN)";; esac
-NRO_NAME="mcdub3-nx-$EDITION"
+KNOWN=$(sed -n 's/.*X("\([a-z0-9_-]*\)".*/\1/p' "$MC3_CONFIG/xbe_editions.h" | tr '\n' ' ')
+case " $KNOWN " in *" $EDITION "*) ;; *) mc3_fail "EDITION=$EDITION is not in config/$MC3_GAME/xbe_editions.h (there: $KNOWN)";; esac
+NRO_NAME="$MC3_SD_DIR-$EDITION"
 SUFFIX=""
 ARGS=(-DMC3_VULKAN=OFF)
 if [ "${VULKAN:-0}" = "1" ]; then
@@ -59,7 +61,7 @@ BUILD="${BUILD_DIR:-$MC3_WORK/build-switch$SUFFIX}"
 if [ -z "${BUILD_DIR:-}" ] && [ -f "$BUILD/CMakeCache.txt" ] \
         && ! grep -qx "CMAKE_HOME_DIRECTORY:INTERNAL=$MC3_REPO" "$BUILD/CMakeCache.txt"; then
     BUILD="$BUILD-$(printf %s "$MC3_REPO" | md5sum | cut -c1-6)"
-    echo "  (work/build-switch$SUFFIX belongs to another checkout path: building in ${BUILD##*/})"
+    echo "  (${MC3_WORK##*/}/build-switch$SUFFIX belongs to another checkout path: building in ${BUILD##*/})"
 fi
 JOBS="${JOBS:-$(mc3_default_jobs)}"
 
@@ -67,9 +69,13 @@ JOBS="${JOBS:-$(mc3_default_jobs)}"
 [ -f "$DEVKITPRO/portlibs/switch/include/SDL2/SDL.h" ] || mc3_fail "switch-sdl2 missing"
 [ -f "$MC3_GEN_DIR/recomp_funcs.h" ] || mc3_fail "no generated code in $MC3_GEN_DIR (tools/regen.sh)"
 
-# The app's identity (name, author, version, icon): switch/app.env; the
-# edition's own name (APP_NAME_<edition>) in hbmenu if there is one.
-source "$MC3_REPO/switch/app.env"
+# The app's identity (name, author, version, icon): switch/app.env for the
+# DUB Edition, switch/app-<game>.env for another; the edition's own name
+# (APP_NAME_<edition>) in hbmenu if there is one.
+APP_ENV="$MC3_REPO/switch/app.env"
+[ "$MC3_GAME" = dub ] || APP_ENV="$MC3_REPO/switch/app-$MC3_GAME.env"
+[ -f "$APP_ENV" ] || mc3_fail "no ${APP_ENV#$MC3_REPO/}"
+source "$APP_ENV"
 NAME_VAR="APP_NAME_${EDITION//-/_}"
 APP_NAME="${!NAME_VAR:-$APP_NAME}"
 cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja \
@@ -85,20 +91,24 @@ ninja -C "$BUILD" -j"$JOBS"
 
 DEST="$SD/switch/$MC3_SD_DIR"
 mkdir -p "$DEST"
-cp "$BUILD/mcdub3.nro" "$DEST/$NRO_NAME.nro"
+# The NRO and ELF carry the executable's name ($MC3_APP; mcdub3 before the
+# games were split).
+BUILT="$BUILD/$MC3_APP"
+[ -f "$BUILT.nro" ] || BUILT="$BUILD/mcdub3"
+cp "$BUILT.nro" "$DEST/$NRO_NAME.nro"
 rm -f "$DEST/mcdub3.nro" "$DEST/mcdub3-vulkan.nro" "$DEST/mcdub3-lto.nro"   # names before 2026-10-21
 # Keep the ELF of every staged NRO, by hash: crash offsets in a console log
 # only resolve against the exact build that wrote it.
 mkdir -p "$MC3_WORK/elf"
 ELF_KEEP="$MC3_WORK/elf/$NRO_NAME-$(md5sum "$DEST/$NRO_NAME.nro" | cut -c1-8).elf"
-cp "$BUILD/mcdub3.elf" "$ELF_KEEP"
+cp "$BUILT.elf" "$ELF_KEEP"
 # Release output (CI, .github/workflows/switch-build.yml): the NRO named
 # for its edition, as players pick it (mcdub3-nx-usa.nro, later -pal-..),
 # its ELF for crash offsets, and what was built.
 if [ -n "${RELEASE_DIR:-}" ]; then
     mkdir -p "$RELEASE_DIR"
     cp "$DEST/$NRO_NAME.nro" "$RELEASE_DIR/$NRO_NAME.nro"
-    cp "$BUILD/mcdub3.elf" "$RELEASE_DIR/$NRO_NAME.elf"
+    cp "$BUILT.elf" "$RELEASE_DIR/$NRO_NAME.elf"
     {
         echo "version=$APP_VERSION"
         echo "edition=$EDITION"
@@ -113,8 +123,11 @@ if [ "${NO_GAME:-0}" != "1" ]; then
     # The disc is gigabytes: hard-link it from $MC3_GAME_DIR instead of
     # copying (same disk, no extra space); only changed files are copied.
     # A disc from game-<edition>/ goes to game-<edition>/ on the card too
-    # (each NRO looks in its own first), one from game/ to game/.
+    # (each NRO looks in its own first), one from game/ to game/. The
+    # Remix has its own SD folder, so its game-remix[-<edition>]/ goes to
+    # game[-<edition>]/ in there.
     SD_GAME="${MC3_GAME_DIR##*/}"
+    SD_GAME="game${SD_GAME#"$MC3_DISC_PREFIX"}"
     case "$SD_GAME" in game|game-*) ;; *) SD_GAME=game ;; esac
     rsync -a --size-only --link-dest="$MC3_GAME_DIR/" \
         "$MC3_GAME_DIR/" "$DEST/$SD_GAME/" --exclude '*_analysis.json'
@@ -133,17 +146,19 @@ else
 fi
 # Runtime switches for the console, staged with the NRO: your own
 # switch/<app>_env.txt (gitignored) if there is one, else the documented
-# template with every setting commented out (switch/<app>_env.example.txt).
-# The template also goes along as <app>_env.example.txt, the reference.
+# template with every setting commented out (switch/<app>_env.example.txt,
+# else the DUB Edition's: the settings are the same). The template also
+# goes along as <app>_env.example.txt, the reference.
+TEMPLATE="$MC3_REPO/switch/${MC3_APP}_env.example.txt"
+[ -f "$TEMPLATE" ] || TEMPLATE="$MC3_REPO/switch/mcdub3_env.example.txt"
 if [ -f "$MC3_REPO/switch/${MC3_APP}_env.txt" ]; then
     cp "$MC3_REPO/switch/${MC3_APP}_env.txt" "$DEST/${MC3_APP}_env.txt"
     echo "  settings: switch/${MC3_APP}_env.txt staged"
-elif [ -f "$MC3_REPO/switch/${MC3_APP}_env.example.txt" ]; then
-    cp "$MC3_REPO/switch/${MC3_APP}_env.example.txt" "$DEST/${MC3_APP}_env.txt"
+elif [ -f "$TEMPLATE" ]; then
+    cp "$TEMPLATE" "$DEST/${MC3_APP}_env.txt"
     echo "  settings: the template staged (all defaults; copy it to switch/${MC3_APP}_env.txt to keep your own)"
 fi
-[ -f "$MC3_REPO/switch/${MC3_APP}_env.example.txt" ] \
-    && cp "$MC3_REPO/switch/${MC3_APP}_env.example.txt" "$DEST/${MC3_APP}_env.example.txt"
+[ -f "$TEMPLATE" ] && cp "$TEMPLATE" "$DEST/${MC3_APP}_env.example.txt"
 echo
 echo "staged $DEST"
 echo "  $NRO_NAME.nro $(stat -c %s "$DEST/$NRO_NAME.nro") bytes, ELF kept as $ELF_KEEP"

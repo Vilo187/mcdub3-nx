@@ -20,9 +20,9 @@ SUFFIX=""
 [ "${VULKAN:-0}" = "1" ] && SUFFIX="-vk"
 [ "${DEBUG:-0}" = "1" ] && SUFFIX="$SUFFIX-dbg"
 if [ "$MC3_HOST" = windows ]; then
-    BIN="${BIN:-$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist/mcdub3.exe}"   # beside its DLLs
+    BIN="${BIN:-$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist/$MC3_APP.exe}"   # beside its DLLs
 else
-    BIN="${BIN:-$MC3_WORK/build-$MC3_HOST$SUFFIX/mcdub3}"
+    BIN="${BIN:-$MC3_WORK/build-$MC3_HOST$SUFFIX/$MC3_APP}"
 fi
 [ -x "$BIN" ] || mc3_fail "no binary at $BIN (make build)"
 # A run of a stale binary looks exactly like the fix did not work.

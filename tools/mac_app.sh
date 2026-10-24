@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Package the macOS build as an app: work/mac_app/Midnight Club 3.app
+# Package the macOS build as an app: work-<game>/mac_app/Midnight Club 3.app
+# (GAME=remix: Midnight Club 3 Remix.app)
 #
 #   make mac-app [SCALE=5] [UI_SCALE=5] [SETTINGS="KEY=VALUE ..."] [HD=1]
 #
@@ -7,7 +8,7 @@
 # dylibbundler) and keeps everything else where a Mac app keeps it, laid out
 # like the Switch's SD folder:
 #
-#   ~/Library/Application Support/mcdub3/
+#   ~/Library/Application Support/mcdub3/       (the Remix: .../mcdub3remix/)
 #   ├── game/             the extracted disc (put it here; the app says so)
 #   ├── hd/textures/      optional texture pack
 #   ├── save/             saves
@@ -25,15 +26,15 @@
 #   SETTINGS=...  any other defaults, space-separated KEY=VALUE pairs
 #   HD=1          the texture pack from hd/textures inside the app (else the
 #                 app reads hd/ from Application Support, if there is one)
-#   GAME=<dir>    on first launch, link this disc folder in instead of
+#   DISC=<dir>    on first launch, link this disc folder in instead of
 #                 asking (default: none; the app asks)
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 mc3_mac_native "$0" "$@"
 [ "$MC3_HOST" = mac ] || mc3_fail "make mac-app runs on macOS"
 
-NAME="Midnight Club 3"
-BIN="$MC3_WORK/build-mac/mcdub3"
+NAME="$MC3_SHORT_NAME"                  # config/<game>/game.env
+BIN="$MC3_WORK/build-mac/$MC3_APP"
 OUT="$MC3_WORK/mac_app"
 APP="$OUT/$NAME.app"
 [ -x "$BIN" ] || mc3_fail "no $BIN: make build first"
@@ -41,11 +42,11 @@ command -v dylibbundler >/dev/null || mc3_fail "no dylibbundler: brew install dy
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" "$APP/Contents/libs"
-cp "$BIN" "$APP/Contents/MacOS/mcdub3"
+cp "$BIN" "$APP/Contents/MacOS/$MC3_APP"
 
 # The Homebrew libraries (SDL2, FFmpeg and theirs) into Contents/libs, the
 # binary pointed at them: the app runs without Homebrew.
-dylibbundler -od -b -x "$APP/Contents/MacOS/mcdub3" -d "$APP/Contents/libs" \
+dylibbundler -od -b -x "$APP/Contents/MacOS/$MC3_APP" -d "$APP/Contents/libs" \
     -p @executable_path/../libs/ >/dev/null
 # Homebrew's sdl2 is now sdl2-compat: a libSDL2 that loads SDL3 at run time
 # (dlopen), which dylibbundler cannot see -- the app said "Failed loading
@@ -64,7 +65,7 @@ echo "  libraries: $(ls "$APP/Contents/libs" | wc -l | tr -d ' ') bundled"
 # Defaults baked in at build time.
 {
     echo "# Defaults built into the app (make mac-app). Your settings in"
-    echo "# ~/Library/Application Support/mcdub3/mcdub3_env.txt override these."
+    echo "# ~/Library/Application Support/$MC3_APP/${MC3_APP}_env.txt override these."
     echo "RECOMP_GL_SCALE=${SCALE:-5}"            # 5 by default (2026-10-23)
     echo "RECOMP_GL_UI_SCALE=${UI_SCALE:-5}"      # 5 by default; SETTINGS below can override
     for kv in ${SETTINGS:-}; do echo "$kv"; done
@@ -82,19 +83,19 @@ fi
 # The launcher: settings, folders, then the game.
 cat > "$APP/Contents/MacOS/launch" <<'LAUNCH'
 #!/bin/bash
-# Midnight Club 3 launcher (tools/mac_app.sh): settings, folders, game.
+# @NAME@ launcher (tools/mac_app.sh): settings, folders, game.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 RES="$HERE/../Resources"
-SUP="$HOME/Library/Application Support/mcdub3"
+SUP="$HOME/Library/Application Support/@APP@"
 mkdir -p "$SUP/save"
-[ -f "$SUP/mcdub3_env.txt" ] || cp "$RES/env_template.txt" "$SUP/mcdub3_env.txt"
+[ -f "$SUP/@APP@_env.txt" ] || cp "$RES/env_template.txt" "$SUP/@APP@_env.txt"
 if [ ! -f "$SUP/game/default.xbe" ] && [ -n "@GAME@" ] && [ -f "@GAME@/default.xbe" ]; then
     rm -rf "$SUP/game"; ln -s "@GAME@" "$SUP/game"
 fi
 if [ ! -f "$SUP/game/default.xbe" ]; then
     mkdir -p "$SUP/game"
     open "$SUP/game"
-    osascript -e 'display dialog "Put the extracted Midnight Club 3 disc (default.xbe and its files, not the ISO) into the folder that just opened, then start the game again." with title "Midnight Club 3" buttons {"OK"} default button 1 with icon caution' >/dev/null 2>&1
+    osascript -e 'display dialog "Put the extracted @NAME@ disc (default.xbe and its files, not the ISO) into the folder that just opened, then start the game again." with title "@NAME@" buttons {"OK"} default button 1 with icon caution' >/dev/null 2>&1
     exit 1
 fi
 apply() {   # KEY=VALUE lines; '#' comments; later files win
@@ -110,13 +111,13 @@ apply() {   # KEY=VALUE lines; '#' comments; later files win
     done < "$1"
 }
 apply "$RES/defaults_env.txt"
-apply "$SUP/mcdub3_env.txt"
+apply "$SUP/@APP@_env.txt"
 export MC3_GAME_DIR="${MC3_GAME_DIR:-$SUP/game}"
 export MC3_SAVE_DIR="${MC3_SAVE_DIR:-$SUP/save}"
 cd "$SUP"
-exec "$HERE/mcdub3" > "$SUP/mcdub3_log.txt" 2>&1
+exec "$HERE/@APP@" > "$SUP/@APP@_log.txt" 2>&1
 LAUNCH
-sed -i '' "s|@GAME@|${GAME:-}|g" "$APP/Contents/MacOS/launch"
+sed -i '' -e "s|@GAME@|${DISC:-}|g" -e "s|@APP@|$MC3_APP|g" -e "s|@NAME@|$NAME|g" "$APP/Contents/MacOS/launch"
 chmod +x "$APP/Contents/MacOS/launch"
 
 # Icon from assets/cover-art.jpg, if there is one (personal, not in git):
@@ -152,7 +153,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleName</key><string>$NAME</string>
   <key>CFBundleDisplayName</key><string>$NAME</string>
-  <key>CFBundleIdentifier</key><string>nl.mcdub3.recomp</string>
+  <key>CFBundleIdentifier</key><string>nl.$MC3_APP.recomp</string>
   <key>CFBundleExecutable</key><string>launch</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>

@@ -38,8 +38,8 @@ jobs:
     strategy:
       matrix:
         # One entry per edition (switch/app.env APP_EDITIONS): an NRO each,
-        # mcdub3-nx-<edition>.nro. They share one lift (config/xbe_editions.h:
-        # the discs' code is the same), made from the disc config/xbe_facts.h
+        # mcdub3-nx-<edition>.nro. They share one lift (config/dub/xbe_editions.h:
+        # the discs' code is the same), made from the disc config/dub/xbe_facts.h
         # names, so the runner needs only that one, in $MC3_DISCS/<edition>/
         # (CONTRIBUTING.md, Releases). An edition with other code would need
         # a lift of its own (docs/decisions/0005).
@@ -64,7 +64,7 @@ jobs:
         run: |
           : "${MC3_DISCS:?the runner needs MC3_DISCS in its .env (CONTRIBUTING.md, Releases)}"
           # The lifted edition's disc, whichever edition this package is for.
-          lift=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' config/xbe_facts.h)
+          lift=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' config/dub/xbe_facts.h)
           test -f "$MC3_DISCS/$lift/default.xbe" \
             || { echo "no disc for $lift (the lifted edition) in $MC3_DISCS"; exit 1; }
           echo "MC3_GAME_DIR=$MC3_DISCS/$lift" >> "$GITHUB_ENV"
@@ -81,8 +81,8 @@ jobs:
           make lift
           # The committed facts must describe this disc: same lift, same
           # boot check (src/main.c).
-          git diff --exit-code config/xbe_facts.h \
-            || { echo "config/xbe_facts.h differs for this disc: run make lift locally and commit it"; exit 1; }
+          git diff --exit-code config/dub/xbe_facts.h \
+            || { echo "config/dub/xbe_facts.h differs for this disc: run make lift locally and commit it"; exit 1; }
 
       - name: Build
         env:

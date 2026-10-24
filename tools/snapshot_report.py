@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read a crash or watchdog snapshot from a run log and say where the game is.
 
-    python3 tools/snapshot_report.py [run.log]        (default: newest work/logs/run_*.log)
-    make report [LOG=work/logs/run_x.log]
+    python3 tools/snapshot_report.py [run.log]        (default: newest work-<game>/logs/run_*.log)
+    make report [LOG=work-<game>/logs/run_x.log]
 
 For the first snapshot in the log (watchdog or crash) it prints:
   - the registers, and Win32 error codes among them (0x8007000E = E_OUTOFMEMORY);
@@ -23,7 +23,7 @@ import struct
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WORK = os.environ.get("MC3_WORK") or os.path.join(REPO, "work")
+WORK = os.environ.get("MC3_WORK") or os.path.join(REPO, "work-" + os.environ.get("MC3_GAME", "dub"))
 GAME = os.environ.get("MC3_GAME_DIR") or os.path.join(REPO, "game")
 ANALYSIS = os.path.join(WORK, "analysis")
 THUNK_VA_BASE = 0xFE000000      # synthetic kernel-thunk addresses (runtime)
