@@ -155,6 +155,16 @@ typedef struct {
 /* Resolve a DMA offset the title programmed (texture, surface) to a guest VA. */
 uint32_t nv2a_pb_resolve(uint32_t dma_offset);
 
+/* The 2D engine's image blit: NV062 (surfaces: format, pitches, source and
+ * destination offsets) plus NV09F (points in and out, size), resolved to
+ * guest VAs. Coordinates are surface pixels. */
+typedef struct {
+    uint32_t src_va, dst_va;
+    uint32_t src_pitch, dst_pitch;      /* bytes */
+    uint32_t format, bpp;               /* NV062 colour format, bytes per pixel */
+    uint32_t sx, sy, dx, dy, w, h;
+} Nv2aBlit;
+
 typedef struct {
     /* flags: CLEAR_SURFACE bits (Z 0x1, stencil 0x2, colour 0xF0).
      * zstencil: SET_ZSTENCIL_CLEAR_VALUE (depth in the top 24 bits for Z24S8). */
@@ -174,6 +184,11 @@ typedef struct {
      * ~1 s while its soundtrack (timed by Bink, not the screen) already
      * played the tyre screeches. */
     void (*prepare)(void);
+    /* Optional: a 2D blit, after the executor has copied the bytes in guest
+     * memory. A renderer whose surfaces live on the GPU copies there too:
+     * MC3's loading screen copies the frame just shown into the next back
+     * buffer and draws only the spinner's new segment on it (2026-10-24). */
+    void (*blit)(const Nv2aBlit *b);
 } Nv2aBackend;
 
 /* Run the registered back end's prepare() once; 0 while none is registered

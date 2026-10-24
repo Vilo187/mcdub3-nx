@@ -252,6 +252,32 @@ static GlSurf  s_surf[GL_MAX_SURF];
 static GlSurf *s_last;                  /* last surface drawn or cleared */
 static int     s_drew_any;              /* the title has drawn something */
 
+/* RECOMP_GL_FRAMETIME=2: what each presented frame did, surface by surface,
+ * in order -- runs of draws (d), clears (c) and 2D blits (b) -- and which
+ * one it showed. It showed MC3's loading screen drawing only a spinner
+ * segment a frame on a buffer nobody had copied the last frame into: the
+ * 2D engine was ignored (2026-10-24). */
+static int s_ft = -1;
+static char s_ft_log[512];
+static size_t s_ft_len;
+static uint32_t s_ft_va, s_ft_n;
+static char s_ft_kind;
+static void ft_flush_run(void)
+{
+    if (s_ft_n && s_ft_len < sizeof s_ft_log - 32)
+        s_ft_len += (size_t)snprintf(s_ft_log + s_ft_len, sizeof s_ft_log - s_ft_len,
+                                     " %X:%u%c", s_ft_va, s_ft_n, s_ft_kind);
+    s_ft_n = 0;
+}
+static void ft_note(uint32_t va, char kind)
+{
+    if (s_ft < 2)
+        return;
+    if (s_ft_n && (va != s_ft_va || kind != s_ft_kind))
+        ft_flush_run();
+    s_ft_va = va; s_ft_kind = kind; s_ft_n++;
+}
+
 static int s_watch_hit;
 static int s_watch_dumping;   /* inside a dumped frame: clears are logged too */
 static void watch_shot(const GlSurf *s);   /* RECOMP_GL_WATCH_SHOTS */
@@ -3445,6 +3471,7 @@ static void gl_draw_raw(const Nv2aRawBatch *b)
     if (!s)
         return;
     s_drew_any = 1;
+    ft_note(s->va, 'd');
     psh_key(r, &pk);
     if (s_trace) {
         /* Texture modes not yet done in gl_psh.c: bump, dot product, cube. */
@@ -3937,6 +3964,7 @@ static void gl_clear(const Nv2aSurface *sf, const Nv2aRenderState *rs,
     s = surf_bind(sf, rs ? rs->zeta_va : 0);
     if (!s)
         return;
+    ft_note(s->va, 'c');
     if (s_watch_dumping)
         fprintf(stderr, "  [WATCH] clear surf %08X %ux%u flags %02X (z %u stencil %u color %X) argb %08X"
                 " zs %08X zeta %08X rect h %08X v %08X\n", s->va, s->w, s->h, flags, flags & 1,
@@ -4332,6 +4360,55 @@ static int present_fxaa(GlSurf *s, GLint sw, int dx, int dy, int dw, int dh)
     return 1;
 }
 
+/* The 2D engine's blit between two surfaces the renderer holds (the
+ * executor has already copied guest memory, which is all a texture read
+ * from memory needs). A source the renderer does not hold was written by
+ * the CPU: nothing to do here. Rows are top-first, as everywhere. */
+static void gl_blit(const Nv2aBlit *b)
+{
+    GlSurf *src, *dst;
+    uint32_t sw, sh, dw, dh;
+
+    if (!ready())
+        return;
+    src = surf_find(b->src_va);
+    dst = surf_find(b->dst_va);
+    if (!src || !dst)
+        return;
+    if (src == dst) {
+        static int shown;
+        if (shown++ < 4)
+            fprintf(stderr, "  [GL] blit within surface %08X not done\n", b->src_va);
+        return;
+    }
+    /* Clamp to both surfaces (title pixels). */
+    sw = b->sx < src->w ? src->w - b->sx : 0;
+    sh = b->sy < src->h ? src->h - b->sy : 0;
+    dw = b->dx < dst->w ? dst->w - b->dx : 0;
+    dh = b->dy < dst->h ? dst->h - b->dy : 0;
+    if (sw > b->w) sw = b->w;
+    if (sh > b->h) sh = b->h;
+    if (dw > sw) dw = sw;
+    if (dh > sh) dh = sh;
+    if (!dw || !dh)
+        return;
+    state_dirty();
+    glDisable(GL_SCISSOR_TEST);
+    glColorMask(1, 1, 1, 1);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, src->fbo);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, dst->fbo);
+    glBlitFramebuffer(to_stored(b->sx, src->pw, src->w), to_stored(b->sy, src->ph, src->h),
+                      to_stored(b->sx + dw, src->pw, src->w), to_stored(b->sy + dh, src->ph, src->h),
+                      to_stored(b->dx, dst->pw, dst->w), to_stored(b->dy, dst->ph, dst->h),
+                      to_stored(b->dx + dw, dst->pw, dst->w), to_stored(b->dy + dh, dst->ph, dst->h),
+                      GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    glBindFramebuffer(GL_FRAMEBUFFER, dst->fbo);
+    if (dst->vw_frame != s_frame || dst->vw < src->vw)   /* what is shown of it */
+        dst->vw = src->vw;
+    dst->vw_frame = s_frame;
+    ft_note(dst->va, 'b');
+}
+
 static void gl_flip(void)
 {
     state_dirty();
@@ -4358,14 +4435,19 @@ static void gl_flip(void)
              * last, with the time since the first -- uneven pacing at an even
              * average (the loading screen's circles, 2026-10-24) shows here
              * and in no per-second figure. */
-            static int ft = -1;
             static uint64_t t0;
-            if (ft < 0)
-                ft = getenv("RECOMP_GL_FRAMETIME") != NULL;
-            if (ft) {
+            if (s_ft < 0) {
+                const char *e = getenv("RECOMP_GL_FRAMETIME");
+                s_ft = e ? (atoi(e) > 1 ? 2 : 1) : 0;
+            }
+            if (s_ft) {
                 if (!t0) t0 = now;
-                fprintf(stderr, "[ft] %8.3f s frame %u %6.1f ms\n", (now - t0) / 1e9, s_frame,
-                        last_ns ? (now - last_ns) / 1e6 : 0.0);
+                ft_flush_run();
+                fprintf(stderr, "[ft] %8.3f s frame %u %6.1f ms%s%s show %X\n",
+                        (now - t0) / 1e9, s_frame,
+                        last_ns ? (now - last_ns) / 1e6 : 0.0,
+                        s_ft_len ? " |" : "", s_ft_log, s ? s->va : 0);
+                s_ft_len = 0; s_ft_log[0] = 0;
             }
         }
         if (last_ns) {
@@ -4450,7 +4532,7 @@ static void gl_flip(void)
     }
 
     {
-        /* RECOMP_GL_DUMP_KEY=<prefix>: every frame while R is held (F11 is macOS's Mission Control) -- a
+        /* RECOMP_GL_DUMP_KEY=<prefix>: every frame between two presses of R (F11 is macOS's Mission Control) -- a
          * stretch the player reaches by hand (a loading screen) without
          * dumping, and slowing, everything before it. */
         static int key_on = -1;
@@ -4469,13 +4551,22 @@ static void gl_flip(void)
                     fprintf(stderr, "  [GL] (relative to %s)\n", cwd);
                 dump_every = 1;
                 dump_from = 0xFFFFFFFFu;             /* nothing until the key */
-                fprintf(stderr, "  [GL] hold R to write every frame as %s<frame>.bmp\n", k);
+                fprintf(stderr, "  [GL] press R to start and stop writing every frame as %s<frame>.bmp\n", k);
             }
         }
 #if (!defined(_WIN32) || defined(XBOXRECOMP_SDL_HOST)) && !defined(__SWITCH__)
         if (key_on > 0) {
-            int held = xbox_sdl_keyboard_down(SDL_SCANCODE_R);
-            dump_from = held ? 0 : 0xFFFFFFFFu;
+            /* R toggles: a press starts, the next stops -- a short tap is
+             * enough, and each change is logged with its frame, so a key
+             * that never arrives shows as a missing line. */
+            static int was_down, recording;
+            int down = xbox_sdl_keyboard_down(SDL_SCANCODE_R);
+            if (down && !was_down) {
+                recording = !recording;
+                fprintf(stderr, "  [GL] recording %s at frame %u\n", recording ? "on" : "off", s_frame);
+            }
+            was_down = down;
+            dump_from = recording ? 0 : 0xFFFFFFFFu;
         }
 #endif
     }
@@ -4595,7 +4686,7 @@ swap:
 #include <pthread.h>
 #include <time.h>
 
-enum { Q_WRAP = 0, Q_DRAW = 1, Q_CLEAR = 2, Q_FLIP = 3 };
+enum { Q_WRAP = 0, Q_DRAW = 1, Q_CLEAR = 2, Q_FLIP = 3, Q_BLIT = 4 };
 typedef struct { uint32_t type, size, nreg, nprog, nconst, pad[3]; } QHdr;
 typedef struct { uint32_t idx, pad[3]; uint32_t w[16]; } QRegChunk;   /* 64 B of shadow */
 typedef struct { uint32_t idx, pad[3]; uint32_t w[4]; } QRow;         /* 16 B row */
@@ -4844,6 +4935,17 @@ static void q_clear(const Nv2aSurface *sf, const Nv2aRenderState *rs,
     q_publish(size);
 }
 
+static void q_blit(const Nv2aBlit *b)
+{
+    uint32_t nreg = q_reg_collect();
+    size_t size = sizeof(QHdr) + (size_t)nreg * sizeof(QRegChunk) + Q_ALIGN(sizeof(Nv2aBlit));
+    uint8_t *rec = q_reserve(size);
+    size_t at = q_write_state(rec, Q_BLIT, nreg, 0, 0, NULL);
+    memcpy(rec + at, b, sizeof *b);
+    ((QHdr *)rec)->size = (uint32_t)size;
+    q_publish(size);
+}
+
 static void q_flip(void)
 {
     uint32_t nreg;
@@ -4927,6 +5029,8 @@ static void *q_gl_thread(void *arg)
             } else if (h->type == Q_CLEAR) {
                 const QClear *c = (const QClear *)(rec + at);
                 gl_clear(&c->s, &c->rs, c->flags, c->argb, c->zs);
+            } else if (h->type == Q_BLIT) {
+                gl_blit((const Nv2aBlit *)(rec + at));
             } else if (h->type == Q_FLIP) {
                 gl_flip();
                 __atomic_sub_fetch(&s_q_flips, 1, __ATOMIC_ACQ_REL);
@@ -4978,6 +5082,8 @@ static Nv2aBackend s_backend_q = {
     q_flip,
     q_draw,
     NV2A_BACKEND_RAW_DIRECT,
+    NULL,
+    q_blit,
 };
 
 /* Window, context and the shader cache before the title draws (prepare). */
@@ -4995,6 +5101,7 @@ static const Nv2aBackend s_backend_gl = {
     gl_draw_raw,
     NV2A_BACKEND_RAW_DIRECT,
     gl_prepare,
+    gl_blit,
 };
 
 void nv2a_gl_install(void)

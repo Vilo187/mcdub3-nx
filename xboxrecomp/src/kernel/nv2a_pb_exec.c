@@ -2952,6 +2952,11 @@ static int cull_bbox(uint32_t lo, uint32_t nv, float bmin[3], float bmax[3])
     return 1;
 }
 
+/* The last batch found off screen: its screen box and the clip it was
+ * tested against (RECOMP_PB_FRAMESTATS). */
+static float s_cull_box[4];
+static uint32_t s_cull_clip[4], s_cull_boxed, s_cull_inline;
+
 /* 1: every vertex of the batch is outside the clip rectangle. */
 static int cull_offscreen(uint32_t lo, uint32_t nv, int vp)
 {
@@ -3029,6 +3034,11 @@ static int cull_offscreen(uint32_t lo, uint32_t nv, int vp)
         if (y < sy0) sy0 = y;
         if (y > sy1) sy1 = y;
     }
+    s_cull_box[0] = sx0; s_cull_box[1] = sy0; s_cull_box[2] = sx1; s_cull_box[3] = sy1;
+    s_cull_clip[0] = s_gpu.clip_x; s_cull_clip[1] = s_gpu.clip_y;
+    s_cull_clip[2] = s_gpu.clip_w; s_cull_clip[3] = s_gpu.clip_h;
+    s_cull_boxed = 1;
+    s_cull_inline = s_gpu.inline_active;
     return sx1 < (float)s_gpu.clip_x - margin
         || sx0 > (float)(s_gpu.clip_x + s_gpu.clip_w) + margin
         || sy1 < (float)s_gpu.clip_y - margin
@@ -3161,6 +3171,34 @@ static int cull_batch(uint32_t lo, uint32_t nv)
         }
     }
     if (off) {
+        static uint32_t shown_flip = ~0u;
+        static int fs = -1;
+        if (fs < 0) {
+            const char *e = getenv("RECOMP_PB_FRAMESTATS");
+            fs = e && *e == '1';
+        }
+        static int shown_n;
+        if (shown_flip != s_gpu.flips)
+            shown_n = 0;
+        if (fs && s_cull_boxed && shown_n < 6) {                  /* the first six per frame */
+            float raw[4] = { 0, 0, 0, 0 };
+            const float *m = s_gpu.composite;
+            shown_flip = s_gpu.flips;
+            shown_n++;
+            fetch_attr(&s_gpu.attr[0], s_gpu.idx[0], raw);
+            fprintf(stderr, "[pb]     v0 %.2f %.2f %.2f %.2f (attr0 type %u size %u stride %u)"
+                    " composite r0 %g %g %g %g | r1 %g %g %g %g | r3 %g %g %g %g | vp_offset %g %g\n",
+                    raw[0], raw[1], raw[2], raw[3], s_gpu.attr[0].type, s_gpu.attr[0].size,
+                    s_gpu.attr[0].stride, m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
+                    m[12], m[13], m[14], m[15], s_gpu.vp_offset[0], s_gpu.vp_offset[1]);
+            fprintf(stderr, "[pb]   off screen%s: box x %.1f..%.1f y %.1f..%.1f, clip %u,%u %ux%u,"
+                    " %s, vp %d prog start %u, %u indices, aa %gx%g\n",
+                    s_cull.on ? "" : " (drawn: RECOMP_CULL=0)",
+                    s_cull_box[0], s_cull_box[2], s_cull_box[1], s_cull_box[3],
+                    s_cull_clip[0], s_cull_clip[1], s_cull_clip[2], s_cull_clip[3],
+                    s_cull_inline ? "inline" : "arrays", vp, s_vp.prog_start,
+                    s_gpu.idx_count, (double)s_gpu.aa_sx, (double)s_gpu.aa_sy);
+        }
         s_cull.culled++;
         if (s_cull.check && cull_check()) {
             if (s_cull.check_bad++ < 20)
@@ -3242,6 +3280,40 @@ static uint16_t raw_direct_attrs(Nv2aRawBatch *rb, uint16_t present,
     return mask;
 }
 
+/* RECOMP_PB_FRAMESTATS=1: per flip, what the pushbuffer carried -- methods
+ * per subchannel (1-7: 2D blits, image copies), batches ended and what
+ * became of them. A frame that the title submitted but the renderer drew
+ * nothing of (MC3's loading-screen spinner, 2026-10-24) shows where the
+ * work went. */
+static struct {
+    int on;
+    uint32_t sub[8], ends, imm, inl, prim, raster, short_, culled, raw, ffp_skip;
+    uint32_t sub_m[8];                          /* a method seen per subchannel */
+} s_fs = { -1 };
+static int fs_on(void)
+{
+    if (s_fs.on < 0) {
+        const char *e = getenv("RECOMP_PB_FRAMESTATS");
+        s_fs.on = e && *e == '1';
+    }
+    return s_fs.on;
+}
+static void fs_report(void)
+{
+    if (!fs_on())
+        return;
+    fprintf(stderr, "[pb] flip %u: methods 3D %u, sub1-7 %u %u %u %u %u %u %u (e.g. %X %X %X %X)"
+            " | ends %u: imm %u inline %u arrays %u -> raster %u (short %u, culled %u,"
+            " drawn %u, skipped %u)\n", s_gpu.flips, s_fs.sub[0], s_fs.sub[1], s_fs.sub[2],
+            s_fs.sub[3], s_fs.sub[4], s_fs.sub[5], s_fs.sub[6], s_fs.sub[7], s_fs.sub_m[1],
+            s_fs.sub_m[2], s_fs.sub_m[3], s_fs.sub_m[4], s_fs.ends, s_fs.imm, s_fs.inl,
+            s_fs.prim, s_fs.raster, s_fs.short_, s_fs.culled, s_fs.raw, s_fs.ffp_skip);
+    memset(s_fs.sub, 0, sizeof s_fs.sub);
+    memset(s_fs.sub_m, 0, sizeof s_fs.sub_m);
+    s_fs.ends = s_fs.imm = s_fs.inl = s_fs.prim = s_fs.raster = 0;
+    s_fs.short_ = s_fs.culled = s_fs.raw = s_fs.ffp_skip = 0;
+}
+
 static void attr_const_init(void);
 
 void (*nv2a_raw_batch_hook)(Nv2aRawBatch *rb, float *attrs);
@@ -3262,6 +3334,7 @@ static void raw_batch(void)
     if (nv > 1u << 20)
         return;                                 /* not a real batch */
     if (cull_batch(lo, nv)) {
+        s_fs.culled++;
         s_gpu.drawn_offset = s_gpu.color_offset;
         s_gpu.drawn_pitch = s_gpu.pitch;
         return;
@@ -3347,6 +3420,7 @@ static void raw_batch(void)
     if (nv2a_raw_batch_hook)
         nv2a_raw_batch_hook(&rb, s_raw_attrs);
     s_backend->draw_raw(&rb);
+    s_fs.raw++;
     s_gpu.tris_drawn += s_gpu.idx_count / 3;
     s_gpu.drawn_offset = s_gpu.color_offset;
     s_gpu.drawn_pitch = s_gpu.pitch;
@@ -3357,13 +3431,17 @@ static void raster_batch(void)
     uint32_t before = s_gpu.tris_drawn;
 
     s_vp.gen++;
-    if (s_gpu.idx_count < 3)
+    s_fs.raster++;
+    if (s_gpu.idx_count < 3) {
+        s_fs.short_++;
         return;
+    }
     if (s_backend && s_backend->draw_raw) {
         raw_batch();
         return;
     }
     if (!batch_is_screen_space()) {
+        s_fs.ffp_skip++;
         s_gpu.batches_untransformed++;
         /* RECOMP_SKIP_TRACE: why the first skipped batches were skipped. */
         if (getenv("RECOMP_SKIP_TRACE")) {
@@ -4102,9 +4180,103 @@ static void flip_apply_retired(void)
                         : s_gpu.flip_read + 1;
 }
 
+/* ── The 2D engine: NV062 surfaces + NV09F image blit ──
+ *
+ * Xbox D3D binds the blit to subchannel 2 and its surfaces to 3 (MC3), but
+ * which is which is learnt from methods only one class has: NV062's
+ * SET_OFFSET_DESTIN (0x30C), NV09F's SET_OPERATION (0x2FC) and
+ * SET_CONTEXT_SURFACES (0x19C). The bytes are copied in guest memory, as
+ * the hardware would, and the back end copies its own surfaces (blit).
+ * Before this the 2D engine was ignored: MC3's loading screen copies each
+ * shown frame into the next back buffer and adds the spinner's new segment,
+ * so each buffer got every other segment -- circles that stuttered and
+ * never closed, on every host (2026-10-24). RECOMP_BLIT=0 ignores it again. */
+static struct {
+    uint8_t cls[8];                         /* 0x62, 0x9F, or 0: not known yet */
+    uint32_t format, pitch, src, dst;       /* NV062 */
+    uint32_t in, out;                       /* NV09F */
+    int on;
+} s_2d = { { 0, 0, 0x9F, 0x62 }, 0, 0, 0, 0, 0, 0, -1 };
+
+static void blit_do(uint32_t size)
+{
+    uint8_t *mem = (uint8_t *)xbox_GetMemoryOffset();
+    Nv2aBlit b;
+    uint32_t y;
+
+    b.format = s_2d.format;
+    b.bpp = s_2d.format == 1 ? 1 : (s_2d.format >= 2 && s_2d.format <= 5) ? 2 : 4;
+    b.src_pitch = s_2d.pitch & 0xFFFF;
+    b.dst_pitch = s_2d.pitch >> 16;
+    b.src_va = dma_resolve(s_2d.src);
+    b.dst_va = dma_resolve(s_2d.dst);
+    b.sx = s_2d.in & 0xFFFF;  b.sy = s_2d.in >> 16;
+    b.dx = s_2d.out & 0xFFFF; b.dy = s_2d.out >> 16;
+    b.w = size & 0xFFFF;      b.h = size >> 16;
+    if (!b.w || !b.h || !b.src_pitch || !b.dst_pitch
+     || (b.sx + b.w) * b.bpp > b.src_pitch || (b.dx + b.w) * b.bpp > b.dst_pitch
+     || b.h > 4096) {
+        static int bad;
+        if (bad++ < 8)
+            fprintf(stderr, "  [GPU] blit ignored: %ux%u from %u,%u to %u,%u, pitches %u/%u,"
+                    " format %u\n", b.w, b.h, b.sx, b.sy, b.dx, b.dy, b.src_pitch,
+                    b.dst_pitch, b.format);
+        return;
+    }
+    {
+        static int shown;
+        if (shown++ < 4)
+            fprintf(stderr, "  [GPU] blit %ux%u %08X (%u,%u) -> %08X (%u,%u), format %u\n",
+                    b.w, b.h, b.src_va, b.sx, b.sy, b.dst_va, b.dx, b.dy, b.format);
+    }
+    for (y = 0; y < b.h; y++)
+        memmove(mem + b.dst_va + (size_t)(b.dy + y) * b.dst_pitch + (size_t)b.dx * b.bpp,
+                mem + b.src_va + (size_t)(b.sy + y) * b.src_pitch + (size_t)b.sx * b.bpp,
+                (size_t)b.w * b.bpp);
+    if (s_backend && s_backend->blit)
+        s_backend->blit(&b);
+}
+
+/* 1: the method was the 2D engine's and is done. */
+static int blit_method(uint32_t subch, uint32_t method, uint32_t param)
+{
+    uint8_t *cls = &s_2d.cls[subch & 7];
+    if (s_2d.on < 0) {
+        const char *e = getenv("RECOMP_BLIT");
+        s_2d.on = !(e && *e == '0');
+    }
+    if (!s_2d.on)
+        return 0;
+    if (method == 0x030C)
+        *cls = 0x62;
+    else if (method == 0x02FC || method == 0x019C)
+        *cls = 0x9F;
+    if (*cls == 0x62) {
+        switch (method) {
+        case 0x0300: s_2d.format = param; return 1;
+        case 0x0304: s_2d.pitch = param;  return 1;
+        case 0x0308: s_2d.src = param;    return 1;
+        case 0x030C: s_2d.dst = param;    return 1;
+        }
+    } else if (*cls == 0x9F) {
+        switch (method) {
+        case 0x0300: s_2d.in = param;  return 1;
+        case 0x0304: s_2d.out = param; return 1;
+        case 0x0308: blit_do(param);   return 1;
+        }
+    }
+    return 0;
+}
+
 void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
 {
     static int inited;
+
+    if (s_fs.on) {                       /* -1 until first asked, then 0/1 */
+        s_fs.sub[subch & 7]++;
+        if (!s_fs.sub_m[subch & 7])
+            s_fs.sub_m[subch & 7] = method;
+    }
 
     /* The shadow is the 3D class's register file: methods to the other
      * subchannels (2D surfaces, blits) share its offsets and must not land
@@ -4272,6 +4444,10 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     }
 
     if (subch != 0) {                      /* 3D class lives on subchannel 0 */
+        if (fs_on())                       /* the 2D engine's work, to the letter */
+            fprintf(stderr, "[pb]   sub%u %04X = %08X\n", subch, method, param);
+        if (blit_method(subch, method, param))
+            return;
         note_unhandled(method, param);
         return;
     }
@@ -4320,12 +4496,13 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             /* Three ways a batch can have arrived, and only one is in use at
              * a time: vertices completed by SET_VERTEX4F, a payload written
              * with INLINE_ARRAY, or indices into the title's own arrays. */
+            s_fs.ends++;
             if (s_gpu.imm_count)
-                draw_immediate();
+                s_fs.imm++, draw_immediate();
             else if (s_gpu.inline_count)
-                draw_inline_array();
+                s_fs.inl++, draw_inline_array();
             else
-                draw_primitive();
+                s_fs.prim++, draw_primitive();
             s_gpu.prim = 0;
             s_gpu.inline_count = 0;
             s_gpu.imm_count = 0;
@@ -4461,6 +4638,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
                 xbox_FramebufferWindowPresent(dma_resolve(done), pitch);
             }
         }
+        fs_report();
         if (s_backend && s_backend->flip)
             s_backend->flip();
         if (pb_verbose()) {
