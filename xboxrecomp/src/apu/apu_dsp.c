@@ -79,6 +79,26 @@ static void dsp_ack_init(void)
                 s_dsp_ack_count, s_dsp_ack[0]);
 }
 
+/* A doorbell found at run time (a title's own hook that reads DirectSound's
+ * command block pointer): the address moves with the title's allocations --
+ * MC3 Remix's block sat at 0x83B10000 or 0x83A5C000 depending on whether it
+ * was told the TV is widescreen (2026-10-25), so a fixed RECOMP_APU_DSP_ACK
+ * hung one of the two. Added once; read every APU frame. */
+void apu_dsp_ack_add(uint32_t va)
+{
+    int i;
+    if (s_dsp_ack_count < 0)
+        dsp_ack_init();
+    for (i = 0; i < s_dsp_ack_count; i++)
+        if (s_dsp_ack[i] == va)
+            return;
+    if (!va || s_dsp_ack_count >= APU_DSP_ACK_MAX)
+        return;
+    s_dsp_ack[s_dsp_ack_count] = va;
+    __atomic_store_n(&s_dsp_ack_count, s_dsp_ack_count + 1, __ATOMIC_RELEASE);
+    fprintf(stderr, "[APU] DSP doorbell 0x%08X added by the title's hook\n", va);
+}
+
 /* SUM EVERY MIXBIN THE GUEST ROUTED TO, NOT JUST THE FIRST TWO.
  *
  * Default ON. RECOMP_APU_MIXDOWN_ALL=0 restores the previous two-bin read,
