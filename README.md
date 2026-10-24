@@ -14,7 +14,7 @@ Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-s
 
 ## ✨ Status
 
-The Switch build can play towards the end until 100% career progress. Playing on requires maximum overclock with the game running at 20-25 FPS of the game's maximum 30 FPS. Improvements are focused on performance.
+The Switch build can play towards the end until 100% career progress. Playing requires maximum overclock with the game running at 20-25 FPS of the game's maximum 30 FPS. Improvements are focused on performance.
 
 <p align="center"><img src="assets/switch.png" alt="Midnight Club 3: DUB Edition" width="450"></p>
 
