@@ -23,7 +23,7 @@
  * its events pumped, on flip.
  *
  * Runtime switches:
- *   RECOMP_GL_DUMP=<prefix>[,every]  write presented frames as BMP
+ *   RECOMP_GL_DUMP=<prefix>[,every[,from[,to]]]  write presented frames as BMP
  *   RECOMP_GL_TRACE=1                shader sources and link errors
  *   RECOMP_GL_WATCH=<hex va>         state, vertices and pixels read back for
  *                                    the first draws into / sampling that VA
@@ -3989,6 +3989,14 @@ static void gl_clear(const Nv2aSurface *sf, const Nv2aRenderState *rs,
 static void dump_bmp(const char *path, const uint8_t *bgra, uint32_t w, uint32_t h)
 {
     FILE *f = fopen(path, "wb");
+    if (!f) {
+        /* Said once: a dump to a folder that is not there wrote nothing,
+         * silently (a run starts in work/, so work/logs/... was work/work/,
+         * 2026-10-24). */
+        static int told;
+        if (!told++)
+            fprintf(stderr, "  [GL] cannot write %s: frame dumps lost (does the folder exist?)\n", path);
+    }
     uint8_t hdr[54] = { 'B', 'M' };
     uint32_t row = w * 3, pad = (4 - (row & 3)) & 3, size = 54 + (row + pad) * h, y, x;
 
@@ -4328,6 +4336,7 @@ static void gl_flip(void)
 {
     state_dirty();
     static int dump_every = -1;
+    static uint32_t dump_from, dump_to;     /* RECOMP_GL_DUMP=prefix,every,from,to */
     static char dump_prefix[256];
     static uint8_t *pix;
     static size_t pix_cap;
@@ -4344,6 +4353,21 @@ static void gl_flip(void)
         static uint64_t last_ns, window_ns;
         static int lines;
         uint64_t now = hz_now();
+        {
+            /* RECOMP_GL_FRAMETIME=1: every presented frame's distance to the
+             * last, with the time since the first -- uneven pacing at an even
+             * average (the loading screen's circles, 2026-10-24) shows here
+             * and in no per-second figure. */
+            static int ft = -1;
+            static uint64_t t0;
+            if (ft < 0)
+                ft = getenv("RECOMP_GL_FRAMETIME") != NULL;
+            if (ft) {
+                if (!t0) t0 = now;
+                fprintf(stderr, "[ft] %8.3f s frame %u %6.1f ms\n", (now - t0) / 1e9, s_frame,
+                        last_ns ? (now - last_ns) / 1e6 : 0.0);
+            }
+        }
         if (last_ns) {
             uint64_t dt = now - last_ns;
             if (now - window_ns > 10000000000ull) { window_ns = now; lines = 0; }
@@ -4399,6 +4423,13 @@ static void gl_flip(void)
             dump_prefix[n] = 0;
             dump_every = comma ? atoi(comma + 1) : 60;
             if (dump_every <= 0) dump_every = 60;
+            /* ,from[,to]: only frames in that range (a loading screen's
+             * frames without slowing the boot by dumping it too). */
+            if (comma && (comma = strchr(comma + 1, ',')) != NULL) {
+                dump_from = (uint32_t)strtoul(comma + 1, NULL, 10);
+                if ((comma = strchr(comma + 1, ',')) != NULL)
+                    dump_to = (uint32_t)strtoul(comma + 1, NULL, 10);
+            }
         }
     }
     if (!s || !s_drew_any) {
@@ -4418,7 +4449,38 @@ static void gl_flip(void)
         goto swap;
     }
 
-    if (dump_every && (s_frame % (uint32_t)dump_every) == 0) {
+    {
+        /* RECOMP_GL_DUMP_KEY=<prefix>: every frame while R is held (F11 is macOS's Mission Control) -- a
+         * stretch the player reaches by hand (a loading screen) without
+         * dumping, and slowing, everything before it. */
+        static int key_on = -1;
+        if (key_on < 0) {
+            const char *k = getenv("RECOMP_GL_DUMP_KEY");
+            key_on = k && *k;
+            if (key_on) {
+                char dir[256], cwd[256], *slash;
+                snprintf(dump_prefix, sizeof dump_prefix, "%s", k);
+                snprintf(dir, sizeof dir, "%s", k);
+                if ((slash = strrchr(dir, '/')) != NULL) {   /* the folder, made if missing */
+                    *slash = 0;
+                    mkdir(dir, 0755);
+                }
+                if (k[0] != '/' && getcwd(cwd, sizeof cwd))
+                    fprintf(stderr, "  [GL] (relative to %s)\n", cwd);
+                dump_every = 1;
+                dump_from = 0xFFFFFFFFu;             /* nothing until the key */
+                fprintf(stderr, "  [GL] hold R to write every frame as %s<frame>.bmp\n", k);
+            }
+        }
+#if (!defined(_WIN32) || defined(XBOXRECOMP_SDL_HOST)) && !defined(__SWITCH__)
+        if (key_on > 0) {
+            int held = xbox_sdl_keyboard_down(SDL_SCANCODE_R);
+            dump_from = held ? 0 : 0xFFFFFFFFu;
+        }
+#endif
+    }
+    if (dump_every && (s_frame % (uint32_t)dump_every) == 0
+            && s_frame >= dump_from && (!dump_to || s_frame <= dump_to)) {
         size_t need = (size_t)s->pw * s->ph * 4;
         if (need > pix_cap) {
             free(pix);
