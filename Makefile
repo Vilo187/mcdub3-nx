@@ -47,7 +47,7 @@ check-vm:  ## Print the VM checks (CPU, page size, RAM, disk, OpenGL)
 	@free -g | head -2; df -h . | tail -1
 	@glxinfo -B 2>/dev/null | grep -E 'renderer|core profile version' || echo "glxinfo: install mesa-utils"
 
-extract:  ## Unpack an ISO into game/: make extract ISO=<file.iso>
+extract:  ## Unpack an ISO into game/ (EDITION=eur: game-eur/): make extract ISO=<file.iso>
 	@test -n "$(ISO)" || { echo "usage: make extract ISO=<file.iso>"; exit 1; }
 	bash tools/extract_disc.sh "$(ISO)"
 

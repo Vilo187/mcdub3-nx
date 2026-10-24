@@ -1,6 +1,8 @@
 # Game data: never commit anything from the disc.
 /source/
 /game/
+# Other editions' discs beside game/ (game-eur/, ...): never committed.
+/game-*/
 *.iso
 *.xbe
 *.xiso

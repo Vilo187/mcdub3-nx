@@ -22,6 +22,10 @@
 # Tell the game the TV is widescreen: it then renders 16:9 itself.
 #RECOMP_WIDESCREEN=1
 
+# The console's language, as the game reads it from the Xbox's settings:
+# en, fr, de, es, it (the European disc has these), ja, ko, zh, pt.
+#RECOMP_LANGUAGE=en
+
 # Square pixels in 16:9 (the game's anamorphic picture shown at its true
 # shape). Only with RECOMP_WIDESCREEN=1.
 #RECOMP_GL_SQUARE=1

@@ -46,6 +46,7 @@ static int setenv(const char *name, const char *value, int overwrite)
 #endif
 #include <xbox/xboxrecomp.h>
 
+#include "xbe_editions.h"   /* every disc this lift runs (config/) */
 #if __has_include("xbe_facts.h")
 #  include "xbe_facts.h"            /* config/, written by tools/first_lift.sh */
 #else
@@ -454,34 +455,49 @@ static void fatal(const char *msg)
 #endif
 }
 
-/* The lifted code fits one XBE, byte for byte: config/xbe_facts.h records
- * its size and FNV-1a 64 (tools/first_lift.sh). Another edition of the game
- * (PAL, NTSC-J) or a patched one would boot into code that is not its own
- * and crash somewhere far away; say so instead, naming this build's
- * edition (the NRO is mcdub3-nx-<edition>.nro). MC3_XBE_CHECK=0 skips it,
- * for a developer's own experiments. */
+/* The lifted code fits one program, byte for byte: config/xbe_facts.h
+ * records the disc it was lifted from (size and FNV-1a 64), and
+ * config/xbe_editions.h every edition whose code is the same (the USA and
+ * European discs: header bytes differ, code does not). Another program -- a
+ * patched XBE, an edition with other code -- would boot into code that is
+ * not its own and crash somewhere far away; say so instead. MC3_XBE_CHECK=0
+ * skips it. */
+static const char *s_disc_edition = MC3_EDITION;   /* the edition found at boot */
+
 static int xbe_matches_lift(const void *data, size_t size)
 {
 #if defined(MC3_XBE_SIZE) && defined(MC3_XBE_FNV64)
+    /* The editions whose code is this lift's (config/xbe_editions.h). */
+    static const struct { const char *name; uint64_t fnv; } known[] = {
+#define MC3_EDITION_ENTRY(name, fnv, region, version) { name, fnv },
+        MC3_XBE_EDITIONS(MC3_EDITION_ENTRY)
+#undef MC3_EDITION_ENTRY
+    };
     const char *e = getenv("MC3_XBE_CHECK");
     const unsigned char *p = data;
     uint64_t h = 0xcbf29ce484222325ull;
     size_t i;
-    char msg[512];
+    char msg[640], names[128] = "";
     if (e && e[0] == '0')
         return 1;
-    if (size == MC3_XBE_SIZE) {
-        for (i = 0; i < size; i++)
-            h = (h ^ p[i]) * 0x100000001b3ull;
-        if (h == MC3_XBE_FNV64)
+    for (i = 0; i < size; i++)
+        h = (h ^ p[i]) * 0x100000001b3ull;
+    if (size == MC3_XBE_SIZE && h == MC3_XBE_FNV64)
+        return 1;                            /* the disc that was lifted */
+    for (i = 0; i < sizeof known / sizeof known[0]; i++) {
+        if (h == known[i].fnv) {
+            s_disc_edition = known[i].name;
             return 1;
+        }
+        snprintf(names + strlen(names), sizeof names - strlen(names), "%s%s",
+                 i ? ", " : "", known[i].name);
     }
     snprintf(msg, sizeof msg,
-             "This build is for Midnight Club 3: DUB Edition, edition \"%s\" "
+             "This build runs Midnight Club 3: DUB Edition from the %s disc "
              "(default.xbe of %u bytes). The default.xbe found is %zu bytes%s: "
-             "another edition or a modified file. Use the build for your "
-             "edition, or the original disc files.",
-             MC3_EDITION, (unsigned)MC3_XBE_SIZE, size,
+             "another edition or a modified file. Use the original disc files "
+             "of a supported edition.",
+             names, (unsigned)MC3_XBE_SIZE, size,
              size == MC3_XBE_SIZE ? " with other contents" : "");
     fatal(msg);
     return 0;
@@ -569,7 +585,7 @@ static int game_main(void)
     setvbuf(stderr, NULL, _IONBF, 0);
 #endif
     printf("=== " MC3_XBE_TITLE_NAME " (Xbox) - static recompilation ===\n");
-    printf("mcdub3-nx %s, edition %s, %s\n", MC3_VERSION, MC3_EDITION, MC3_BUILD_ID);
+    printf("mcdub3-nx %s, lifted from the %s disc, %s\n", MC3_VERSION, MC3_EDITION, MC3_BUILD_ID);
     install_crash_reporter();
     set_runtime_defaults();
     log_settings();
@@ -612,6 +628,7 @@ static int game_main(void)
         free(xbe_data);
         return 1;
     }
+    printf("disc: edition %s\n", s_disc_edition);
 
     if (!xbox_MemoryLayoutInit(xbe_data, xbe_size)) {
         fatal("Failed to initialise the Xbox memory layout "

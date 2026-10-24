@@ -19,7 +19,24 @@
 MC3_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export MC3_WORK="${MC3_WORK:-$MC3_REPO/work}"
 export XBOXRECOMP_DIR="${XBOXRECOMP_DIR:-$MC3_REPO/xboxrecomp}"
-export MC3_GAME_DIR="${MC3_GAME_DIR:-$MC3_REPO/game}"
+# The disc: game/, or game-<edition>/ beside it for several editions side by
+# side (EDITION=eur picks game-eur/; config/xbe_editions.h lists the editions,
+# one lift runs them all). Without EDITION: game/, else game-usa/.
+# MC3_GAME_DIR overrides all of it.
+if [ -z "${MC3_GAME_DIR:-}" ]; then
+    if [ -n "${EDITION:-}" ]; then
+        MC3_GAME_DIR="$MC3_REPO/game-$EDITION"
+        # The first disc may still sit in game/ (before editions): usa.
+        if [ "$EDITION" = usa ] && [ ! -e "$MC3_GAME_DIR/default.xbe" ] && [ -e "$MC3_REPO/game/default.xbe" ]; then
+            MC3_GAME_DIR="$MC3_REPO/game"
+        fi
+    elif [ ! -e "$MC3_REPO/game/default.xbe" ] && [ -e "$MC3_REPO/game-usa/default.xbe" ]; then
+        MC3_GAME_DIR="$MC3_REPO/game-usa"
+    else
+        MC3_GAME_DIR="$MC3_REPO/game"
+    fi
+fi
+export MC3_GAME_DIR
 export MC3_XBE="${MC3_XBE:-$MC3_GAME_DIR/default.xbe}"
 export MC3_ANALYSIS_DIR="${MC3_ANALYSIS_DIR:-$MC3_WORK/analysis}"
 export MC3_GEN_DIR="${MC3_GEN_DIR:-$MC3_WORK/gen}"
@@ -157,6 +174,7 @@ mc3_check_lift_fresh() {
 mc3_need_game() {
     [ -f "$MC3_GAME_DIR/default.xbe" ] && return 0
     echo "error: no default.xbe in $MC3_GAME_DIR" >&2
+    [ -n "${EDITION:-}" ] && echo "  (EDITION=$EDITION: the disc goes in game-$EDITION/, e.g. make extract ISO=<file.iso> EDITION=$EDITION)" >&2
     echo "  Put the extracted disc (default.xbe + data) directly in the repo's game/ folder." >&2
     echo "  - from an ISO:              tools/extract_disc.sh <file.iso>" >&2
     echo "  - or use it in place:       export MC3_GAME_DIR=<folder with default.xbe>" >&2

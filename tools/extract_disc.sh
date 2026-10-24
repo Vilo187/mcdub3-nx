@@ -24,4 +24,8 @@ cd "$XBOXRECOMP_DIR"
 [ -f "$MC3_GAME_DIR/default.xbe" ] || mc3_fail "no default.xbe after unpacking"
 echo
 echo "extracted to $MC3_GAME_DIR ($(du -sh "$MC3_GAME_DIR" | cut -f1))"
-echo "next: tools/first_lift.sh"
+if [ -f "$MC3_GEN_DIR/recomp_funcs.h" ]; then
+    echo "next: make run${EDITION:+ EDITION=$EDITION} (the editions in config/xbe_editions.h share one lift)"
+else
+    echo "next: make lift"
+fi

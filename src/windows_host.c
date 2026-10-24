@@ -8,8 +8,10 @@
  *             then mcdub3_env.txt beside the exe, NAME=value per line, #
  *             comments; the later file wins, the real environment (make run
  *             RECOMP_GL_SCALE=2, a launcher) over both
- *   the disc  MC3_GAME_DIR, else game\ beside the exe, else the repo's game\
- *             (dist\ sits in work\build-windows-<arch>\)
+ *   the disc  MC3_GAME_DIR, else the repo's game-<EDITION>\ (EDITION from
+ *             the settings), else game\ beside the exe, else the repo's
+ *             game\, game-usa\, game-eur\ (dist\ sits in
+ *             work\build-windows-<arch>\)
  *   saves     MC3_SAVE_DIR, else the repo's work\save\ if there is one
  *   the log   started without a console of its own to report to (a
  *             double-click gives it a fresh one): stdout and stderr go to
@@ -132,7 +134,8 @@ static void log_to_file_if_alone(void)
 
 void windows_boot(void)
 {
-    static const char *const game[] = { "game", "..\\..\\..\\game", NULL };
+    static const char *const game[] = { "game", "..\\..\\..\\game", "..\\..\\..\\game-usa",
+                                        "..\\..\\..\\game-eur", NULL };
     static const char *const save[] = { "..\\..\\save", NULL };
     char *slash;
     GetModuleFileNameA(NULL, s_exe_dir, sizeof s_exe_dir);
@@ -142,6 +145,17 @@ void windows_boot(void)
     remember_environment();
     load_settings("mcdub3_defaults.txt");
     load_settings("mcdub3_env.txt");
+    {
+        /* EDITION (make build EDITION=eur writes it to the defaults): the
+         * repo's game-<edition>\ first, as tools/env.sh picks it. */
+        const char *ed = getenv("EDITION");
+        if (ed && *ed) {
+            char rel[64];
+            const char *const one[] = { rel, NULL };
+            snprintf(rel, sizeof rel, "..\\..\\..\\game-%s", ed);
+            find_dir("MC3_GAME_DIR", one);
+        }
+    }
     find_dir("MC3_GAME_DIR", game);
     find_dir("MC3_SAVE_DIR", save);
 }
