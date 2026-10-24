@@ -19,23 +19,49 @@
 MC3_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 export MC3_WORK="${MC3_WORK:-$MC3_REPO/work}"
 export XBOXRECOMP_DIR="${XBOXRECOMP_DIR:-$MC3_REPO/xboxrecomp}"
-# The disc: game/, or game-<edition>/ beside it for several editions side by
-# side (EDITION=eur picks game-eur/; config/xbe_editions.h lists the editions,
-# one lift runs them all). Without EDITION: game/, else game-usa/.
-# MC3_GAME_DIR overrides all of it.
-if [ -z "${MC3_GAME_DIR:-}" ]; then
+# The disc. Several editions can sit side by side: game/ and game-<edition>/
+# (config/xbe_editions.h; one lift runs them all). In this order:
+#   1. MC3_GAME_DIR, if set;
+#   2. EDITION=<name>: game-<name>/ (usa: game/ too, the folder before editions);
+#   3. the only disc there is, whatever its folder;
+#   4. of several: game/, else the lifted edition's (config/xbe_facts.h), else
+#      the first by name -- said once, with EDITION= to pick another.
+mc3_lift_edition() {
+    sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' "$MC3_REPO/config/xbe_facts.h" 2>/dev/null
+}
+mc3_pick_game_dir() {
+    local d discs=() lift
     if [ -n "${EDITION:-}" ]; then
         MC3_GAME_DIR="$MC3_REPO/game-$EDITION"
-        # The first disc may still sit in game/ (before editions): usa.
         if [ "$EDITION" = usa ] && [ ! -e "$MC3_GAME_DIR/default.xbe" ] && [ -e "$MC3_REPO/game/default.xbe" ]; then
             MC3_GAME_DIR="$MC3_REPO/game"
         fi
-    elif [ ! -e "$MC3_REPO/game/default.xbe" ] && [ -e "$MC3_REPO/game-usa/default.xbe" ]; then
-        MC3_GAME_DIR="$MC3_REPO/game-usa"
-    else
-        MC3_GAME_DIR="$MC3_REPO/game"
+        return
     fi
-fi
+    for d in "$MC3_REPO/game" "$MC3_REPO"/game-*; do
+        [ -e "$d/default.xbe" ] && discs+=("$d")
+    done
+    case ${#discs[@]} in
+        0) MC3_GAME_DIR="$MC3_REPO/game"; return ;;      # mc3_need_game explains
+        1) MC3_GAME_DIR="${discs[0]}"; return ;;
+    esac
+    lift=$(mc3_lift_edition)
+    if [ -e "$MC3_REPO/game/default.xbe" ]; then
+        MC3_GAME_DIR="$MC3_REPO/game"
+    elif [ -n "$lift" ] && [ -e "$MC3_REPO/game-$lift/default.xbe" ]; then
+        MC3_GAME_DIR="$MC3_REPO/game-$lift"
+    else
+        MC3_GAME_DIR="${discs[0]}"
+    fi
+    if [ -z "${MC3_DISC_NOTED:-}" ]; then
+        local names=() n
+        for d in "${discs[@]}"; do names+=("${d##*/}"); done
+        n="${MC3_GAME_DIR##*/}"
+        echo "note: several discs (${names[*]}): $n is used; EDITION=<name> picks another (game-<name>/)" >&2
+        export MC3_DISC_NOTED=1                          # once per make, not per script
+    fi
+}
+[ -n "${MC3_GAME_DIR:-}" ] || mc3_pick_game_dir
 export MC3_GAME_DIR
 export MC3_XBE="${MC3_XBE:-$MC3_GAME_DIR/default.xbe}"
 export MC3_ANALYSIS_DIR="${MC3_ANALYSIS_DIR:-$MC3_WORK/analysis}"

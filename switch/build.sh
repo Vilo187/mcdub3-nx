@@ -28,10 +28,16 @@ mc3_check_lift_fresh
 
 export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
 SD="${SD_ROOT:-$MC3_WORK/switch_sd}"
-# The NRO is named for the edition its lift fits (MC3_EDITION, written by
-# tools/first_lift.sh), as releases and the NSP forwarders name it.
-EDITION=$(sed -n 's/^#define MC3_EDITION *"\(.*\)"/\1/p' "$MC3_REPO/config/xbe_facts.h")
-[ -n "$EDITION" ] || mc3_fail "config/xbe_facts.h has no MC3_EDITION: make lift"
+# The NRO is named for its edition (mcdub3-nx-<edition>.nro), as releases
+# and the NSP forwarders name it: EDITION=eur, else the lifted one
+# (MC3_EDITION, written by tools/first_lift.sh). Every edition in
+# config/xbe_editions.h runs on this lift; the edition only names the
+# package and the disc folder it looks in first (game-<edition>/).
+LIFT_EDITION=$(mc3_lift_edition)
+[ -n "$LIFT_EDITION" ] || mc3_fail "config/xbe_facts.h has no MC3_EDITION: make lift"
+EDITION="${EDITION:-$LIFT_EDITION}"
+KNOWN=$(sed -n 's/.*X("\([a-z0-9_-]*\)".*/\1/p' "$MC3_REPO/config/xbe_editions.h" | tr '\n' ' ')
+case " $KNOWN " in *" $EDITION "*) ;; *) mc3_fail "EDITION=$EDITION is not in config/xbe_editions.h (there: $KNOWN)";; esac
 NRO_NAME="mcdub3-nx-$EDITION"
 SUFFIX=""
 ARGS=(-DMC3_VULKAN=OFF)
@@ -47,14 +53,25 @@ if [ "${LTO:-0}" = "1" ]; then
     ARGS+=(-DMC3_LTO=ON -DMC3_LTO_JOBS="${LTO_JOBS:-4}")
 fi
 BUILD="${BUILD_DIR:-$MC3_WORK/build-switch$SUFFIX}"
+# A work/ shared between machines (the Linux VM sees the repo at
+# /media/psf/..., the Mac's container at /Users/...): CMake refuses a tree
+# configured for another path, so each path gets its own (2026-10-24).
+if [ -z "${BUILD_DIR:-}" ] && [ -f "$BUILD/CMakeCache.txt" ] \
+        && ! grep -qx "CMAKE_HOME_DIRECTORY:INTERNAL=$MC3_REPO" "$BUILD/CMakeCache.txt"; then
+    BUILD="$BUILD-$(printf %s "$MC3_REPO" | md5sum | cut -c1-6)"
+    echo "  (work/build-switch$SUFFIX belongs to another checkout path: building in ${BUILD##*/})"
+fi
 JOBS="${JOBS:-$(mc3_default_jobs)}"
 
 [ -f "$DEVKITPRO/cmake/Switch.cmake" ] || mc3_fail "devkitPro not found at $DEVKITPRO (vm/setup-ubuntu.sh)"
 [ -f "$DEVKITPRO/portlibs/switch/include/SDL2/SDL.h" ] || mc3_fail "switch-sdl2 missing"
 [ -f "$MC3_GEN_DIR/recomp_funcs.h" ] || mc3_fail "no generated code in $MC3_GEN_DIR (tools/regen.sh)"
 
-# The app's identity (name, author, version, icon): switch/app.env.
+# The app's identity (name, author, version, icon): switch/app.env; the
+# edition's own name (APP_NAME_<edition>) in hbmenu if there is one.
 source "$MC3_REPO/switch/app.env"
+NAME_VAR="APP_NAME_${EDITION//-/_}"
+APP_NAME="${!NAME_VAR:-$APP_NAME}"
 cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja \
     -DMC3_SWITCH_TITLE="$APP_NAME" -DMC3_SWITCH_AUTHOR="$APP_AUTHOR" \
     -DMC3_SWITCH_VERSION="$APP_VERSION" -DMC3_SWITCH_ICON="$MC3_REPO/$APP_ICON" \
@@ -62,7 +79,8 @@ cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" \
     -DMC3_APP="$MC3_APP" -DMC3_SD_DIR="$MC3_SD_DIR" \
-    -DMC3_VERSION="$APP_VERSION" -DMC3_BUILD_ID="${MC3_BUILD_ID:-local}" "${ARGS[@]}" >/dev/null
+    -DMC3_VERSION="$APP_VERSION" -DMC3_BUILD_ID="${MC3_BUILD_ID:-local}" \
+    -DMC3_PACKAGE_EDITION="$EDITION" "${ARGS[@]}" >/dev/null
 ninja -C "$BUILD" -j"$JOBS"
 
 DEST="$SD/switch/$MC3_SD_DIR"
@@ -94,8 +112,12 @@ if [ "${NO_GAME:-0}" != "1" ]; then
     mc3_need_game
     # The disc is gigabytes: hard-link it from $MC3_GAME_DIR instead of
     # copying (same disk, no extra space); only changed files are copied.
+    # A disc from game-<edition>/ goes to game-<edition>/ on the card too
+    # (each NRO looks in its own first), one from game/ to game/.
+    SD_GAME="${MC3_GAME_DIR##*/}"
+    case "$SD_GAME" in game|game-*) ;; *) SD_GAME=game ;; esac
     rsync -a --size-only --link-dest="$MC3_GAME_DIR/" \
-        "$MC3_GAME_DIR/" "$DEST/game/" --exclude '*_analysis.json'
+        "$MC3_GAME_DIR/" "$DEST/$SD_GAME/" --exclude '*_analysis.json'
 fi
 # The HD texture pack (hd/textures beside game/, see nv2a_gl/hd_pack.c):
 # HD=1 stages it next to the game, otherwise a pack staged by an earlier

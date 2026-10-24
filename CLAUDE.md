@@ -97,7 +97,13 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   (flash/pause_x.xbck, video/Story/Suschamp.bik, video/Tutorial/Trlogos.bik).
   config/xbe_editions.h lists every accepted XBE (FNV-1a 64) for the boot
   check, which logs `disc: edition <name>`. Discs side by side: game/ and
-  game-<edition>/ (gitignored), EDITION=eur (tools/env.sh). Languages come
+  game-<edition>/ (gitignored). Which plays (tools/env.sh, windows_host.c):
+  EDITION= first; else the only disc; of several game/, then the lifted
+  edition's, then the first by name (noted once). Packages per edition:
+  make switch EDITION=eur -> mcdub3-nx-eur.nro (MC3_PACKAGE_EDITION; looks
+  in sdmc:/switch/mcdub3-nx/game-<edition>/ first, then game/), NSPs from
+  APP_EDITIONS in switch/app.env (eur: its own title ID), CI matrix
+  [usa, eur] from the one lifted disc. Languages come
   from XC_LANGUAGE: RECOMP_LANGUAGE=fr|de|es|it (kernel_xbox.c; the title
   screen's "Press Start" stays English). Data: `assets_x.dat` (+ `_1`..`_5`),
   `banks.dat`, `audio/` (XACT `.xwb`/`.xsb`), `flash/`, `resources/`.

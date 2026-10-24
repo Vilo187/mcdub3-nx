@@ -12,6 +12,9 @@
 
 SHELL := /bin/bash
 .SHELLFLAGS := -eo pipefail -c
+# macOS ships make 3.81, which ignores .SHELLFLAGS: recipes that log through
+# tee say set -o pipefail themselves, or a failure ends as success (a failed
+# Switch build reported exit 0, 2026-10-24).
 .DEFAULT_GOAL := help
 
 WORK := $(or $(MC3_WORK),$(CURDIR)/work)
@@ -54,15 +57,15 @@ extract:  ## Unpack an ISO into game/ (EDITION=eur: game-eur/): make extract ISO
 ## Lift (XBE -> C in work/gen)
 lift:  ## Parse the XBE, write config/xbe_facts.h, full lift
 	@mkdir -p $(LOGS)
-	bash tools/first_lift.sh 2>&1 | tee $(LOGS)/lift_$(NOW).log
+	set -o pipefail; bash tools/first_lift.sh 2>&1 | tee $(LOGS)/lift_$(NOW).log
 
 regen:  ## Full regen: after changing config/seed_functions.json
 	@mkdir -p $(LOGS)
-	bash tools/regen.sh 2>&1 | tee $(LOGS)/regen_$(NOW).log
+	set -o pipefail; bash tools/regen.sh 2>&1 | tee $(LOGS)/regen_$(NOW).log
 
 relift:  ## Lift only: after adding/removing an override, or a translator change (TRACE=XACTENG,DSOUND: failure trace)
 	@mkdir -p $(LOGS)
-	LIFT_ONLY=1 bash tools/regen.sh 2>&1 | tee $(LOGS)/relift_$(NOW).log
+	set -o pipefail; LIFT_ONLY=1 bash tools/regen.sh 2>&1 | tee $(LOGS)/relift_$(NOW).log
 
 seeds:  ## Propose seeds from a run log: make seeds LOG=work/logs/run_x.log (review, then make regen)
 	@test -n "$(LOG)" || { echo "usage: make seeds LOG=<run log>"; exit 1; }
@@ -79,14 +82,14 @@ lift-report:  ## Summarise the last lift (functions, stubs, unimplemented)
 ## Linux (the debug loop)
 build:  ## Build the desktop binary (OpenGL): Linux, macOS, or Windows in MSYS2 (Windows: SCALE=5, UI_SCALE=5, SETTINGS= as defaults, like mac-app)
 	@mkdir -p $(LOGS)
-	@case "$$(uname -s)" in \
+	@set -o pipefail; case "$$(uname -s)" in \
 	   MINGW*|MSYS*|CYGWIN*) bash tools/build_windows.sh ;; \
 	   *) bash tools/build_linux.sh ;; \
 	 esac 2>&1 | tee $(LOGS)/build_$(NOW).log
 
 windows:  ## Cross-build the Windows exe from macOS/Linux (llvm-mingw in work/tools; WIN_ARCH=aarch64 for ARM)
 	@mkdir -p $(LOGS)
-	bash tools/build_windows.sh 2>&1 | tee $(LOGS)/build_windows_$(NOW).log
+	set -o pipefail; bash tools/build_windows.sh 2>&1 | tee $(LOGS)/build_windows_$(NOW).log
 
 build-vk:  ## Build with the Vulkan renderer (needs glslang 12+)
 	$(MAKE) build VULKAN=1
@@ -113,7 +116,7 @@ difftest:  ## Replay call CALL of wrapped function FUNC on x86 (Unicorn) vs the 
 	@mkdir -p $(LOGS)
 	MC3_DIFFTEST_CALL=$(CALL) MC3_DIFFTEST_FUNC=$(or $(FUNC),0037CCD0) MC3_DIFFTEST_WITHIN=$(WITHIN) \
 	    HEADLESS=1 SECS=$${SECS:-300} bash tools/run_linux.sh || true
-	@py=; for p in $(WORK)/venv/bin/python3 python3; do $$p -c 'import numpy, unicorn, capstone' 2>/dev/null && { py=$$p; break; }; done; \
+	@set -o pipefail; py=; for p in $(WORK)/venv/bin/python3 python3; do $$p -c 'import numpy, unicorn, capstone' 2>/dev/null && { py=$$p; break; }; done; \
 	 if [ -z "$$py" ]; then echo "captured in $(WORK)/difftest; no Python with numpy+unicorn here:"; \
 	   echo "  $(WORK)/venv/bin/pip install numpy unicorn   (or replay on another machine)"; exit 0; fi; \
 	 $$py tools/difftest.py $(WORK)/difftest/$(or $(FUNC),0037CCD0)_$(CALL)_before.bin 2>&1 | tee $(LOGS)/difftest_$(NOW).log
@@ -138,7 +141,7 @@ trap:  ## Run, stopping at the first untranslated instruction reached
 mac-app:  ## Package the Mac build as work/mac_app/Midnight Club 3.app (SCALE=5, UI_SCALE=5 by default, SETTINGS="K=V ...", HD=1, GAME=<disc dir>)
 	@mkdir -p $(LOGS)
 	$(MAKE) build
-	bash tools/mac_app.sh 2>&1 | tee $(LOGS)/mac_app_$(NOW).log
+	set -o pipefail; bash tools/mac_app.sh 2>&1 | tee $(LOGS)/mac_app_$(NOW).log
 
 ## Texture packs (hd/ beside game/; xboxrecomp/src/nv2a_gl/hd_pack.c)
 
@@ -150,12 +153,12 @@ hd-tools:  ## Fetch the upscaler (Real-ESRGAN) for this OS into work/tools (macO
 
 hd-upscale:  ## hd/dump -> hd/textures, new ones only (FACTOR=2|3|4, MIN=px, FILES="... " to redo some)
 	@mkdir -p $(LOGS)
-	bash tools/hd_upscale.sh $(or $(FACTOR),2) 2>&1 | tee $(LOGS)/hd_upscale_$(NOW).log
+	set -o pipefail; bash tools/hd_upscale.sh $(or $(FACTOR),2) 2>&1 | tee $(LOGS)/hd_upscale_$(NOW).log
 
 ## Switch
 switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work/switch_sd; HD=1: with hd/textures; NATIVE=1: local devkitPro
 	@mkdir -p $(LOGS)
-	bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
+	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 
 nsp:  ## NSP forwarders (home-menu apps), one per edition, from switch/app.env, in the container; EDITION=usa for one, KEYS=keys/prod.keys
 	@mkdir -p $(LOGS)
@@ -170,7 +173,7 @@ switch-lto:  ## Switch build with link-time optimisation
 
 send:  ## Send the NRO over nxlink (hbmenu, press Y) and log the game to work/logs/switch_*.log; SWITCH_IP=a.b.c.d, NATIVE=1
 	@mkdir -p $(LOGS)
-	bash switch/send.sh 2>&1 | tee $(LOGS)/switch_run_$(NOW).log
+	set -o pipefail; bash switch/send.sh 2>&1 | tee $(LOGS)/switch_run_$(NOW).log
 
 import-save:  ## Import an Xbox MC3 profile: make import-save FILE=<.gsx | memory unit dump | save folder | .mc3> (UDATA=<dir>, REPLACE=1, LIST=1)
 	@test -n "$(FILE)" || { echo "usage: make import-save FILE=<save file or folder>"; exit 2; }

@@ -78,6 +78,13 @@ set(MC3_VERSION "dev" CACHE STRING "Release version (switch/app.env APP_VERSION)
 set(MC3_BUILD_ID "local" CACHE STRING "Build identifier (CI run, commit)")
 set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
     MC3_VERSION="${MC3_VERSION}" MC3_BUILD_ID="${MC3_BUILD_ID}")
+# The edition this package is for (make switch EDITION=eur ->
+# mcdub3-nx-eur.nro); empty: the lifted one (config/xbe_facts.h).
+set(MC3_PACKAGE_EDITION "" CACHE STRING "Edition of this package (usa, eur); empty: the lifted one")
+if(MC3_PACKAGE_EDITION)
+    set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
+        MC3_PACKAGE_EDITION="${MC3_PACKAGE_EDITION}")
+endif()
 
 # Windows: the icon (MC3_WIN_ICON, made by tools/windows/win_icon.py) and
 # the version Explorer shows, as a resource in mcdub3.exe -- the desktop
