@@ -559,11 +559,25 @@ static void bt_time(int p, void (*fn)(void))
 }
 
 /* BinkDoFrame, 0x003AD2C0: stdcall (hbink). Opens a frame. */
+
+/* Remix bring-up: does a stdcall wrapper hand back the stack it was given?
+ * (MC3_ABI_CHECK=1; the movie function's pops came back 0, 2026-10-24) */
+static void esp_check(const char *name, uint32_t esp0, uint32_t want)
+{
+    static int on = -1, said;
+    if (on < 0) {
+        const char *e = getenv("MC3_ABI_CHECK");
+        on = e && e[0] == '1';
+    }
+    if (on && g_esp - esp0 != want && said++ < 20)
+        fprintf(stderr, "[ABI] %s returned esp %+d, want %+u\n", name, (int)(g_esp - esp0), want);
+}
 extern void sub_003AD2C0_gen(void);
 void sub_003AD2C0(void)
 {
     double t0;
-    if (!bt_on()) { sub_003AD2C0_gen(); return; }
+    uint32_t e0 = g_esp;
+    if (!bt_on()) { sub_003AD2C0_gen(); esp_check("BinkDoFrame", e0, 8); return; }
     t0 = bt_now();
     if (s_bt_mark[BT_REST]) s_bt_sum[BT_REST] += t0 - s_bt_mark[BT_REST];
     bt_report(t0);
@@ -594,7 +608,11 @@ void sub_003AD280(void)
         g_esp += 4 + 28;                     /* return address + 7 arguments */
         return;
     }
-    bt_time(BT_COPY, sub_003AD280_gen);
+    {
+        uint32_t e0 = g_esp;
+        bt_time(BT_COPY, sub_003AD280_gen);
+        esp_check("BinkCopyToBuffer", e0, 32);
+    }
     if (dest)
         mc3_bink_native_copy(hbink, dest, (const uint8_t *)XBOX_PTR(dest), pitch, height, x, y, 1);
 }
@@ -603,7 +621,9 @@ void sub_003AD280(void)
 extern void sub_003AD8D0_gen(void);
 void sub_003AD8D0(void)
 {
+    uint32_t e0 = g_esp;
     bt_time(BT_NEXT, sub_003AD8D0_gen);
+    esp_check("BinkNextFrame", e0, 8);
 }
 
 /* BinkWait, 0x003ACDF0: stdcall (hbink), nonzero = too early, call again. */
@@ -611,7 +631,8 @@ extern void sub_003ACDF0_gen(void);
 void sub_003ACDF0(void)
 {
     double now;
-    if (!bt_on()) { sub_003ACDF0_gen(); return; }
+    uint32_t e0 = g_esp;
+    if (!bt_on()) { sub_003ACDF0_gen(); esp_check("BinkWait", e0, 8); return; }
     now = bt_now();
     if (!s_bt_wait_start) s_bt_wait_start = now;
     s_bt_polls++;
@@ -1788,3 +1809,97 @@ void sub_00330400(void)
         fprintf(stderr, "        every cell a pointer\n");
     }
 }
+
+/* ── The game's state machine, traced (MC3_STATE_TRACE=1) ──
+ *
+ * The object behind the main loop's dispatch (DUB 0x0051886C, Remix
+ * 0x00557ED0) keeps the state at +4 (1..7, the main loop's switch); its
+ * vtable +4 (sub_00020E40) requests a screen, +8 (sub_00020EC0) runs a pass and
+ * applies requests. Logs every request with its caller and every change of
+ * state -- the DUB Edition goes to state 4 for the boot movies, the Remix
+ * stayed in 1 (2026-10-24). */
+static int state_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_STATE_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+extern void sub_00020E40_gen(void);
+void sub_00020E40(void)
+{
+    if (state_trace_on())
+        fprintf(stderr, "[STATE] request %u (state %u) from %08X\n", MEM32(g_esp + 4),
+                MEM32(g_ecx + 4), MEM32(g_esp));
+    sub_00020E40_gen();
+}
+extern void sub_00020EC0_gen(void);
+void sub_00020EC0(void)
+{
+    uint32_t obj = g_ecx, before = MEM32(obj + 4);
+    sub_00020EC0_gen();
+    if (state_trace_on() && MEM32(obj + 4) != before)
+        fprintf(stderr, "[STATE] %u -> %u\n", before, MEM32(obj + 4));
+}
+
+/* ── Remix bring-up: callee-saved registers on the movie path (MC3_ABI_CHECK=1) ──
+ *
+ * The state machine's "enter state 4" (sub_00021D30) stores the state
+ * through esi after sub_00021390 returns, and the Remix never left state 1
+ * (2026-10-24): something on the path to the first movie returns with a
+ * callee-saved register changed. Each wrapper below compares ebx, esi,
+ * edi and ebp before and after and says which function broke them, once. */
+static void abi_call(void (*fn)(void), const char *name)
+{
+    static int on = -1;
+    uint32_t b = g_ebx, s = g_esi, d = g_edi, p = g_ebp;
+    if (on < 0) {
+        const char *e = getenv("MC3_ABI_CHECK");
+        on = e && e[0] == '1';
+    }
+    fn();
+    (void)p;                     /* ebp: frameless lifted code does not write it back */
+    if (on && (g_ebx != b || g_esi != s || g_edi != d)) {
+        static int said;
+        if (said++ < 20)
+            fprintf(stderr, "[ABI] %s changed%s%s%s (esi %08X -> %08X, edi %08X -> %08X)\n", name,
+                    g_ebx != b ? " ebx" : "", g_esi != s ? " esi" : "", g_edi != d ? " edi" : "",
+                    s, g_esi, d, g_edi);
+    }
+}
+extern void sub_00021390_gen(void);
+void sub_00021390(void)
+{
+    uint32_t obj = g_ecx;
+    if (state_trace_on())
+        fprintf(stderr, "[STATE] sub_00021390 enter: this %08X state %u, from %08X\n",
+                obj, MEM32(obj + 4), MEM32(g_esp));
+    abi_call(sub_00021390_gen, "sub_00021390");
+    if (state_trace_on())
+        fprintf(stderr, "[STATE] sub_00021390 leave: esi %08X edi %08X, state %u\n",
+                g_esi, g_edi, MEM32(obj + 4));
+}
+extern void sub_00029020_gen(void);
+void sub_00029020(void) { abi_call(sub_00029020_gen, "sub_00029020"); }
+extern void sub_0015AA30_gen(void);
+void sub_0015AA30(void) { abi_call(sub_0015AA30_gen, "sub_0015AA30"); }
+extern void sub_003639C0_gen(void);
+void sub_003639C0(void) { abi_call(sub_003639C0_gen, "sub_003639C0"); }
+extern void sub_003638A0_gen(void);
+void sub_003638A0(void) { abi_call(sub_003638A0_gen, "sub_003638A0"); }
+extern void sub_002D1610_gen(void);
+void sub_002D1610(void) { abi_call(sub_002D1610_gen, "sub_002D1610"); }
+extern void sub_002DA8A0_gen(void);
+void sub_002DA8A0(void) { abi_call(sub_002DA8A0_gen, "sub_002DA8A0"); }
+extern void sub_002D5F30_gen(void);
+void sub_002D5F30(void) { abi_call(sub_002D5F30_gen, "sub_002D5F30"); }
+extern void sub_000CE440_gen(void);
+void sub_000CE440(void) { abi_call(sub_000CE440_gen, "sub_000CE440"); }
+extern void sub_00417BC0_gen(void);
+void sub_00417BC0(void) { abi_call(sub_00417BC0_gen, "sub_00417BC0"); }
+extern void sub_003AD0F0_gen(void);
+void sub_003AD0F0(void) { abi_call(sub_003AD0F0_gen, "sub_003AD0F0"); }
+extern void sub_002DBBC0_gen(void);
+void sub_002DBBC0(void) { abi_call(sub_002DBBC0_gen, "sub_002DBBC0"); }

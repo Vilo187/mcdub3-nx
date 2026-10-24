@@ -46,9 +46,14 @@ XBE_JSON="${MC3_XBE%.xbe}_analysis.json"
 if [ "${LIFT_ONLY:-0}" != "1" ]; then
     "$MC3_PYTHON" -m tools.xbe_parser "$MC3_XBE" --json "$XBE_JSON" --quiet
     cp "$XBE_JSON" "$A/xbe_analysis.json"
+    # config/<game>/not_functions.json: addresses that are no function start
+    # (false starts that split a function; the seeds' mirror image).
+    NOT_FUNCS=()
+    [ -f "${MC3_NOT_FUNCTIONS:-$MC3_CONFIG/not_functions.json}" ] \
+        && NOT_FUNCS=(--exclude-functions "${MC3_NOT_FUNCTIONS:-$MC3_CONFIG/not_functions.json}")
     "$MC3_PYTHON" -m tools.disasm "$MC3_XBE" -o "$A/disasm" \
         --analysis-json "$XBE_JSON" --seed-functions "$SEEDS" \
-        ${DISASM_ARGS[@]+"${DISASM_ARGS[@]}"}
+        ${NOT_FUNCS[@]+"${NOT_FUNCS[@]}"} ${DISASM_ARGS[@]+"${DISASM_ARGS[@]}"}
     "$MC3_PYTHON" -m tools.func_id "$MC3_XBE" -o "$A/func_id" \
         --functions "$A/disasm/functions.json" \
         --strings "$A/disasm/strings.json" \

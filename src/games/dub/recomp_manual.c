@@ -1683,3 +1683,37 @@ void sub_00251D40(void)
     if (!listener_fix_on()) { sub_00251D40_gen(); return; }
     listener_broadcast(g_ecx, 0x2C, "race event");
 }
+
+/* ── The game's state machine, traced (MC3_STATE_TRACE=1) ──
+ *
+ * The object behind the main loop's dispatch (DUB 0x0051886C, Remix
+ * 0x00557ED0) keeps the state at +4 (1..7, the main loop's switch); its
+ * vtable +4 (sub_00020AE0) requests a screen, +8 (sub_00020B60) runs a pass and
+ * applies requests. Logs every request with its caller and every change of
+ * state -- the DUB Edition goes to state 4 for the boot movies, the Remix
+ * stayed in 1 (2026-10-24). */
+static int state_trace_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_STATE_TRACE");
+        on = e && e[0] == '1';
+    }
+    return on;
+}
+extern void sub_00020AE0_gen(void);
+void sub_00020AE0(void)
+{
+    if (state_trace_on())
+        fprintf(stderr, "[STATE] request %u (state %u) from %08X\n", MEM32(g_esp + 4),
+                MEM32(g_ecx + 4), MEM32(g_esp));
+    sub_00020AE0_gen();
+}
+extern void sub_00020B60_gen(void);
+void sub_00020B60(void)
+{
+    uint32_t obj = g_ecx, before = MEM32(obj + 4);
+    sub_00020B60_gen();
+    if (state_trace_on() && MEM32(obj + 4) != before)
+        fprintf(stderr, "[STATE] %u -> %u\n", before, MEM32(obj + 4));
+}

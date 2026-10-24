@@ -1,0 +1,6 @@
+[
+ {
+  "start": "0x003AEA35",
+  "note": "Not a function: the second byte of 'sub edi, 8' (0x003AEA33) inside Bink's audio decoder sub_003AE8C0 (the DUB Edition's sub_00378640, one function there). Proposed as a call target by 'e8 80 47 00 00' at 0x003AA2B0, data in XGRPH's tail decoded as a call. As a start it cut the decoder in two, the half with the epilogue lifted on its own: BinkDoFrame returned 0x8128 bytes of stack short, the movie function popped zeros into esi/edi, and the game never left state 1 (no picture, 2026-10-24)."
+ }
+]

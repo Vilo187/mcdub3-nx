@@ -210,6 +210,9 @@ mc3_check_lift_fresh() {
     if [ "$MC3_SEEDS" -nt "$gen" ]; then
         mc3_fail "${MC3_SEEDS#$MC3_REPO/} is newer than the lifted C: run make regen first (make regen build)"
     fi
+    if [ "$MC3_CONFIG/not_functions.json" -nt "$gen" ]; then
+        mc3_fail "config/$MC3_GAME/not_functions.json is newer than the lifted C: run make regen first (make regen build)"
+    fi
     local now
     if ! now=$(mc3_manual_overrides | tr -d '\r'); then
         echo "warning: no Python to scan ${MC3_MANUAL#$MC3_REPO/}; override check skipped" >&2
