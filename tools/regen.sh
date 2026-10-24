@@ -22,8 +22,10 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/env.sh"
 mc3_python
 
-SEEDS="$MC3_REPO/config/seed_functions.json"
-MANUAL="$MC3_REPO/src/recomp_manual.c"
+# MC3_SEEDS / MC3_MANUAL: another game's seeds and overrides (a lift of the
+# Remix must not take the DUB Edition's addresses).
+SEEDS="${MC3_SEEDS:-$MC3_REPO/config/seed_functions.json}"
+MANUAL="${MC3_MANUAL:-$MC3_REPO/src/recomp_manual.c}"
 # TRACE=<sections>: failure-tracing wrappers for every function in them
 # (tools/trace_wrappers.py), lifted and compiled with the game; empty: none.
 TRACE_C="$MC3_GEN_DIR/zz_trace_wrappers.c"
