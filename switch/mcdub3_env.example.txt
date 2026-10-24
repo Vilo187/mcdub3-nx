@@ -224,7 +224,7 @@
 # Required: set by the game itself, do not change
 # ============================================================================
 # RECOMP_VBLANK=1  RECOMP_FLIP_VBLANK=1  RECOMP_PB_EXEC=1  RECOMP_USB=1
-# RECOMP_AC97_READY=plain  RECOMP_NET_LINK=0  RECOMP_APU_DSP_ACK=0x83AD0810
+# RECOMP_AC97_READY=plain  RECOMP_NET_LINK=0
 # These make the emulated hardware behave (vblank, GPU, USB pads, sound
 # chip, no network). Changing them stops the game from booting or running.
 #

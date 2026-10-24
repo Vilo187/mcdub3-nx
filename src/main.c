@@ -556,11 +556,10 @@ static void set_runtime_defaults(void)
 #if !defined(__SWITCH__)
     setenv("RECOMP_KEYBOARD", "1", 0);         /* keyboard as pad 1 (Enter = Start) */
 #endif
-    /* DirectSound's DSP command word (XACT's effects-image download waits on
-     * it). No DSP is emulated, so the runtime answers every command written
-     * here. Per game (config/<game>/game.h): found with a watchdog snapshot,
-     * the same contiguous allocation on every run so far. */
-    setenv("RECOMP_APU_DSP_ACK", MC3_APU_DSP_ACK, 0);
+    /* DirectSound's DSP command word: registered at run time by each game's
+     * override of DirectSound's command wait (src/games/<game>/), since the
+     * block moves with the allocations. RECOMP_APU_DSP_ACK still adds fixed
+     * addresses by hand. */
 #ifdef __SWITCH__
     setenv("RECOMP_QUIET", "1", 0);            /* every log line costs an SD write */
 #endif

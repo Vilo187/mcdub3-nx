@@ -1903,3 +1903,24 @@ extern void sub_003AD0F0_gen(void);
 void sub_003AD0F0(void) { abi_call(sub_003AD0F0_gen, "sub_003AD0F0"); }
 extern void sub_002DBBC0_gen(void);
 void sub_002DBBC0(void) { abi_call(sub_002DBBC0_gen, "sub_002DBBC0"); }
+
+/* ── DirectSound's DSP command wait: its doorbell found at run time ──
+ *
+ * sub_003C3D23 (DSOUND) hands the audio DSP a command block and waits for the
+ * DSP to clear the command word at block + 0x810. No DSP is emulated: the
+ * runtime answers words registered with it (apu_dsp_ack_add). The block is
+ * [[[this+8]+0x10]], the object's command buffer, and moves with the
+ * title's allocations -- the Remix's sat at 0x83B10000 when told the TV
+ * is widescreen and at 0x83A5C000 when not (2026-10-25), so a fixed
+ * address hung one of the two and zeroed a stray word in the other. */
+extern void apu_dsp_ack_add(uint32_t va);
+extern void sub_003C3D23_gen(void);
+void sub_003C3D23(void)
+{
+    uint32_t dev = MEM32(g_ecx + 8);
+    uint32_t buf = dev ? MEM32(dev + 0x10) : 0;
+    uint32_t block = buf ? MEM32(buf) : 0;
+    if (block)
+        apu_dsp_ack_add(block + 0x810);
+    sub_003C3D23_gen();
+}
