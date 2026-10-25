@@ -204,7 +204,9 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   2026-10-21 so buttons sit where their names say): A/B/X/Y = buttons A/B/
   X/Y, Enter = Start, Backspace = Back, arrows left/right = steer (left
   stick), up = gas (right trigger) + stick up, down = brake (left trigger)
-  + stick down (menus navigate with the stick), I/J/K/L = d-pad (songs and
+  + stick down (menus navigate with the stick; while driving, where the
+  title says so through xbox_keyboard_driving -- the Remix does -- the
+  arrows are the triggers alone, RECOMP_KEYBOARD_STICK_Y=0/1 forces), I/J/K/L = d-pad (songs and
   map in a race), Q/E (or Shift/Ctrl) = White/Black (the Switch's L/R),
   Z/C = stick clicks, T/F/G/H or numpad 8/4/2/6 = right stick, Space = A
   (MC3's handbrake, the Switch's A), Tab = Back too. Unattended runs only:
@@ -360,6 +362,20 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   (CSV table loader), MC3_STATE_TRACE (both games: state requests and
   changes), MC3_ABI_CHECK (Remix: callee-saved registers and stack across
   the movie path); tools/match_lifts.py, tools/port_overrides.py.
+  Races (fixed 2026-10-25): (1) from the countdown the camera went to a
+  top view and turned for good -- `fucomip; lahf; test ah, 0x44; jnp`
+  (the "look around" input == 0 test in sub_002C48C0) lost its lahf, the
+  lifter had no AH for x87 compares; two false alias starts on such
+  lahfs excluded (config/remix/not_functions.json). (2) The camera
+  pulled in and up with the gas: no lifting bug -- every update and draw
+  function replayed exact -- but the keyboard's up arrow also pushed left
+  stick up, which the Remix reads for its race camera (its chase camera
+  is a dolly zoom: SSFov 40-60 deg with speed, distance x0.8). Found by
+  playing to the spot and pressing F10: `make run GAME=remix
+  MC3_DIFFTEST_CALL=key MC3_DIFFTEST_FUNC=<hex,...>`, then
+  `DIFFTEST_ORDER=time tools/difftest.py <capture>` (earliest divergent
+  write first); MC3_CAM_TRACE=1 (camera methods per second, projection
+  FOV per viewport), MC3_KEYS_TRACE=1.
 
 ### First lift (2026-10-14)
 

@@ -1360,9 +1360,51 @@ void sub_000847B0(void)
  * each, for tools/difftest.py. */
 extern void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls);
 
-#define CAM_N 36
+#define CAM_N 54
 static uint32_t cam_addr[CAM_N], cam_this[CAM_N];
 static long cam_calls[CAM_N], cam_count[CAM_N];
+
+/* ── The keyboard while driving ──
+ *
+ * The keyboard's up arrow is the gas (right trigger) and, for menus, left
+ * stick up. In a race the Remix reads stick up/down for its camera (it
+ * rises and moves in, 2026-10-25; the DUB Edition ignores it), so with
+ * the gas held the camera stayed pulled in. While the player's race camera
+ * control (sub_002C1520) runs every frame and the game is not paused, the
+ * keyboard leaves the stick alone (xbox_keyboard_driving, sdl_keyboard.c).
+ * Paused / menu: the state machine's flag at +9 (sub_002C48C0 turns the
+ * look-around off on it) or state 3. MC3_KEYS_TRACE=1 logs each change. */
+extern int (*xbox_keyboard_driving)(void);
+static volatile uint32_t s_race_cam_ms;
+
+static uint32_t host_ms(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)(ts.tv_sec * 1000u + ts.tv_nsec / 1000000u);
+}
+
+static int remix_driving(void)
+{
+    static int last = -1;
+    uint32_t sm = MEM32(0x00557ED0u);
+    int on = s_race_cam_ms && host_ms() - s_race_cam_ms < 250u
+             && sm && MEM32(sm + 4) != 3 && MEM8(sm + 9) == 0;
+    if (on != last) {
+        const char *e = getenv("MC3_KEYS_TRACE");
+        if (e && e[0] == '1')
+            fprintf(stderr, "[KEYS] %s: up/down %s\n", on ? "driving" : "not driving",
+                    on ? "are the triggers only" : "move the stick too");
+        last = on;
+    }
+    return on;
+}
+
+static void race_camera_ran(void)
+{
+    s_race_cam_ms = host_ms();
+    xbox_keyboard_driving = remix_driving;
+}
 
 static void cam_call(int slot, uint32_t addr, void (*lifted)(void))
 {
@@ -1392,6 +1434,8 @@ static void cam_call(int slot, uint32_t addr, void (*lifted)(void))
             last = now;
         }
     }
+    if (addr == 0x002C1520u)
+        race_camera_ran();
     mc3_difftest_call(addr, lifted, &cam_calls[slot]);
 }
 
@@ -1473,6 +1517,67 @@ extern void sub_002C1520_gen(void);
 void sub_002C1520(void) { cam_call(34, 0x002C1520u, sub_002C1520_gen); }
 extern void sub_002C5B30_gen(void);
 void sub_002C5B30(void) { cam_call(35, 0x002C5B30u, sub_002C5B30_gen); }
+
+/* The drawing side: the projection builder sub_002D4AE0 (thiscall on a
+ * viewport; fov, aspect, near, far on the stack) and the code that calls
+ * it while a frame is drawn. The chase camera computes its FOV right
+ * (dolly zoom: 40 deg standing, up to 60 at speed, while it moves in to
+ * 0.8 of its distance), yet on screen only the move-in shows. MC3_CAM_TRACE
+ * logs what the builder is handed, once a second. */
+extern void sub_002D4F10_gen(void);
+void sub_002D4F10(void) { cam_call(36, 0x002D4F10u, sub_002D4F10_gen); }
+extern void sub_00331840_gen(void);
+void sub_00331840(void) { cam_call(37, 0x00331840u, sub_00331840_gen); }
+extern void sub_00331A30_gen(void);
+void sub_00331A30(void) { cam_call(38, 0x00331A30u, sub_00331A30_gen); }
+extern void sub_00332BD0_gen(void);
+void sub_00332BD0(void) { cam_call(39, 0x00332BD0u, sub_00332BD0_gen); }
+extern void sub_00138640_gen(void);
+void sub_00138640(void) { cam_call(40, 0x00138640u, sub_00138640_gen); }
+extern void sub_0020ED50_gen(void);
+void sub_0020ED50(void) { cam_call(41, 0x0020ED50u, sub_0020ED50_gen); }
+extern void sub_002D4AE0_gen(void);
+void sub_002D4AE0(void)
+{
+    static uint32_t vp[8];
+    static time_t last[8];
+    const char *e = getenv("MC3_CAM_TRACE");
+    int i;
+    for (i = 0; i < 7 && vp[i] && vp[i] != g_ecx; i++)
+        ;                                  /* one line per viewport (main view, mirror, map) */
+    vp[i] = g_ecx;
+    if (e && e[0] == '1' && time(NULL) != last[i]) {
+        last[i] = time(NULL);
+        fprintf(stderr, "[CAM] projection: viewport %08X fov %.3f aspect %.3f near %.3f far %.1f (from %08X)\n",
+                g_ecx, MEMF(g_esp + 4), MEMF(g_esp + 8), MEMF(g_esp + 12), MEMF(g_esp + 16), MEM32(g_esp));
+    }
+    cam_call(42, 0x002D4AE0u, sub_002D4AE0_gen);
+}
+
+/* The rest of the race's frame update (the dispatcher at 0x0001EEDE calls
+ * them in turn after sub_00198E90): wrapped so a capture can replay the
+ * car's physics too. The camera and the drawing replay exactly at speed
+ * (2026-10-25), so the zoom's wrong input comes from here. */
+extern void sub_00034A10_gen(void);
+void sub_00034A10(void) { cam_call(44, 0x00034A10u, sub_00034A10_gen); }
+extern void sub_000398B0_gen(void);
+void sub_000398B0(void) { cam_call(45, 0x000398B0u, sub_000398B0_gen); }
+extern void sub_00036710_gen(void);
+void sub_00036710(void) { cam_call(46, 0x00036710u, sub_00036710_gen); }
+extern void sub_001C1FC0_gen(void);
+void sub_001C1FC0(void) { cam_call(47, 0x001C1FC0u, sub_001C1FC0_gen); }
+extern void sub_0009B270_gen(void);
+void sub_0009B270(void) { cam_call(48, 0x0009B270u, sub_0009B270_gen); }
+extern void sub_00034340_gen(void);
+void sub_00034340(void) { cam_call(49, 0x00034340u, sub_00034340_gen); }
+extern void sub_00032150_gen(void);
+void sub_00032150(void) { cam_call(50, 0x00032150u, sub_00032150_gen); }
+extern void sub_00049FC0_gen(void);
+void sub_00049FC0(void) { cam_call(51, 0x00049FC0u, sub_00049FC0_gen); }
+extern void sub_0006CC90_gen(void);
+void sub_0006CC90(void) { cam_call(52, 0x0006CC90u, sub_0006CC90_gen); }
+extern void sub_000EC910_gen(void);
+void sub_000EC910(void) { cam_call(53, 0x000EC910u, sub_000EC910_gen); }
 
 /* ── Manual function overrides ─────────────────────────────── */
 

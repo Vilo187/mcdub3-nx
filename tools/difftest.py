@@ -98,6 +98,13 @@ KERNEL_STUBS = {
     306: (1, 1),    # RtlTryEnterCriticalSection -> TRUE
     126: (0, None), # KeQueryPerformanceCounter -> edx:eax from a counter
     128: (1, 0),    # KeQuerySystemTime(PLARGE_INTEGER): leaves it as it was
+    175: (3, 0),    # MmLockUnlockBufferPages: nothing to do (no paging)
+    176: (2, 0),    # MmLockUnlockPhysicalPage
+    # MmGetPhysicalAddress: the contiguous window is physical RAM at
+    # 0x80000000; anything else as given (the runtime tags heap RAM with bit
+    # 26, which only the GPU's reads care about).
+    159: (5, 0),    # KeWaitForSingleObject -> STATUS_SUCCESS (D3D's fence wait: no GPU here)
+    173: (1, lambda va: va - 0x80000000 if 0x80000000 <= va < 0x84000000 else va),
 }
 
 
@@ -200,6 +207,8 @@ def make_emulator(cap, syms, ordinals, log):
         nargs, eax = stub
         esp = uc_.reg_read(UC_X86_REG_ESP)
         ret = struct.unpack("<I", uc_.mem_read(esp, 4))[0]
+        if callable(eax):
+            eax = eax(*struct.unpack("<%dI" % nargs, uc_.mem_read(esp + 4, 4 * nargs))) & 0xFFFFFFFF
         if eax is None:     # performance counter: a steady 733 MHz-ish clock
             state["perf"] += 1000
             uc_.reg_write(UC_X86_REG_EAX, state["perf"] & 0xFFFFFFFF)
@@ -372,13 +381,16 @@ def report_by_time(before, after, syms, ordinals, md):
         key = (pc, addr & ~3)
         if key in seen:
             continue
+        sec, f = syms.where(pc)
+        if sec in os.environ.get("DIFFTEST_SKIP", "").split(","):
+            continue                    # DIFFTEST_SKIP=XPP: a library's own noise
         seen.add(key)
         sec, f = syms.where(pc)
         ins = next(md.disasm(bytes(uc.mem_read(pc, 16)), pc), None)
         txt = "%s %s" % (ins.mnemonic, ins.op_str) if ins else "?"
         print("   #%-9d 0x%08X x86=%02X lifted=%02X  at 0x%08X in sub_%08X: %s"
               % (t, addr, xv, lv, pc, f or 0, txt))
-        if len(seen) >= 40:
+        if len(seen) >= int(os.environ.get("DIFFTEST_ROWS", "40")):
             break
 
 
