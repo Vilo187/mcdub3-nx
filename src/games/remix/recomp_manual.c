@@ -1309,6 +1309,42 @@ void sub_00084BD0(void)
     }
 }
 
+/* ── Stick shaping (sub_000847B0), traced ──
+ *
+ * The pad object's read (sub_000848F0) turns each stick into two bytes
+ * (0x80 = centred) and hands them, as esi/edi pointers, to sub_000847B0,
+ * which shapes them in SSE + x87 (the DUB Edition's twin is x87 only).
+ * MC3_PAD_TRACE=1 logs the bytes going in and out, once a second while
+ * they hold still and at every change. */
+extern void sub_000847B0_gen(void);
+void sub_000847B0(void)
+{
+    static int on = -1;
+    static uint32_t last_key[2];
+    static unsigned n[2];
+    uint32_t px = g_esi, py = g_edi;
+    uint8_t x0, y0;
+    if (on < 0) {
+        const char *e = getenv("MC3_PAD_TRACE");
+        on = e && e[0] == '1';
+    }
+    if (!on) {
+        sub_000847B0_gen();
+        return;
+    }
+    x0 = MEM8(px); y0 = MEM8(py);
+    sub_000847B0_gen();
+    {
+        int which = (px & 3) == 2;         /* +0x28/0x29 left, +0x2A/0x2B right */
+        uint32_t key = (uint32_t)x0 << 24 | (uint32_t)y0 << 16 | MEM8(px) << 8 | MEM8(py);
+        if (key != last_key[which] || ++n[which] % 60 == 0) {
+            fprintf(stderr, "[PAD] %s stick in %02X,%02X -> out %02X,%02X (pad 0x%08X)\n",
+                    which ? "right" : "left", x0, y0, MEM8(px), MEM8(py), px & ~3u);
+            last_key[which] = key;
+        }
+    }
+}
+
 /* ── Manual function overrides ─────────────────────────────── */
 
 /*
