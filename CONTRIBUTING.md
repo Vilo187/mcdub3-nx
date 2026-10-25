@@ -210,6 +210,12 @@ Add `GAME=remix` to any target: `make lift build run GAME=remix`,
 | NRO | `mcdub3-nx-<edition>.nro` | `mcdub3remix-nx-<edition>.nro` |
 | Switch identity | `switch/app.env` | `switch/app-remix.env` |
 
+Editions: the DUB Edition runs the USA and European discs on one lift; the
+Remix only its European disc so far (`config/remix/xbe_editions.h`). Another
+Remix edition joins the same way once its `default.xbe` is compared: an XBE
+that differs only in its header is one more entry there, one whose code
+differs needs a lift of its own, which the layout does not support yet.
+
 A fix for one game goes in its own `config/<game>/` or `src/games/<game>/`;
 the other game never builds it. A fix that holds for both goes in shared
 code (everything else). Shared code takes no game's addresses: what it needs

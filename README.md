@@ -41,6 +41,7 @@ Playing on Mac or Linux, 30 FPS is consistently achieved with 5x upscale setting
 | ----------------- | ------------------------------------------------------- |
 | mcdub3-nx-usa.nro | NTSC-U (English)                                        |
 | mcdub3-nx-eur.nro | PAL (Europe: English, French, German, Spanish, Italian) |
+| mcdub3remix-nx-eur.nro | *Remix*, PAL (Europe) only, in development: not released yet |
 
 ## Installation
 
