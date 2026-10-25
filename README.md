@@ -37,10 +37,10 @@ Playing on Mac or Linux, 30 FPS is consistently achieved with 5x upscale setting
 
 ## Supported Editions
 
-| File              | Edition                                                 |
-| ----------------- | ------------------------------------------------------- |
-| mcdub3-nx-usa.nro | NTSC-U (English)                                        |
-| mcdub3-nx-eur.nro | PAL (Europe: English, French, German, Spanish, Italian) |
+| File                   | Edition                                                      |
+| ---------------------- | ------------------------------------------------------------ |
+| mcdub3-nx-usa.nro      | NTSC-U (English)                                             |
+| mcdub3-nx-eur.nro      | PAL (Europe: English, French, German, Spanish, Italian)      |
 | mcdub3remix-nx-eur.nro | *Remix*, PAL (Europe) only, in development: not released yet |
 
 ## Installation
@@ -173,7 +173,7 @@ An imported profile keeps its owner's settings, controller layout included. If d
 > **PS2 saves cannot be used.**
 >
 
-The PS2 release of the same game (SLUS-21029) stores its profiles in its own layout, about a third smaller than the Xbox's and with most fields elsewhere; the PS2 *Remix* has yet another one. `make import-save` reads PS2 saves and says which version they are. Saves made by this port won't load on a real Xbox.
+The PS2 release of the same game (SLUS-21029) stores its profiles in its own layout, about a third smaller than the Xbox's and with most fields elsewhere. `make import-save` reads PS2 saves and says which version they are. Saves made by this port won't load on a real Xbox.
 
 ## Technical Overview
 
@@ -192,7 +192,7 @@ The PS2 release of the same game (SLUS-21029) stores its profiles in its own lay
 * driving on the Nintendo Switch runs at 18-25 frames per second.
 * a race can occasionally hang (the screen stops, the game does not crash)
 
-## Settings
+## ⚙️ &nbsp;Configuration
 
 Several settings can be configured for the runtime environment. These settings are `KEY=VALUE` pairs and can be configured by defining them in a text file and saving the file as `sdmc:/switch/mcdub3-nx/mcdub3_env.txt` on the Switch, one setting per line, with `#` starting a comment and excluding the setting from execution.
 
@@ -242,6 +242,10 @@ and set by the game itself: `RECOMP_VBLANK`, `RECOMP_PB_EXEC`, `RECOMP_USB`,
 `RECOMP_AC97_READY`, `RECOMP_NET_LINK`, `RECOMP_FLIP_VBLANK` and
 `RECOMP_APU_DSP_ACK`. Leave both groups alone. The developer traces are
 described in the example file and in the source.
+
+## Contributing
+
+Pull requests and issues are currently closed to write a supportive guideline to properly manage this aspect of the project and ensure valuable collaboration. Provided the open-source nature of this project, contributions will be highly welcome again once this guideline is available and if they follow the requirements.
 
 ## License
 
