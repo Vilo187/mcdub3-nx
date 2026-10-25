@@ -1224,6 +1224,17 @@ static inline int32_t MMX_CVT_F2I(float v, int truncate)
 #endif
 }
 
+/* cvt(t)sd2si: the same for a double. Out of range or NaN gives the integer
+ * indefinite as on x86, where a plain C cast is undefined (AArch64
+ * saturates instead). */
+static inline int32_t SSE_CVT_D2I(double v, int truncate)
+{
+    double rounded = truncate ? trunc(v) : nearbyint(v);
+    if (!(rounded >= -2147483648.0 && rounded <= 2147483647.0))
+        return (int32_t)0x80000000u;       /* integer indefinite */
+    return (int32_t)rounded;
+}
+
 static inline RecompMmx MMX_FROM_PS(float lo, float hi, int truncate)
 {
     RecompMmx r;
