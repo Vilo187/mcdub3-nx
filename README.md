@@ -1,12 +1,10 @@
-<p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="500"></p>
+<p align="center"><img src="logo.png" alt="Midnight Club 3: DUB Edition" width="500"> <img src="logo-remix.png" alt="Midnight Club 3: DUB Edition (Remix)" width="500"></p>
 
 <p align="center"><img src="https://img.shields.io/badge/version-0.1.0-blue.svg"> <img src="https://img.shields.io/badge/Nintendo%20Switch-21.0.0-orange?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPGcgZmlsbD0iI2ZmZiI%2BPHBhdGggZD0iTTkuNSAxLjVINi4yQTQuNyA0LjcgMCAwIDAgMS41IDYuMnYxMS42YTQuNyA0LjcgMCAwIDAgNC43IDQuN2gzLjN6TTggM3YxOEg2LjJBMy4yIDMuMiAwIDAgMSAzIDE3LjhWNi4yQTMuMiAzLjIgMCAwIDEgNi4yIDN6Ii8%2BPGNpcmNsZSBjeD0iNS44IiBjeT0iNy40IiByPSIxLjkiLz48cGF0aCBkPSJNMTQuNSAxLjVoMy4zYTQuNyA0LjcgMCAwIDEgNC43IDQuN3YxMS42YTQuNyA0LjcgMCAwIDEtNC43IDQuN2gtMy4zeiIvPjwvZz48Y2lyY2xlIGN4PSIxOC4yIiBjeT0iMTQuNiIgcj0iMS45IiBmaWxsPSIjNTU1Ii8%2BPC9zdmc%2BCg%3D%3D"> <img src="https://img.shields.io/badge/Mac-%20Sequoia%2015.6-green?logo=apple"> <img src="https://img.shields.io/badge/Linux-Ubuntu 22.04-purple?logo=linux"> <img src="https://img.shields.io/badge/Windows-11-blue?logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI%2BPHBhdGggZmlsbD0iI2ZmZiIgZD0iTTIgMmg5LjV2OS41SDJ6TTEyLjUgMkgyMnY5LjVoLTkuNXpNMiAxMi41aDkuNVYyMkgyek0xMi41IDEyLjVIMjJWMjJoLTkuNXoiLz48L3N2Zz4K"> <img src="https://img.shields.io/badge/OpenGL-renderer-blue?logo=opengl"></p>
 
-<hr>
+The original Xbox release of *Midnight Club 3: DUB Edition* and *Midnight Club 3: DUB Edition Remix*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux, macOS and Windows without the requirement of emulation.
 
-The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux, macOS and Windows without the requirement of emulation.
-
-Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-sw), whose Switch layer has been a great inspiration for this engine.
+Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-sw), whose Switch layer has been a great inspiration for this toolkit.
 
 > [!WARNING]
 > **No game data is included.** You need your own copy of the Xbox disc.
@@ -21,12 +19,12 @@ The Switch build can play towards the end until 100% career progress. Playing re
 
 <hr>
 
-Playing on the Mac and Linux, 30 FPS is consistently achieved with 5x upscale settings (close to 4K) support. Improvements are focused on graphics and minor bug fixes.
+Playing on Mac or Linux, 30 FPS is consistently achieved with 5x upscale settings (close to 4K) support. Improvements are focused on graphics and minor bug fixes.
 
 <p align="center"><img src="assets/preview.png" alt="Midnight Club 3: DUB Edition" width="450"></p>
 
 > [!WARNING]
-> Windows support is experimental and still being tested.
+> Windows support is currently experimental and still being tested.
 
 ## Platforms
 
@@ -149,16 +147,16 @@ A setting in `mcdub3_env.txt` always wins over what the app was built with.
 
 ## Saves
 
-Profiles live where the Xbox kept them, in `UDATA/54540079/` inside the game folder: `game/` on Mac/Linux, `sdmc:/switch/mcdub3-nx/game/` on the Switch, `~/Library/Application Support/mcdub3/game/` for the Mac app. Each profile is a folder with `<name>.mc3` and `SaveMeta.xbx`. The same folder works on every platform.
+Profiles live where the Xbox kept them, in `UDATA/54540079/` inside the game folder: `game/` on Mac/Linux, `sdmc:/switch/mcdub3-nx/game/` on the Switch, `~/Library/Application Support/mcdub3/game/`, for the Mac application. Each profile is a folder with `<name>.mc3` and `SaveMeta.xbx`. A uniform structure across platforms. We added build tools to work with saves. A tool to recognize saves and import them and a tool to sync save files.
 
-**Between the Switch and a computer.** With an FTP server running on the Switch (ftpd, sphaira, ...) and both on the same network:
+**Between the Nintendo Switch and a computer.** With an FTP server running on the Switch (ftpd, sphaira, ...) and both on the same network, you can:
 
 ```sh
 make save-sync-down HOST_IP=192.168.1.20   # Switch -> computer
 make save-sync-up   HOST_IP=192.168.1.20   # computer -> Switch
 ```
 
-Before copying, both show the direction (Switch to computer, or computer to Switch) and which profiles will be created or overwritten, and ask to confirm (`YES=1` skips the question). `HOST_IP` is the Switch's address, shown by its FTP server. The port is 21 by default; for another, add it after the IP: `HOST_IP=192.168.1.20:5000`. Profiles are added or replaced, never deleted, and the receiving side is backed up to `work-dub/saves-backup/` first. `PROFILE=` syncs one profile, by folder or by name (`PROFILE=laurd`), `LIST=1` only shows both sides, `FTP_USER=`/`FTP_PASS=` if the server asks for a login (a server that requires encryption, FTPS, works too). The Mac app keeps its saves elsewhere: add `UDATA="$HOME/Library/Application Support/mcdub3/game/UDATA"`. On a Mac, "No route to host" while `ping` works means the app you run `make` in lacks macOS's Local Network permission. It's per app (Terminal, iTerm, VS Code, VSCodium): allow it in System Settings > Privacy & Security > Local Network, then restart that app.
+Both commands show the direction before copying (Switch to computer, or computer to Switch) and which profiles will be created or overwritten, and ask to confirm (`YES=1` skips the question). `HOST_IP` is the Switch's address, shown by its FTP server. The port is 21 by default; for another, add it after the IP: `HOST_IP=192.168.1.20:5000`. Profiles are added or replaced, never deleted, and the receiving side is backed up to `work-dub/saves-backup/` first. `PROFILE=` syncs one profile, by folder or by name (`PROFILE=laurd`), `LIST=1` only shows both sides, `FTP_USER=`/`FTP_PASS=` if the server asks for a login (a server that requires encryption, FTPS, works too). The Mac app keeps its saves elsewhere: add `UDATA="$HOME/Library/Application Support/mcdub3/game/UDATA"`. On a Mac, "No route to host" while `ping` works means the app you run `make` in lacks macOS's Local Network permission. It's per app (Terminal, iTerm, VS Code, VSCodium): allow it in System Settings > Privacy & Security > Local Network, then restart that app.
 
 **Importing a save from a real Xbox.** Profiles from an original Xbox, such as a memory unit dump (`.gsx`) from a save site, need re-signing first: the game calls them "damaged" otherwise. One command does both:
 
@@ -189,9 +187,9 @@ The PS2 release of the same game (SLUS-21029) stores its profiles in its own lay
 
 ## ⚠️ &nbsp;Known Bugs
 
-* loading screen can hang sometimes with a restart required
-* intro menu navigation rendering is slow
-* we're currently at v0.1.0, expect crashes and latency
+* we're currently at v0.3.0, expect crashes and latency
+* driving on the Nintendo Switch runs at 18-25 frames per second.
+* a race can occasionally hang (the screen stops, the game does not crash)
 
 ## Settings
 
