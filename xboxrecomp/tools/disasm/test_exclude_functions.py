@@ -30,3 +30,24 @@ def test_without_exclusions_nothing_changes():
     det = _detector()
     det._add_candidate(0x003AEA35, 0.9, "call_target")
     assert det._candidates[0x003AEA35] == (0.9, "call_target")
+
+
+def test_excluded_address_is_no_alias_entry():
+    class Engine:
+        def get_instructions_in_range(self, lo, hi):
+            return [object()]
+    class Image:
+        def get_section_at_va(self, va):
+            return None
+    class Labels:
+        def get(self, va):
+            return None
+        def auto_name_function(self, *a):
+            pass
+    det = _detector({0x002C6C53})
+    det.functions = {}
+    det.engine, det.image, det.labels = Engine(), Image(), Labels()
+    det._alias_entries = {0x002C6C53: 0x002C7037, 0x002C6D00: 0x002C7037}
+    det._build_alias_entries()
+    assert 0x002C6C53 not in det.functions
+    assert 0x002C6D00 in det.functions

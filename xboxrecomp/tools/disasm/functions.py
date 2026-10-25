@@ -922,6 +922,12 @@ class FunctionDetector:
         for addr, end in sorted(self._alias_entries.items()):
             if addr in self.functions:
                 continue
+            # --exclude-functions holds here too: an alias entry is a start
+            # like any other, and a false one still splits its host's code
+            # with a label (MC3 Remix: two at the lahf of a ucomiss/lahf/jp
+            # idiom cut the compare from its flags).
+            if addr in getattr(self, "excluded", ()):
+                continue
             insns = self.engine.get_instructions_in_range(addr, end)
             if not insns:
                 continue

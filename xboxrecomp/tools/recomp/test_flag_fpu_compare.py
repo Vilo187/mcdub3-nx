@@ -31,3 +31,11 @@ def test_conditions_after_fucomip():
         # fucomip st(0), st(1); jcc +1; nop; ret
         code = translate(bytes.fromhex('dfe9' + op + '01' '90' 'c3'))
         assert cond in code, (op, code)
+
+
+def test_lahf_after_fucomip():
+    # fucomip; lahf; test ah, 0x44; jnp +1; nop; ret -- MSVC's "== 0.0f"
+    # test. The lahf was dropped, so the jnp read a stale AH.
+    code = translate(bytes.fromhex('dfe9' '9f' 'f6c444' '7b01' '90' 'c3'))
+    assert 'SET_HI8(eax, (uint8_t)(0x02 | ((g_fp_cmp == 0 || g_fp_cmp == 2) ? 0x40 : 0)' in code, code
+    assert '/* lahf - load AH' not in code, code
