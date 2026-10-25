@@ -45,10 +45,10 @@ generic fixes upstream; the less we carry alone, the cheaper each merge.
 
 | Upstream | Ours | Why |
 |---|---|---|
-| 21d9ce7 Lift switch tables whose displacement is not slot 0 | f267a77 | jump tables inside CRT/XDK routines lifted as calls to non-functions (MC3: memmove, XNet checksum) |
-| c576d24 Measure jump tables down from the displacement | 7604790 | same bug class, disassembler side |
-| 85d4f30 (#173) Lift arms that follow their inline jump tables | 91ee0c2 | tables placed after the function's code (XNet checksum at 0x003A7F90) |
-| f4e3186 (#134) Lifter: a table counted down from its last slot keeps that slot | 09f81b1 | completes c576d24 |
+| 21d9ce7 Lift switch tables whose displacement is not slot 0 | 93f790f | jump tables inside CRT/XDK routines lifted as calls to non-functions (MC3: memmove, XNet checksum) |
+| c576d24 Measure jump tables down from the displacement | 4c55998 | same bug class, disassembler side |
+| 85d4f30 (#173) Lift arms that follow their inline jump tables | 8946896 | tables placed after the function's code (XNet checksum at 0x003A7F90) |
+| f4e3186 (#134) Lifter: a table counted down from its last slot keeps that slot | 8046d71 | completes c576d24 |
 
 Imported with `git format-patch -- tools | git am --directory=xboxrecomp`,
 original authors kept. A later full upstream merge sees the same changes.

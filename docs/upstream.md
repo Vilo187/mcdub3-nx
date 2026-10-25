@@ -17,29 +17,29 @@ Nothing here has been sent yet.
 
 | # | Fix | Our commit | Goes to | Still present upstream |
 |---|-----|-----------|---------|------------------------|
-| 1 | Lifter: `movsx r32, bp/sp` lifted as a zero extension | `e720852` | xboxrecomp (and nfsu2-sw, which carries the same lifter) | yes, both |
-| 2 | Renderer: texture change check samples 256 words, misses small changes | `1290b6b` | nfsu2-sw (nv2a_gl, nv2a_vk) | yes |
-| 3 | Memory: AArch64 Linux puts the guest base too high for the 4 GB window | `794632b` | nfsu2-sw (POSIX memory layout) | yes |
-| 4 | Build: Switch data folder hard-coded to `nfsu2x` | `e7dca06` | nfsu2-sw | yes |
-| 5 | Repo: `tools/*/output.py` missing, so the lift pipeline can't run | `af03785` | nfsu2-sw | yes |
-| 5b | Renderer: fog factor 0 for fixed-function draws and for vertex programs that write no fog, so they become the fog colour | `dab6e43`, `2503293` | nfsu2-sw (gl_vsh.c, nv2a_gl, nv2a_vk) | yes |
-| 5c | Executor: every inline draw taken as pre-transformed (only XYZRHW is) | `b889914` | nfsu2-sw (nv2a_pb_exec.c) | yes |
-| 5d | Input: keyboard does nothing on Linux (events dropped, key state stubbed) | `10f8602` | nfsu2-sw (input/, renderers) | yes |
-| 5e | Lifter: a jcc after a join of cmp/test of different widths lifts as `if (_flags)`, never taken | `77dc676` | xboxrecomp + nfsu2-sw | yes, both |
-| 5f | Devices: heap and contiguous-window bus addresses collide; the APU played window bytes for heap PCM. RAM tagged (bit 26) by MmGetPhysicalAddress | `f2f903f` | nfsu2-sw (kernel, apu, executor, ohci) | not checked |
-| 5g | APU: GP/EP DSP memory read as 0, so DirectSound reset both DSPs from every check (10 ms stall each, half-speed audio). Now storage, stub EP reads alive | `10d9044` | nfsu2-sw (apu_core.c) | not checked |
-| 5h | Lifter: an unresolved branch target that is a shared epilogue (pops, then `ret N`) became a stub doing only the `ret`, skipping the pops: callee-saved registers and esp corrupt on that path. Straight runs to a ret are now lifted | `f70b367` | xboxrecomp + nfsu2-sw (translator.py) | yes, both |
-| 5h | Executor: viewport scale/offset not mirrored into vertex-program constants c[-38]/c[-37]; D3D vertex shaders put every vertex at (0,0) | `b351443` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
-| 5i | Renderers: a narrower clip at a surface's address rebuilt (and wiped) the surface; reuse when it fits, in both dimensions | `3616927` | nfsu2-sw (nv2a_gl, nv2a_vk) | not checked |
-| 5j | Disassembler: `push ecx` + register save not a prologue, so a seed after a data table was rejected | `881259a` | xboxrecomp + nfsu2-sw | not checked |
-| 5k | Renderers: set up (window, context, shader cache) lazily at the first flip, i.e. during the first movie; optional `prepare` hook | `2b4129e` | nfsu2-sw (backend interface, nv2a_gl) | not checked |
-| 5l | Kernel: link up makes XNET wait for DHCP; `RECOMP_NET_LINK=0` reports no cable | `2aa2344` | xboxrecomp + nfsu2-sw | not checked |
-| 5m | Guest lock: uncontended mutex/critical-section calls handed the lock over (scheduler round trips on Horizon) | `3a7e533` | nfsu2-sw (kernel_bridge.c) | not checked; console measurement pending |
-| 5n | Executor: without reported flip retires, FLIP_STALL never waited; `RECOMP_FLIP_VBLANK=1` caps flips at the vblank | `7208296` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
-| 5o | Renderer: uniform arrays uploaded at their declared size; strict drivers (Parallels' GL) refuse the whole call when the compiler kept fewer elements, so `u_tscale` stayed 0 and linear textures (movies) sampled black. Live sizes recorded at link time | `55730a8` | nfsu2-sw (nv2a_gl) | not checked |
-| 5p | Windows: no desktop path for executor titles (only D3D11/XAudio2/XInput/VEH). `XBOXRECOMP_WIN_SDL_GL`: nv2a_gl + SDL + MMIO registry on the Win32 kernel, title off the main thread, native stack dumps | `719da1d` | xboxrecomp + nfsu2-sw | yes |
-| 5q | Executor: the 2D engine (subchannels other than 0) ignored, so NV062/NV09F image blits never happened; titles that carry a frame into the next back buffer with a blit and draw only what changed (MC3's loading-screen spinner) showed every other update. Blit in guest memory plus an optional `Nv2aBackend.blit` (nv2a_gl: glBlitFramebuffer) | `98318e9` | xboxrecomp + nfsu2-sw (nv2a_pb_exec.c, nv2a_backend.h, nv2a_gl; nv2a_vk needs its own) | not checked |
-| 5r | Disassembler: int3 padding after a function's switch tables (dword table, optional byte index table) was no boundary, so the next function was a gap that the gap-prologue pass split at every ret (lost epilogues, garbage registers in the caller); also case bodies of such switches came out as functions of their own | `6c829cb` | xboxrecomp + nfsu2-sw (tools/disasm/functions.py) | yes (test_cc_boundary.py) |
+| 1 | Lifter: `movsx r32, bp/sp` lifted as a zero extension | `3b57691` | xboxrecomp (and nfsu2-sw, which carries the same lifter) | yes, both |
+| 2 | Renderer: texture change check samples 256 words, misses small changes | `ec8d92c` | nfsu2-sw (nv2a_gl, nv2a_vk) | yes |
+| 3 | Memory: AArch64 Linux puts the guest base too high for the 4 GB window | `9661d72` | nfsu2-sw (POSIX memory layout) | yes |
+| 4 | Build: Switch data folder hard-coded to `nfsu2x` | `b4620a7` | nfsu2-sw | yes |
+| 5 | Repo: `tools/*/output.py` missing, so the lift pipeline can't run | `33c79bf` | nfsu2-sw | yes |
+| 5b | Renderer: fog factor 0 for fixed-function draws and for vertex programs that write no fog, so they become the fog colour | `a03c207`, `7e7c3bd` | nfsu2-sw (gl_vsh.c, nv2a_gl, nv2a_vk) | yes |
+| 5c | Executor: every inline draw taken as pre-transformed (only XYZRHW is) | `8c2bfe6` | nfsu2-sw (nv2a_pb_exec.c) | yes |
+| 5d | Input: keyboard does nothing on Linux (events dropped, key state stubbed) | `c100b53` | nfsu2-sw (input/, renderers) | yes |
+| 5e | Lifter: a jcc after a join of cmp/test of different widths lifts as `if (_flags)`, never taken | `4cb24c2` | xboxrecomp + nfsu2-sw | yes, both |
+| 5f | Devices: heap and contiguous-window bus addresses collide; the APU played window bytes for heap PCM. RAM tagged (bit 26) by MmGetPhysicalAddress | `899e7c7` | nfsu2-sw (kernel, apu, executor, ohci) | not checked |
+| 5g | APU: GP/EP DSP memory read as 0, so DirectSound reset both DSPs from every check (10 ms stall each, half-speed audio). Now storage, stub EP reads alive | `aeb48e5` | nfsu2-sw (apu_core.c) | not checked |
+| 5h | Lifter: an unresolved branch target that is a shared epilogue (pops, then `ret N`) became a stub doing only the `ret`, skipping the pops: callee-saved registers and esp corrupt on that path. Straight runs to a ret are now lifted | `7865aec` | xboxrecomp + nfsu2-sw (translator.py) | yes, both |
+| 5h | Executor: viewport scale/offset not mirrored into vertex-program constants c[-38]/c[-37]; D3D vertex shaders put every vertex at (0,0) | `a73bd04` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
+| 5i | Renderers: a narrower clip at a surface's address rebuilt (and wiped) the surface; reuse when it fits, in both dimensions | `93351d5` | nfsu2-sw (nv2a_gl, nv2a_vk) | not checked |
+| 5j | Disassembler: `push ecx` + register save not a prologue, so a seed after a data table was rejected | `b6de24d` | xboxrecomp + nfsu2-sw | not checked |
+| 5k | Renderers: set up (window, context, shader cache) lazily at the first flip, i.e. during the first movie; optional `prepare` hook | `9b15095` | nfsu2-sw (backend interface, nv2a_gl) | not checked |
+| 5l | Kernel: link up makes XNET wait for DHCP; `RECOMP_NET_LINK=0` reports no cable | `ced9319` | xboxrecomp + nfsu2-sw | not checked |
+| 5m | Guest lock: uncontended mutex/critical-section calls handed the lock over (scheduler round trips on Horizon) | `44c2744` | nfsu2-sw (kernel_bridge.c) | not checked; console measurement pending |
+| 5n | Executor: without reported flip retires, FLIP_STALL never waited; `RECOMP_FLIP_VBLANK=1` caps flips at the vblank | `015f7c2` | nfsu2-sw (nv2a_pb_exec.c) | not checked |
+| 5o | Renderer: uniform arrays uploaded at their declared size; strict drivers (Parallels' GL) refuse the whole call when the compiler kept fewer elements, so `u_tscale` stayed 0 and linear textures (movies) sampled black. Live sizes recorded at link time | `3e5c644` | nfsu2-sw (nv2a_gl) | not checked |
+| 5p | Windows: no desktop path for executor titles (only D3D11/XAudio2/XInput/VEH). `XBOXRECOMP_WIN_SDL_GL`: nv2a_gl + SDL + MMIO registry on the Win32 kernel, title off the main thread, native stack dumps | `78511af` | xboxrecomp + nfsu2-sw | yes |
+| 5q | Executor: the 2D engine (subchannels other than 0) ignored, so NV062/NV09F image blits never happened; titles that carry a frame into the next back buffer with a blit and draw only what changed (MC3's loading-screen spinner) showed every other update. Blit in guest memory plus an optional `Nv2aBackend.blit` (nv2a_gl: glBlitFramebuffer) | `381ea75` | xboxrecomp + nfsu2-sw (nv2a_pb_exec.c, nv2a_backend.h, nv2a_gl; nv2a_vk needs its own) | not checked |
+| 5r | Disassembler: int3 padding after a function's switch tables (dword table, optional byte index table) was no boundary, so the next function was a gap that the gap-prologue pass split at every ret (lost epilogues, garbage registers in the caller); also case bodies of such switches came out as functions of their own | `b869261` | xboxrecomp + nfsu2-sw (tools/disasm/functions.py) | yes (test_cc_boundary.py) |
 
 1. **`movsx` from `bp`/`sp`** (`tools/recomp/lifter.py`, `_lift_movsx`). The
    16-bit source list has ax, bx, cx, dx, si, di but not bp, sp, so

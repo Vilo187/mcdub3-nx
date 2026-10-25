@@ -333,7 +333,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   unported -- port_overrides.py reads 6-8 digits now; (2) fault parsing
   tune/progress/unlockingrules.csv: the cell converter 0x0028B850 (vtable
   method after a switch's tables) was split into ten fragments by the
-  gap-prologue pass -- toolkit fix 6c829cb (padding after switch tables is
+  gap-prologue pass -- toolkit fix b869261 (padding after switch tables is
   a boundary; DUB's lift changed too, still plays); (3) XACT's DSP command
   wait: the doorbell (DirectSound's command block + 0x810) moves with the
   allocations -- 0x83B10000 widescreen, 0x83A5C000 4:3 in the Remix -- so
@@ -349,7 +349,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   short because Bink's audio decoder sub_003AE8C0 was split by a false
   start at 0x003AEA35 (data in XGRPH's tail decoded as a call to it).
   Excluded in config/remix/not_functions.json (toolkit --exclude-functions,
-  33fc84c). (6) seeds 0x0013A770, 0x0016F9C0, 0x0018F9D0 (gap functions
+  644931a). (6) seeds 0x0013A770, 0x0016F9C0, 0x0018F9D0 (gap functions
   reached only through pointers; the first two are the DUB seeds
   0x00123420 / 0x00157850's twins). The Remix then plays its boot movies
   and reaches the title screen (PRESS START, city flythrough) at 30 fps.
