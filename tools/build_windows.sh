@@ -51,19 +51,24 @@ fi
 TYPE=RelWithDebInfo
 [ "${DEBUG:-0}" = "1" ] && TYPE=Debug
 
-# The icon (cover art, rounded like a Windows 11 app icon) and the release
-# version, both embedded in mcdub3.exe. No Pillow: no icon, still a build.
+# The icon (the game's artwork, config/<game>/app.env APP_ICON, rounded like
+# a Windows 11 app icon) and the release version, both embedded in the exe.
+# No artwork or no Pillow: no icon, still a build.
+mc3_app_env
+ART=$(mc3_app_artwork)
 ICON="$MC3_WORK/$MC3_APP.ico"
-if [ ! -f "$ICON" ] || [ "$MC3_REPO/assets/cover-art.jpg" -nt "$ICON" ]; then
+if [ -z "$ART" ]; then
+    echo "  (no icon: no artwork at ${APP_ICON:-APP_ICON})"; ICON=""
+elif [ ! -f "$ICON" ] || [ "$ART" -nt "$ICON" ]; then
     ICON_OK=""
-    for IPY in "$MC3_WORK/macvenv/bin/python3" "$MC3_WORK/venv/bin/python3" "$PY"; do
+    for IPY in "$(mc3_pillow_python)" "$PY"; do
+        [ -n "$IPY" ] || continue
         [ -x "$IPY" ] || command -v "$IPY" >/dev/null || continue
-        "$IPY" "$MC3_REPO/tools/windows/win_icon.py" "$MC3_REPO/assets/cover-art.jpg" "$ICON" 2>/dev/null \
+        "$IPY" "$MC3_REPO/tools/windows/win_icon.py" "$ART" "$ICON" 2>/dev/null \
             && { ICON_OK=1; break; }
     done
     [ -n "$ICON_OK" ] || { echo "  (no icon: no Python with Pillow)"; ICON=""; }
 fi
-APP_VERSION=$(sed -n 's/^APP_VERSION="\(.*\)"/\1/p' "$MC3_REPO/switch/app.env")
 ARGS+=(-DMC3_WIN_ICON="$ICON" -DMC3_VERSION="${APP_VERSION:-dev}")
 # Native (MSYS2) and cross builds keep separate trees: work/ may be shared
 # between the Mac and a Windows VM, and CMake refuses a tree configured at

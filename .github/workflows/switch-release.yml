@@ -1,21 +1,18 @@
-# Switch release: publish a finished Switch build as a GitHub release, with
-# an NSP forwarder per edition. Started by hand (Actions > Switch release >
-# Run workflow): the latest successful "Switch build", or the one whose run
-# ID is given.
+# Switch release: publish a finished Switch build (its NROs) as a GitHub
+# release. Started by hand (Actions > Switch release > Run workflow): the
+# latest successful "Switch build", or the one whose run ID is given. NSP
+# forwarders are not built here (they need the console keys): make nsp
+# locally (CONTRIBUTING.md, NSP forwarder).
 #
 #   approve   GitHub runner, "release" environment: with required reviewers
 #             set on it (Settings > Environments > release), the release
 #             waits here for approval. Then it checks the build, the version,
 #             the notes and the NROs.
-#   nsp       your self-hosted runner (label mcdub3-keys): builds the NSP
-#             forwarders with the console keys on that machine (MC3_KEYS in
-#             the runner's .env). The keys are never uploaded or stored on
-#             GitHub; only the finished NSPs are.
 #   publish   GitHub runner: tags v<version> on the build's commit and
-#             publishes NROs and NSPs together, or nothing.
+#             publishes the NROs.
 #
 # The release notes are the "## v<version>" section of RELEASE_NOTES.md, as
-# committed in the build's commit; the version is switch/app.env's
+# committed in the build's commit; the version is config/dub/app.env's
 # APP_VERSION at that commit.
 name: Switch release
 
@@ -99,10 +96,10 @@ jobs:
       - name: Version and notes
         id: notes
         run: |
-          source switch/app.env
+          source config/dub/app.env
           tag="v$APP_VERSION"
           if gh release view "$tag" >/dev/null 2>&1; then
-            echo "release $tag exists already: raise APP_VERSION in switch/app.env"; exit 1
+            echo "release $tag exists already: raise APP_VERSION in config/dub/app.env"; exit 1
           fi
           # The section of RELEASE_NOTES.md from "## v<version>" to the next "## ".
           awk -v h="## $tag" '
@@ -145,38 +142,9 @@ jobs:
           path: ${{ runner.temp }}/build/
           retention-days: 7
 
-  nsp:
-    name: NSP forwarders
-    needs: approve
-    runs-on: [self-hosted, mcdub3-keys]
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.approve.outputs.sha }}
-          clean: true
-
-      - name: Build
-        env:
-          MC3_WORK: ${{ github.workspace }}/../mcdub3-work-nsp
-        run: |
-          : "${MC3_KEYS:?the runner needs MC3_KEYS (path to prod.keys) in its .env (CONTRIBUTING.md, Releases)}"
-          test -f "$MC3_KEYS" || { echo "no keys at MC3_KEYS"; exit 1; }
-          make nsp KEYS="$MC3_KEYS"
-          mkdir -p "$RUNNER_TEMP/nsp"
-          cp "$MC3_WORK"/nsp/mcdub3-nx-*-"${{ needs.approve.outputs.version }}".nsp "$RUNNER_TEMP/nsp/"
-          ls -l "$RUNNER_TEMP/nsp"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-nsp
-          path: ${{ runner.temp }}/nsp/
-          retention-days: 7
-          if-no-files-found: error
-
   publish:
     name: Publish
-    needs: [approve, nsp]
+    needs: approve
     runs-on: ubuntu-24.04
     env:
       # RELEASE_TOKEN when set (see "Can the tag be made?"), else the run's own.
@@ -189,10 +157,6 @@ jobs:
         with:
           name: release-checked
           path: build
-      - uses: actions/download-artifact@v4
-        with:
-          name: release-nsp
-          path: nsp
 
       - name: Publish
         run: |
@@ -209,15 +173,12 @@ jobs:
               f=$(basename "${info%.buildinfo}.nro")
               echo "| \`$f\` | $(sed -n 's/^edition=//p' "$info") | \`$(sed -n 's/^nro_sha256=//p' "$info")\` |"
             done
-            for f in nsp/*.nsp; do
-              echo "| \`$(basename "$f")\` | forwarder | \`$(sha256sum "$f" | cut -d' ' -f1)\` |"
-            done
             echo
             echo "Build $(sed -n 's/^build=//p' build/*/*.buildinfo | head -1), commit $SHA."
           } > body.md
           flags=()
           [ "$PRERELEASE" = "true" ] && flags+=(--prerelease)
-          gh release create "$TAG" build/*/*.nro nsp/*.nsp \
+          gh release create "$TAG" build/*/*.nro \
             --repo "$GITHUB_REPOSITORY" --target "$SHA" \
             --title "mcdub3-nx $TAG" --notes-file body.md "${flags[@]}"
           echo "published $TAG" >> "$GITHUB_STEP_SUMMARY"

@@ -103,9 +103,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES OUTPUT_NAME "${MC3_APP}")
 target_link_libraries(${PROJECT_NAME} PRIVATE xboxrecomp)
 target_compile_definitions(${PROJECT_NAME} PRIVATE MC3_APP="${MC3_APP}" MC3_SD_DIR="${MC3_SD_DIR}"
     MC3_GAME_TITLE="${MC3_GAME_TITLE}" MC3_DISC_PREFIX="${MC3_DISC_PREFIX}")
-# Version (switch/app.env) and build ID (CI: the run; locally "local"),
+# Version (config/<game>/app.env) and build ID (CI: the run; locally "local"),
 # printed at boot so a log names exactly what ran.
-set(MC3_VERSION "dev" CACHE STRING "Release version (switch/app.env APP_VERSION)")
+set(MC3_VERSION "dev" CACHE STRING "Release version (config/<game>/app.env APP_VERSION)")
 set(MC3_BUILD_ID "local" CACHE STRING "Build identifier (CI run, commit)")
 set_property(SOURCE src/main.c APPEND PROPERTY COMPILE_DEFINITIONS
     MC3_VERSION="${MC3_VERSION}" MC3_BUILD_ID="${MC3_BUILD_ID}")
@@ -242,9 +242,9 @@ endif()
 if(NINTENDO_SWITCH)
     set(MC3_SWITCH_TITLE "Midnight Club 3 (Xbox recomp)" CACHE STRING "Title in hbmenu")
     set(MC3_SWITCH_AUTHOR "${MC3_SD_DIR}" CACHE STRING "Author in hbmenu")
-    set(MC3_SWITCH_VERSION "0.0.1" CACHE STRING "Version in hbmenu")   # switch/app.env sets all four
-    set(MC3_SWITCH_ICON "${CMAKE_CURRENT_SOURCE_DIR}/assets/icon.jpg" CACHE FILEPATH
-        "256x256 JPEG icon (libnx default when missing)")
+    set(MC3_SWITCH_VERSION "0.0.1" CACHE STRING "Version in hbmenu")   # switch/build.sh sets all four
+    set(MC3_SWITCH_ICON "" CACHE FILEPATH
+        "256x256 baseline JPEG icon (switch/build.sh: from config/<game>/app.env APP_ICON; libnx default when empty)")
 
     if(MC3_VULKAN)
         target_link_libraries(${PROJECT_NAME} PRIVATE nx m)    # NVK comes with nv2a_vk

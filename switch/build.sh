@@ -69,18 +69,18 @@ JOBS="${JOBS:-$(mc3_default_jobs)}"
 [ -f "$DEVKITPRO/portlibs/switch/include/SDL2/SDL.h" ] || mc3_fail "switch-sdl2 missing"
 [ -f "$MC3_GEN_DIR/recomp_funcs.h" ] || mc3_fail "no generated code in $MC3_GEN_DIR (tools/regen.sh)"
 
-# The app's identity (name, author, version, icon): switch/app.env for the
-# DUB Edition, switch/app-<game>.env for another; the edition's own name
-# (APP_NAME_<edition>) in hbmenu if there is one.
-APP_ENV="$MC3_REPO/switch/app.env"
-[ "$MC3_GAME" = dub ] || APP_ENV="$MC3_REPO/switch/app-$MC3_GAME.env"
-[ -f "$APP_ENV" ] || mc3_fail "no ${APP_ENV#$MC3_REPO/}"
-source "$APP_ENV"
-NAME_VAR="APP_NAME_${EDITION//-/_}"
-APP_NAME="${!NAME_VAR:-$APP_NAME}"
+# The app's identity (name, author, version): config/<game>/app.env and
+# switch/app.env (mc3_app_env); the edition's own name and artwork
+# (APP_NAME_<edition>, APP_ICON_<edition>) if it has them. The icon is the
+# artwork as hbmenu wants it (256x256 baseline JPEG, work-<game>/icons/),
+# made on the host by make switch; none: hbmenu's default.
+mc3_app_env
+APP_NAME=$(mc3_app_var NAME "$EDITION")
+ICON=$(mc3_switch_icon "$EDITION")
+echo "  $APP_NAME $APP_VERSION ($EDITION), icon: $([ -n "$ICON" ] && echo "${ICON#$MC3_REPO/}" || echo none)"
 cmake -S "$MC3_REPO" -B "$BUILD" -G Ninja \
     -DMC3_SWITCH_TITLE="$APP_NAME" -DMC3_SWITCH_AUTHOR="$APP_AUTHOR" \
-    -DMC3_SWITCH_VERSION="$APP_VERSION" -DMC3_SWITCH_ICON="$MC3_REPO/$APP_ICON" \
+    -DMC3_SWITCH_VERSION="$APP_VERSION" -DMC3_SWITCH_ICON="${ICON:-}" \
     -DCMAKE_TOOLCHAIN_FILE="$DEVKITPRO/cmake/Switch.cmake" \
     -DCMAKE_BUILD_TYPE=Release \
     -DXBOXRECOMP_DIR="$XBOXRECOMP_DIR" -DMC3_GEN_DIR="$MC3_GEN_DIR" \

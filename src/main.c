@@ -36,7 +36,7 @@ static int setenv(const char *name, const char *value, int overwrite)
 }
 #endif
 
-/* Version and build, from switch/app.env (CMake: MC3_VERSION, MC3_BUILD_ID;
+/* Version and build, from config/<game>/app.env (CMake: MC3_VERSION, MC3_BUILD_ID;
  * CI sets the build ID to the run), so a log names exactly what ran. */
 #ifndef MC3_VERSION
 #  define MC3_VERSION "dev"

@@ -173,7 +173,7 @@ switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-imag
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 
-nsp:  ## NSP forwarders (home-menu apps), one per edition, from switch/app.env, in the container; EDITION=usa for one, KEYS=keys/prod.keys
+nsp:  ## NSP forwarders (home-menu apps; locally only), one per edition, from config/<game>/app.env, in the container; EDITION=usa for one, KEYS=keys/prod.keys
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash switch/nsp.sh prepare 2>&1 | tee $(LOGS)/nsp_$(NOW).log
 	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),nsp.sh,docker_build.sh switch/nsp.sh) 2>&1 | tee -a $(LOGS)/nsp_$(NOW).log

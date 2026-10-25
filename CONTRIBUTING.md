@@ -208,7 +208,7 @@ Add `GAME=remix` to any target: `make lift build run GAME=remix`,
 | generated | `work-dub/` | `work-remix/` |
 | executable, Switch folder | `mcdub3`, `mcdub3-nx/` | `mcdub3remix`, `mcdub3remix-nx/` |
 | NRO | `mcdub3-nx-<edition>.nro` | `mcdub3remix-nx-<edition>.nro` |
-| Switch identity | `switch/app.env` | `switch/app-remix.env` |
+| app identity (Switch, Mac, Windows) | `config/dub/app.env` | `config/remix/app.env` |
 
 Editions: the DUB Edition runs the USA and European discs on one lift; the
 Remix only its European disc so far (`config/remix/xbe_editions.h`). Another
@@ -291,7 +291,8 @@ mcdub3-nx/
 │   ├── nsp.sh                [git] make nsp: the home-menu forwarder (NTON's recipe + hacBrewPack)
 │   ├── docker_build.sh       [git] make switch / nsp: a script inside devkitPro's pinned image
 │   ├── devkitpro-image       [git] the pinned image (tag@digest), shared with CI
-│   └── app.env               [git] the app's identity: name, author, version, title ID, icon, NRO path
+│   └── app.env               [git] what the games' packages share: author, pinned NSP tools
+│                                 (each game's identity: config/<game>/app.env)
 ├── vm/
 │   └── setup-ubuntu.sh       [git] make setup: packages, Docker + devkitPro image, Python venv
 │
@@ -616,7 +617,7 @@ installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
 - Start with **title takeover** (hold R while launching a game). Applet mode
   leaves too little memory.
 - Or install an **NSP forwarder**: `make nsp` builds one per edition in
-  `APP_EDITIONS` (switch/app.env; `EDITION=usa make nsp` for one),
+  `APP_EDITIONS` (config/<game>/app.env; `EDITION=usa make nsp` for one),
   `work-<game>/nsp/mcdub3-nx-<edition>-<version>.nsp`: a home-menu app that starts
   `sdmc:/switch/mcdub3-nx/mcdub3-nx-<edition>.nro` as an application (full
   memory). Each edition has its own title ID (`APP_TITLE_ID_<edition>`), so
@@ -627,8 +628,11 @@ installed on the host instead (`DEVKITPRO`, default `/opt/devkitpro`).
   re-encoded as a bare JPEG, and a start-up logo, packed by hacBrewPack with
   your console's keys (`keys/prod.keys`, never committed). NTON and
   hacBrewPack are fetched at pinned commits; nothing of theirs is in this
-  repo. Name, author, version, title ID, icon (`assets/cover-art.jpg`, any
-  image) and logo folder come from `switch/app.env`. The start-up logo
+  repo. Name, version, title ID, artwork (`APP_ICON`: square, 1024x1024
+  best; made into a 256x256 baseline JPEG for hbmenu and the home menu, an
+  .icns for the Mac app and an .ico for Windows) and logo folder come from
+  `config/<game>/app.env`, the author from `switch/app.env`. NSPs are built
+  here only, never in CI: the keys stay on your machine (ADR 0008). The start-up logo
   covers the launch: put `NintendoLogo.png` (256x128) and
   `StartupMovie.gif` (256x80) in `assets/logo/` (personal, gitignored), or
   NTON's are used. The NSP holds only the forwarder: a new game build needs
@@ -643,11 +647,11 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
 |---|---|---|---|
 | Tests | `ci.yml` | GitHub | every push and pull request; first stage of a build |
 | Build | `switch-build.yml` | the self-hosted runner with the disc | you: Actions > Switch build > Run workflow |
-| Release | `switch-release.yml` | GitHub (`release` environment: approval), then the self-hosted runner with the keys (NSPs), then GitHub (publish) | you: Actions > Switch release > Run workflow |
+| Release | `switch-release.yml` | GitHub (`release` environment: approval, then publish the NROs) | you: Actions > Switch release > Run workflow |
 
 **To release a version**
 
-1. Set `APP_VERSION` in `switch/app.env` (e.g. `0.2.0`).
+1. Set `APP_VERSION` in `config/dub/app.env` (e.g. `0.2.0`).
 2. Write its notes in `RELEASE_NOTES.md` under `## v0.2.0`. Commit and push.
 3. Actions > **Switch build** > Run workflow, with an optional description.
    It runs the tests, then builds `mcdub3-nx-<edition>.nro` on the runner.
@@ -658,10 +662,11 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
    released: GitHub does not let a workflow's own token tag such a commit,
    and the release stops at once saying so. Build again, or add a
    `RELEASE_TOKEN` secret (a fine-grained token for this repository with
-   Contents and Workflows: read and write) to release any build. A reviewer approves the `release` environment; your runner then
-   builds the NSP forwarders (one per edition) with your keys, and the
-   workflow tags `v0.2.0` on the built commit and publishes the NROs and
-   NSPs with the notes, all together or nothing.
+   Contents and Workflows: read and write) to release any build. A reviewer approves the `release` environment, and the
+   workflow tags `v0.2.0` on the built commit and publishes the NROs with
+   the notes. NSP forwarders are not part of it: build them locally with
+   `make nsp` and attach them if you want (`gh release upload v0.2.0
+   work-dub/nsp/*.nsp`).
 
 **One-time set-up**
 
@@ -673,20 +678,18 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
   pull request cannot reach the runner, but keep this on for a public repo.
 - *The runner* (the Linux VM, with Docker as for `make switch`): Settings >
   Actions > Runners > New self-hosted runner > Linux, ARM64; follow the
-  commands, and give it the extra labels `mcdub3-disc` and `mcdub3-keys`.
-  In the runner's folder, `.env` sets where the discs (one folder per
-  edition) and the keys are:
+  commands, and give it the extra label `mcdub3-disc`.
+  In the runner's folder, `.env` sets where the discs are (one folder per
+  edition):
 
   ```sh
   # actions-runner/.env
   MC3_DISCS=/home/<you>/mcdub3-discs      # contains usa/default.xbe (the lifted disc)
-  MC3_KEYS=/home/<you>/keys/prod.keys     # your console's keys, for the NSPs
   ```
 
-  Labels: `mcdub3-disc` (it has the discs: builds) and `mcdub3-keys` (it has
-  the keys: NSP forwarders). One machine can carry both; the Mac can be the
-  `mcdub3-keys` runner too (Docker Desktop running). The keys are read from
-  that disk only: never a GitHub secret or artifact (CLAUDE.md, Rules).
+  The console keys never go to a runner (CLAUDE.md, Rules): NSPs are built
+  locally. A runner set up earlier with the `mcdub3-keys` label and
+  `MC3_KEYS` no longer needs either.
 
   Run it as a service (`sudo ./svc.sh install && sudo ./svc.sh start`). Each
   build lifts the disc again in a work folder beside the checkout
@@ -699,7 +702,7 @@ GitHub releases ([ADR 0005](docs/decisions/0005-switch-releases.md)).
   `game-<edition>/` on the card first, then `game/`), all from the lifted
   disc, so the runner needs only that one in `MC3_DISCS`. An edition with
   other code would need a lift of its own (ADR 0005). Each edition's NSP
-  has its own title ID and name in `switch/app.env`.
+  has its own title ID and name in `config/<game>/app.env`.
 
 ## Texture packs (HD)
 

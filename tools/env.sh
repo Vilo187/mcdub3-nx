@@ -150,6 +150,71 @@ mc3_python() {
 export MC3_APP="${MC3_APP:-$MC3_APP_DEFAULT}"
 export MC3_SD_DIR="${MC3_SD_DIR:-$MC3_SD_DIR_DEFAULT}"
 
+# The app's identity (name, version, editions, title IDs, artwork):
+# switch/app.env (what the games share: author, pinned tools), then
+# config/<game>/app.env. Sets the APP_* variables in the caller.
+mc3_app_env() {
+    # shellcheck disable=SC1091
+    source "$MC3_REPO/switch/app.env"
+    [ -f "$MC3_CONFIG/app.env" ] || mc3_fail "no config/$MC3_GAME/app.env"
+    # shellcheck disable=SC1091
+    source "$MC3_CONFIG/app.env"
+}
+
+# An edition's APP_<KEY>_<edition> (a '-' of the edition as '_'), else
+# APP_<KEY>: mc3_app_var NAME eur.
+mc3_app_var() {
+    local v="APP_${1}_${2//-/_}" d="APP_$1"
+    printf '%s' "${!v:-${!d:-}}"
+}
+
+# The artwork for an edition, as an absolute path; empty when there is none
+# (a default icon then).
+mc3_app_artwork() {
+    local p
+    p=$(mc3_app_var ICON "${1:-}")
+    [ -n "$p" ] && [ -f "$MC3_REPO/$p" ] && printf '%s' "$MC3_REPO/$p"
+    return 0
+}
+
+# A Python with Pillow, for the icons: the project venvs, the system's, or
+# one of its own in work-<game>/pillow-venv (system Pythons refuse pip
+# installs: PEP 668). Prints its path; empty if none can be had.
+mc3_pillow_python() {
+    local c
+    for c in "$MC3_WORK/venv/bin/python3" "$MC3_WORK/macvenv/bin/python3" \
+             "$MC3_REPO/work-dub/venv/bin/python3" "$MC3_REPO/work-dub/macvenv/bin/python3" \
+             "$MC3_WORK/pillow-venv/bin/python3" python3; do
+        if "$c" -c 'import PIL' >/dev/null 2>&1; then printf '%s' "$c"; return 0; fi
+    done
+    if python3 -m venv "$MC3_WORK/pillow-venv" >/dev/null 2>&1 \
+            && "$MC3_WORK/pillow-venv/bin/pip" install --quiet pillow >/dev/null 2>&1; then
+        printf '%s' "$MC3_WORK/pillow-venv/bin/python3"
+    fi
+    return 0
+}
+
+# The Switch icon of an edition (hbmenu and the home menu): a bare 256x256
+# baseline JPEG made from the artwork into work-<game>/icons/, on the host
+# (the container has no Pillow: make switch makes it there first). Prints
+# its path; empty without artwork or Pillow (a default icon then).
+mc3_switch_icon() {
+    local edition=$1 art out py
+    art=$(mc3_app_artwork "$edition")
+    [ -n "$art" ] || return 0
+    out="$MC3_WORK/icons/switch-$edition.jpg"
+    if [ ! -f "$out" ] || [ "$art" -nt "$out" ] || [ "$MC3_REPO/tools/app_icon.py" -nt "$out" ]; then
+        mkdir -p "$MC3_WORK/icons"
+        py=$(mc3_pillow_python)
+        if [ -z "$py" ] || ! "$py" "$MC3_REPO/tools/app_icon.py" switch "$art" "$out" >&2; then
+            echo "  (no icon: no Python with Pillow here; python3 -m pip install pillow)" >&2
+            rm -f "$out"
+            return 0
+        fi
+    fi
+    printf '%s' "$out"
+}
+
 # Parallel compile jobs: ~1.5 GB of RAM per job on the generated chunks.
 mc3_default_jobs() {
     local mem_mb cpus jobs

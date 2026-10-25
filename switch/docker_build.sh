@@ -48,6 +48,13 @@ for d in "$MC3_WORK" "$MC3_GAME_DIR" "${RELEASE_DIR:-}" "$([ -n "${KEYS:-}" ] &&
     case "$(cd "$d" && pwd -P)/" in "$(cd "$MC3_REPO" && pwd -P)/"*) ;; *) MOUNTS+=(-v "$d:$d") ;; esac
 done
 
+# The icons, here on the host: the container has no Pillow (the artwork as
+# a 256x256 baseline JPEG per edition, work-<game>/icons/; mc3_switch_icon).
+mc3_app_env
+for ed in ${EDITION:-$APP_EDITIONS}; do
+    mc3_switch_icon "$ed" >/dev/null
+done
+
 echo "$SCRIPT in $IMAGE"
 exec "${DOCKER[@]}" run --rm \
     -u "$(id -u):$(id -g)" -e HOME=/tmp \

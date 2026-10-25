@@ -34,6 +34,7 @@ mc3_mac_native "$0" "$@"
 [ "$MC3_HOST" = mac ] || mc3_fail "make mac-app runs on macOS"
 
 NAME="$MC3_SHORT_NAME"                  # config/<game>/game.env
+mc3_app_env                             # version, artwork: config/<game>/app.env
 BIN="$MC3_WORK/build-mac/$MC3_APP"
 OUT="$MC3_WORK/mac_app"
 APP="$OUT/$NAME.app"
@@ -120,23 +121,21 @@ LAUNCH
 sed -i '' -e "s|@GAME@|${DISC:-}|g" -e "s|@APP@|$MC3_APP|g" -e "s|@NAME@|$NAME|g" "$APP/Contents/MacOS/launch"
 chmod +x "$APP/Contents/MacOS/launch"
 
-# Icon from assets/cover-art.jpg, if there is one (personal, not in git):
-# rounded like a stock Mac app (tools/mac_icon.py, needs Pillow), square
-# when no Python has Pillow.
+# Icon from the game's artwork (config/<game>/app.env APP_ICON; personal,
+# not in git): rounded like a stock Mac app (tools/mac_icon.py, needs
+# Pillow), square when no Python has Pillow.
 ICON_KEY=""
-if [ -f "$MC3_REPO/assets/cover-art.jpg" ]; then
+ART=$(mc3_app_artwork)
+if [ -n "$ART" ]; then
     SET="$OUT/icon.iconset"
     SRC="$OUT/icon_1024.png"
     rm -rf "$SET"; mkdir -p "$SET"
-    PY=""
-    for c in "$MC3_WORK/macvenv/bin/python3" "$MC3_WORK/venv/bin/python3" python3; do
-        if "$c" -c 'import PIL' >/dev/null 2>&1; then PY="$c"; break; fi
-    done
-    if [ -n "$PY" ] && "$PY" "$MC3_REPO/tools/mac_icon.py" "$MC3_REPO/assets/cover-art.jpg" "$SRC"; then
-        echo "  icon: rounded (tools/mac_icon.py)"
+    PY=$(mc3_pillow_python)
+    if [ -n "$PY" ] && "$PY" "$MC3_REPO/tools/mac_icon.py" "$ART" "$SRC"; then
+        echo "  icon: ${ART#$MC3_REPO/}, rounded (tools/mac_icon.py)"
     else
-        sips -s format png -z 1024 1024 "$MC3_REPO/assets/cover-art.jpg" --out "$SRC" >/dev/null
-        echo "  icon: square (no Python with Pillow: python3 -m pip install pillow)"
+        sips -s format png -z 1024 1024 "$ART" --out "$SRC" >/dev/null
+        echo "  icon: ${ART#$MC3_REPO/}, square (no Python with Pillow: python3 -m pip install pillow)"
     fi
     for s in 16 32 128 256 512; do
         sips -z $s $s "$SRC" --out "$SET/icon_${s}x${s}.png" >/dev/null
@@ -156,7 +155,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>nl.$MC3_APP.recomp</string>
   <key>CFBundleExecutable</key><string>launch</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1</string>
+  <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <key>CFBundleVersion</key><string>$(git -C "$MC3_REPO" rev-parse --short HEAD 2>/dev/null || echo 0)</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.racing-games</string>

@@ -36,7 +36,7 @@ game's own place; everything else is shared:
 | generated (lift, builds, logs, saves) | `work-dub/` | `work-remix/` |
 | app name, executable | `mcdub3` | `mcdub3remix` |
 | Switch folder, NRO | `mcdub3-nx/`, `mcdub3-nx-<edition>.nro` | `mcdub3remix-nx/`, `mcdub3remix-nx-<edition>.nro` |
-| Switch identity (NACP, NSP) | `switch/app.env` | `switch/app-remix.env` |
+| app identity (NACP, NSP, Mac, Windows) | `config/dub/app.env` | `config/remix/app.env` (both + `switch/app.env`, ADR 0008) |
 
 - Only the selected game's files go into a lift and a build: a fix in
   `src/games/remix/` never reaches the DUB Edition, and the reverse. A fix

@@ -18,7 +18,8 @@ own NRO, as nfsmw-nx does (one `nfsmw-nx-<edition>.nro` per edition).
 
 ## Decision
 
-- **Version**: `APP_VERSION` in `switch/app.env`, the one place (NACP, log
+- **Version**: `APP_VERSION` in `switch/app.env` (since ADR 0008
+  `config/dub/app.env`), the one place (NACP, log
   banner, artifact, tag). Release notes: the `## v<version>` section of
   `RELEASE_NOTES.md` at the repo root.
 - **Tests** (`.github/workflows/ci.yml`, GitHub-hosted): toolkit lifter and
@@ -37,7 +38,8 @@ own NRO, as nfsmw-nx does (one `nfsmw-nx-<edition>.nro` per edition).
   with the console keys (label `mcdub3-keys`) then builds an NSP forwarder
   per edition (`make nsp`). The last job tags `v<version>` on the build's
   commit and publishes NROs and NSPs with the notes, together or not at all.
-- **Keys** (decided 2026-10-21): NSPs need the console's `prod.keys`. They
+- **Keys** (decided 2026-10-21; superseded 2026-10-25 by ADR 0008: NSPs are
+  built locally only, no job reads keys): NSPs need the console's `prod.keys`. They
   stay on the owner's runner and are read from its disk (`MC3_KEYS`); never
   a GitHub secret, artifact or hosted runner. The NSPs contain no keys
   (hacBrewPack only uses them to encrypt the package).

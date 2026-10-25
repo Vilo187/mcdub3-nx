@@ -46,9 +46,9 @@ jobs:
         run: python3 -m py_compile tools/*.py
       - name: Version and release notes
         run: |
-          source switch/app.env
+          source config/dub/app.env
           [[ "$APP_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] \
-            || { echo "switch/app.env: APP_VERSION '$APP_VERSION' is not x.y.z"; exit 1; }
+            || { echo "config/dub/app.env: APP_VERSION '$APP_VERSION' is not x.y.z"; exit 1; }
           grep -q "^## v$APP_VERSION\b" RELEASE_NOTES.md \
             || echo "::warning::RELEASE_NOTES.md has no '## v$APP_VERSION' section yet (needed to release)"
           echo "version $APP_VERSION"

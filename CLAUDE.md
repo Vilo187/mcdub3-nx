@@ -17,10 +17,9 @@ Keep this file current: findings, rules, status. It is the project's memory.
   one game must not change the other's behaviour.
 - Never commit, upload or store on GitHub the console keys: `keys/prod.keys`
   (gitignored; the NSP forwarder build reads them from there). Not as a
-  secret, not as an artifact, never on GitHub's runners. The one exception
-  (decided 2026-10-21, ADR 0005): the release's NSP job on the owner's own
-  self-hosted runner reads them from that machine's disk (`MC3_KEYS`); only
-  the finished NSPs leave it.
+  secret, not as an artifact, not on any runner: NSPs are built locally
+  only, `make nsp` (ADR 0008, 2026-10-25; the runner exception of ADR 0005
+  is gone).
 - Toolkit changes go in `xboxrecomp/` as their own commits, subject prefixed
   `xboxrecomp:`. Prefer new files over edits to files the Switch layer or
   upstream also change (ADR 0002). Note upstreamable fixes in
@@ -110,7 +109,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   edition's, then the first by name (noted once). Packages per edition:
   make switch EDITION=eur -> mcdub3-nx-eur.nro (MC3_PACKAGE_EDITION; looks
   in sdmc:/switch/mcdub3-nx/game-<edition>/ first, then game/), NSPs from
-  APP_EDITIONS in switch/app.env (eur: its own title ID), CI matrix
+  APP_EDITIONS in config/<game>/app.env (eur: its own title ID), CI matrix
   [usa, eur] from the one lifted disc. Languages come
   from XC_LANGUAGE: RECOMP_LANGUAGE=fr|de|es|it (kernel_xbox.c; the title
   screen's "Press Start" stays English). Data: `assets_x.dat` (+ `_1`..`_5`),
@@ -191,7 +190,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   game's videos can't be shipped.
 - NSP forwarder (works since 2026-10-18; one per edition since 2026-10-21,
   each starting mcdub3-nx-<edition>.nro under APP_TITLE_ID_<edition> from
-  switch/app.env): `make nsp` follows NTON's recipe
+  config/<game>/app.env): `make nsp` (locally only, ADR 0008) follows NTON's recipe
   (its Forwarder-Mod forwarder reading romfs:/nextNroPath, its NACP
   settings, icon re-encoded bare); start-up logo from assets/logo/ or NTON's.
   The VM's Docker has no DNS: `nsp.sh prepare` fetches on the host.
@@ -253,7 +252,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   main thread serves SDL (xboxrecomp/src/platform/host_main.c). Linux SDL
   pads are opened at boot and hot-plugged (they were never opened before).
 
-- Releases (2026-10-21, ADR 0005): version in switch/app.env, notes in
+- Releases (2026-10-21, ADR 0005; NSPs local since ADR 0008): version in config/<game>/app.env, notes in
   RELEASE_NOTES.md; ci.yml (tests) -> switch-build.yml (self-hosted runner
   with the disc, label mcdub3-disc) -> switch-release.yml (environment
   `release`, approval). NROs are mcdub3-nx-<edition>.nro; the boot check

@@ -19,7 +19,8 @@
 #            the icon re-encoded as a bare baseline JPEG (else a '?')
 #   logo     APP_LOGO_DIR if it holds both files, else NTON's
 #
-# Everything comes from switch/app.env. One NSP per edition (APP_EDITIONS,
+# Everything comes from config/<game>/app.env (+ switch/app.env, shared).
+# One NSP per edition (APP_EDITIONS,
 # or EDITION=<one>): work/nsp/mcdub3-nx-<edition>-<version>.nsp, each
 # starting sdmc:/switch/mcdub3-nx/mcdub3-nx-<edition>.nro under its own title
 # ID, so editions install side by side.
@@ -27,19 +28,16 @@
 # Two phases, because the container may have no DNS (the VM's Docker could
 # not resolve github.com, 2026-10-18): `nsp.sh prepare` runs on the host
 # (make nsp does it first) and fetches NTON and hacBrewPack at their pinned
-# commits into work/tools and re-encodes the icon there (Pillow in
-# work/venv); the build itself then runs offline in the container.
+# commits into work/tools and makes each edition's icon (Pillow;
+# mc3_switch_icon); the build itself then runs offline in the container.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/../tools/env.sh"
-APP_ENV="$MC3_REPO/switch/app.env"                  # switch/app-<game>.env for another game
-[ "$MC3_GAME" = dub ] || APP_ENV="$MC3_REPO/switch/app-$MC3_GAME.env"
-source "$APP_ENV"
+mc3_app_env                                         # config/<game>/app.env + switch/app.env
 TOOLS="$MC3_WORK/tools"
 STAGE="$MC3_WORK/nsp-stage"
 OUT="$MC3_WORK/nsp"
 HBP_DIR="$TOOLS/hacbrewpack"
 NTON_DIR="$TOOLS/nton"
-ICON_OUT="$TOOLS/icon_AmericanEnglish.jpg"
 mkdir -p "$TOOLS" "$OUT"
 
 # A source tree at a pinned commit (cloned once, then only checked out).
@@ -60,37 +58,10 @@ if [ "${1:-}" = prepare ]; then
     echo "== prepare (host): sources and icon"
     fetch "$HACBREWPACK_REPO" "$HACBREWPACK_REF" "$HBP_DIR"
     fetch "$NTON_REPO" "$NTON_REF" "$NTON_DIR"
-    rm -f "$ICON_OUT"
-    if [ -f "$MC3_REPO/$APP_ICON" ]; then
-        # A bare baseline JPEG, 256x256, 4:2:0, nothing else in it: anything
-        # more and the home menu shows a '?' or nothing (NTON does the same).
-        # A Python with Pillow: the project venvs (Linux work/venv, macOS
-        # work/macvenv) or the system's; else a venv of its own in work/
-        # (system Pythons refuse pip installs: PEP 668).
-        PY=""
-        for c in "$MC3_WORK/venv/bin/python3" "$MC3_WORK/macvenv/bin/python3" \
-                 "$MC3_WORK/pillow-venv/bin/python3" python3; do
-            if "$c" -c 'import PIL' >/dev/null 2>&1; then PY="$c"; break; fi
-        done
-        if [ -z "$PY" ]; then
-            python3 -m venv "$MC3_WORK/pillow-venv" \
-                && "$MC3_WORK/pillow-venv/bin/pip" install --quiet pillow \
-                || mc3_fail "cannot make a Python with Pillow in $MC3_WORK/pillow-venv (needed for the icon)"
-            PY="$MC3_WORK/pillow-venv/bin/python3"
-        fi
-        "$PY" - "$MC3_REPO/$APP_ICON" "$ICON_OUT" <<'PY'
-import sys
-from PIL import Image
-src, dst = sys.argv[1:3]
-im = Image.open(src).convert("RGB")
-if im.size != (256, 256):
-    im = im.resize((256, 256), Image.LANCZOS)
-clean = Image.new("RGB", im.size)
-clean.putdata(list(im.getdata()))
-clean.save(dst, format="JPEG", quality=98, subsampling=2)
-PY
-        echo "   icon: $APP_ICON -> ${ICON_OUT#$MC3_REPO/}"
-    fi
+    for ed in ${EDITION:-$APP_EDITIONS}; do  # per edition (APP_ICON_<edition>)
+        ICON=$(mc3_switch_icon "$ed")
+        echo "   icon $ed: $([ -n "$ICON" ] && echo "${ICON#$MC3_REPO/}" || echo "none (artwork missing or no Pillow)")"
+    done
     exit 0
 fi
 
@@ -113,7 +84,7 @@ NTON_ASSETS="$NTON_DIR/nton/assets"
     || mc3_fail "NTON has no nton/assets/exefs at this commit: check the pin"
 
 # One NSP: a forwarder to mcdub3-nx-<edition>.nro with that edition's title
-# ID and name (switch/app.env).
+# ID and name (config/<game>/app.env).
 build_nsp() {
     local EDITION=$1 TITLE_ID NAME NRO key
     key=${EDITION//-/_}                  # pal-es -> APP_TITLE_ID_pal_es
@@ -123,7 +94,7 @@ build_nsp() {
     NAME="${!name_var:-$APP_NAME}"
     NRO="$APP_NRO_DIR/$MC3_SD_DIR-$EDITION.nro"
     [[ "$TITLE_ID" =~ ^01[0-9a-f]{11}000$ ]] \
-        || mc3_fail "${APP_ENV#$MC3_REPO/}: APP_TITLE_ID_$EDITION missing or not 01xxxxxxxxxxx000"
+        || mc3_fail "config/$MC3_GAME/app.env: APP_TITLE_ID_$key missing or not 01xxxxxxxxxxx000"
     echo
     echo "==== $EDITION: $NAME, title $TITLE_ID"
     rm -rf "$STAGE"
@@ -155,12 +126,12 @@ for off in (0x3080, 0x3088, 0x3090, 0x3098, 0x30A0, 0x3148, 0x3150, 0x3158,
 d[0x3188:0x318A] = b"\0\0"           # cache storage index max
 open(path, "wb").write(d)
 PY
-    if [ -f "$ICON_OUT" ]; then
-        cp "$ICON_OUT" "$STAGE/control/icon_AmericanEnglish.dat"
-    elif [ -f "$MC3_REPO/$APP_ICON" ]; then
-        mc3_fail "icon not prepared: run 'bash switch/nsp.sh prepare' on the host first (make nsp does)"
+    local ICON
+    ICON=$(mc3_switch_icon "$EDITION")      # made by 'nsp.sh prepare' on the host
+    if [ -n "$ICON" ]; then
+        cp "$ICON" "$STAGE/control/icon_AmericanEnglish.dat"
     else
-        echo "   no icon at $APP_ICON: the home menu shows a placeholder"
+        echo "   no icon (artwork $(mc3_app_var ICON "$EDITION")): the home menu shows a placeholder"
     fi
 
     LOGO_DIR="$MC3_REPO/${APP_LOGO_DIR:-assets/logo}"

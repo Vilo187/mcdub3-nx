@@ -37,7 +37,7 @@ jobs:
     timeout-minutes: 240
     strategy:
       matrix:
-        # One entry per edition (switch/app.env APP_EDITIONS): an NRO each,
+        # One entry per edition (config/dub/app.env APP_EDITIONS): an NRO each,
         # mcdub3-nx-<edition>.nro. They share one lift (config/dub/xbe_editions.h:
         # the discs' code is the same), made from the disc config/dub/xbe_facts.h
         # names, so the runner needs only that one, in $MC3_DISCS/<edition>/
@@ -55,7 +55,7 @@ jobs:
       - name: Version
         id: version
         run: |
-          source switch/app.env
+          source config/dub/app.env
           echo "version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "build_id=$APP_VERSION+${{ github.run_number }}.${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
           echo "Building mcdub3-nx $APP_VERSION (${{ matrix.edition }})"
