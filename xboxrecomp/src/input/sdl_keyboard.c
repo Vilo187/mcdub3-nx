@@ -16,8 +16,9 @@
  *
  *   A B X Y       A B X Y                 Enter / Backspace  START / BACK
  *   left / right  left stick (steer, menus)
- *   up            right trigger (gas) + left stick up (menus)
- *   down          left trigger (brake) + left stick down (menus)
+ *   up            right trigger (gas) + left stick up (menus; not while
+ *                 driving where the title says so: xbox_keyboard_driving)
+ *   down          left trigger (brake) + left stick down (likewise)
  *   I J K L       d-pad up / left / down / right
  *   Q / E         white / black (the Switch's L / R; also Shift / Ctrl)
  *   Z / C         left / right thumb click
@@ -29,6 +30,10 @@
  * everything, so a key held while switching away does not stay down.
  * Written by the window thread, read by the USB thread, one byte each.
  */
+/* Set by a title's own code (see keyboard_stick_y); defined on every
+ * platform so the title links where there is no SDL keyboard. */
+int (*xbox_keyboard_driving)(void);
+
 #if (!defined(_WIN32) || defined(XBOXRECOMP_SDL_HOST)) && !defined(__SWITCH__)
 
 #include <SDL.h>
@@ -82,6 +87,25 @@ int xbox_sdl_keyboard_enabled(void)
     return on;
 }
 
+/* Up/down move the left stick as well as the triggers, for menus -- but a
+ * title may give stick up/down a job of its own while driving: the MC3
+ * Remix raises and pulls in its race camera (2026-10-25), which the gas key
+ * then did too. A title can say when the player is driving
+ * (xbox_keyboard_driving, set by its own code); then up/down are the
+ * triggers alone. RECOMP_KEYBOARD_STICK_Y=0 never moves the stick, =1
+ * always does. */
+static int keyboard_stick_y(void)
+{
+    static int mode = -2;
+    if (mode == -2) {
+        const char *v = getenv("RECOMP_KEYBOARD_STICK_Y");
+        mode = v && *v == '0' ? 0 : v && *v == '1' ? 1 : -1;
+    }
+    if (mode >= 0)
+        return mode;
+    return !(xbox_keyboard_driving && xbox_keyboard_driving());
+}
+
 static SHORT axis(int negative, int positive)
 {
     int v = 0;
@@ -129,7 +153,8 @@ void xbox_sdl_keyboard_state(XBOX_INPUT_STATE *s)
     if (s_down[SDL_SCANCODE_UP])   an[XBOX_BUTTON_RTRIGGER] = 255;
 
     if ((x = axis(SDL_SCANCODE_LEFT, SDL_SCANCODE_RIGHT)) != 0) s->Gamepad.sThumbLX = x;
-    if ((x = axis(SDL_SCANCODE_DOWN, SDL_SCANCODE_UP)) != 0)    s->Gamepad.sThumbLY = x;
+    if (keyboard_stick_y() && (x = axis(SDL_SCANCODE_DOWN, SDL_SCANCODE_UP)) != 0)
+        s->Gamepad.sThumbLY = x;
     if ((x = axis2(SDL_SCANCODE_KP_4, SDL_SCANCODE_KP_6, SDL_SCANCODE_F, SDL_SCANCODE_H)) != 0)
         s->Gamepad.sThumbRX = x;
     if ((x = axis2(SDL_SCANCODE_KP_2, SDL_SCANCODE_KP_8, SDL_SCANCODE_G, SDL_SCANCODE_T)) != 0)
