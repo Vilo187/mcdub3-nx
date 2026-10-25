@@ -61,6 +61,10 @@ set(MC3_SOURCES
     src/ac97_nabm.c
     src/difftest.c
     src/bink_native.c
+    src/mc3_extras.c
+    src/mc3_freecam.c
+    src/mc3_font.c
+    src/mc3_mods.c
 )
 if(NINTENDO_SWITCH)
     list(APPEND MC3_SOURCES src/switch_nx.c)
@@ -148,6 +152,38 @@ else()
     set(MC3_GEN_OPT "-O1" CACHE STRING "Optimisation for the lifted code")
 endif()
 set(MC3_GEN_FLAGS "${MC3_GEN_OPT};-w;-fno-strict-aliasing;-fwrapv")
+if(NINTENDO_SWITCH)
+    # One static PIE: nothing is interposed, so every global the lifted code
+    # reads at each function entry (g_xbox_mem_offset, g_gil_contended) is
+    # addressed directly instead of through the GOT -- one dependent load
+    # fewer per access, millions of calls a second. The pragma (not
+    # -fvisibility, which leaves extern declarations alone) via a forced
+    # include. -fno-plt / -fomit-frame-pointer: no PLT in a static image,
+    # and x29 as one more register in straight-line code.
+    list(APPEND MC3_GEN_FLAGS "-include;${CMAKE_CURRENT_SOURCE_DIR}/src/nx_hidden.h"
+         "-fomit-frame-pointer" "-fno-plt")
+    # The x86 registers (g_eax...) are thread-local, and devkitPro reads the
+    # thread pointer through a function (__aarch64_read_tp: tpidrro_el0, then
+    # a load): a call at every register access of the lifted code, 3.6% of
+    # the console's main thread in __aarch64_read_tp alone (2026-10-25). The
+    # lifted code reads TPIDR_EL0 instead, which every thread that runs guest
+    # code sets to its thread pointer on taking the guest lock
+    # (kernel_bridge.c, xbox_nx_tp_el0). MC3_TP_EL0=OFF: as before.
+    option(MC3_TP_EL0 "Lifted code reads the thread pointer from TPIDR_EL0" ON)
+    if(MC3_TP_EL0)
+        list(APPEND MC3_GEN_FLAGS "-mtp=el0")
+        set_property(SOURCE src/recomp_manual.c APPEND PROPERTY COMPILE_OPTIONS "-mtp=el0")
+    endif()
+endif()
+# Guest memory as plain (not volatile) accesses in the lifted code: the
+# compiler may then keep a loaded value in a register and drop repeated
+# loads. Loops stay correct: every backward goto carries a compiler barrier
+# in this mode (tools/recomp/loop_barrier.py), so a loop re-reads memory each
+# turn as the x86 code does. OFF by default (switch/build.sh MEMFAST=1).
+option(MC3_MEM_PLAIN "Plain (non-volatile) guest memory accesses in the lifted code" OFF)
+if(MC3_MEM_PLAIN)
+    list(APPEND MC3_GEN_FLAGS "-DRECOMP_MEM_VOLATILE=" "-DRECOMP_MEM_PLAIN=1")
+endif()
 # Debug info for the lifted C is gigabytes per build tree. Off by default:
 # backtraces and gdb breakpoints still name every sub_XXXXXXXX (symbols stay);
 # turn it on to step through lifted C line by line.
@@ -166,6 +202,9 @@ if(MC3_LTO)
         COMPILE_OPTIONS "-flto=auto;-fno-strict-aliasing;-fwrapv")
     target_link_options(${PROJECT_NAME} PRIVATE
         "-flto=${MC3_LTO_JOBS}" "-flto-partition=balanced" ${MC3_GEN_OPT})
+    if(NINTENDO_SWITCH AND MC3_TP_EL0)
+        target_link_options(${PROJECT_NAME} PRIVATE "-mtp=el0")   # LTO code is made here
+    endif()
 endif()
 set_source_files_properties(${MC3_GEN_SOURCES} PROPERTIES COMPILE_OPTIONS "${MC3_GEN_FLAGS}")
 target_link_libraries(${PROJECT_NAME} PRIVATE m)

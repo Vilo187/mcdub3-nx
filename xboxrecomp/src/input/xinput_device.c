@@ -133,7 +133,7 @@ void xbox_InputInit(void)
     }
 }
 
-DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+static DWORD input_get_state(DWORD dwPort, XBOX_INPUT_STATE *pState)
 {
     XINPUT_STATE xi_state;
     DWORD result;
@@ -346,7 +346,7 @@ int  xbox_sdl_keyboard_enabled(void);
 void xbox_sdl_keyboard_state(XBOX_INPUT_STATE *s);
 #endif
 
-DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+static DWORD input_get_state(DWORD dwPort, XBOX_INPUT_STATE *pState)
 {
     if (dwPort >= XBOX_MAX_CONTROLLERS || !pState)
         return ERROR_DEVICE_NOT_CONNECTED;
@@ -491,3 +491,26 @@ DWORD xbox_InputGetCapabilities(DWORD dwPort, DWORD dwFlags, XBOX_INPUT_CAPABILI
 }
 
 #endif /* _WIN32 */
+
+/* The project's look at every pad report before the title gets it (an
+ * overlay menu that takes the pad while it is open, button combinations).
+ * Default: nothing. */
+__attribute__((weak)) void xbox_input_filter(DWORD port, XBOX_INPUT_STATE *state)
+{
+    (void)port; (void)state;
+}
+
+/* Unfiltered: for a caller that adds input of its own first (the USB pad's
+ * scripts, usb_gamepad.c) and then filters the whole. */
+DWORD xbox_InputGetStateRaw(DWORD dwPort, XBOX_INPUT_STATE *pState)
+{
+    return input_get_state(dwPort, pState);
+}
+
+DWORD xbox_InputGetState(DWORD dwPort, XBOX_INPUT_STATE *pState)
+{
+    DWORD rc = input_get_state(dwPort, pState);
+    if (rc == ERROR_SUCCESS)
+        xbox_input_filter(dwPort, pState);
+    return rc;
+}

@@ -18,6 +18,7 @@
 #   VULKAN=1       Vulkan renderer against NVK_SDK / GLSLANG_DIR
 #                  (default $MC3_WORK/deps/{mesa-sdk/usr/local,glslang-switch})
 #   LTO=1          link-time optimisation (LTO_JOBS, ~2 GB each)
+#   MEMFAST=1      plain guest memory accesses (-fast NRO; CMakeLists.txt)
 #   NO_GAME=1      stage only the NRO (skip syncing the disc)
 #
 # Then: copy <SD>/switch/mcdub3-nx/ to the card, or `nxlink -s` the NRO, and start
@@ -51,6 +52,14 @@ fi
 if [ "${LTO:-0}" = "1" ]; then
     SUFFIX="$SUFFIX-lto"; NRO_NAME="$NRO_NAME-lto"
     ARGS+=(-DMC3_LTO=ON -DMC3_LTO_JOBS="${LTO_JOBS:-4}")
+fi
+# Plain (non-volatile) guest memory in the lifted code, loops kept honest by
+# barriers on their back edges (CMakeLists.txt MC3_MEM_PLAIN).
+if [ "${MEMFAST:-0}" = "1" ]; then
+    SUFFIX="$SUFFIX-fast"; NRO_NAME="$NRO_NAME-fast"
+    ARGS+=(-DMC3_MEM_PLAIN=ON)
+else
+    ARGS+=(-DMC3_MEM_PLAIN=OFF)
 fi
 BUILD="${BUILD_DIR:-$MC3_WORK/build-switch$SUFFIX}"
 # A work/ shared between machines (the Linux VM sees the repo at

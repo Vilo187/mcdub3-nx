@@ -38,6 +38,7 @@ static int s_seen_count;
  * looking method numbers out of parameter data, and the counts then describe
  * nothing. Unrecognised words are the tell. */
 static uint32_t s_tot_words, s_tot_unknown, s_tot_jumps, s_tot_segments;
+static int      s_survey = -1;          /* note() on (RECOMP_PB_SURVEY) */
 
 /* Executing is opt-in separately from surveying: a survey is read-only, while
  * the executor writes to guest memory. */
@@ -235,6 +236,13 @@ void nv2a_pb_scan(uint32_t put_phys)
         s_exec_enabled = getenv("RECOMP_PB_EXEC") != NULL;
     if (!(s_exec_enabled || getenv("RECOMP_PB_SCAN")))
         return;
+    if (s_survey < 0) {
+        /* The method inventory (note) costs two dependent loads and a count
+         * per method word -- hundreds of thousands a second at 60 fps. Only
+         * a survey (no executor) or RECOMP_PB_SURVEY=1 keeps it. */
+        const char *e = getenv("RECOMP_PB_SURVEY");
+        s_survey = !s_exec_enabled || (e && *e == '1');
+    }
     if (s_get == 0xFFFFFFFFu) {               /* never resynced: start at PUT */
         s_get = put;
         return;
@@ -312,7 +320,8 @@ void nv2a_pb_scan(uint32_t put_phys)
             for (uint32_t i = 0; i < count && s_get < PB_RAM_BYTES; i++) {
                 uint32_t m = noninc ? method : method + i * 4;
                 uint32_t param = *(const uint32_t *)(mem + (0x80000000u | s_get));
-                note(subch, m);
+                if (s_survey)
+                    note(subch, m);
                 /* Same walk, two consumers: the survey counts, the executor
                  * acts. Keeping them on one decode means they can never
                  * disagree about what the stream said. */

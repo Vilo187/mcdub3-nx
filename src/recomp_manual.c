@@ -917,11 +917,27 @@ void sub_001EF3D0(void)
  * runs fast on Linux and reads no clock, so its time base is suspect). */
 volatile long g_mc3_d3d_vblanks;
 volatile uint32_t g_mc3_d3d_device;       /* ecx of the vblank handler: D3D's device */
+/* The handler ends by acknowledging the vblank (PCRTC_INTR_0, 0xFD600100)
+ * and spinning (0x003E5080, no call, no spin hint) until PMC_INTR_0 bit 24
+ * drops -- on hardware at once, here only at the ack thread's next pass,
+ * and not during the runtime's 300 us vblank grace. That spin, under the
+ * guest lock, was 4% of a race's CPU time (perf, 2026-10-24) with every
+ * guest thread waiting behind it. The caller has read the bits already, so
+ * they are cleared before the handler runs, as the runtime's
+ * xbox_Nv2aVblankTaken was written to do. MC3_VBLANK_ACK=0 off. */
+void xbox_Nv2aVblankTaken(void);
 extern void sub_003E4FD0_gen(void);
 void sub_003E4FD0(void)
 {
+    static int ack = -1;
+    if (ack < 0) {
+        const char *e = getenv("MC3_VBLANK_ACK");
+        ack = !(e && *e == '0');
+    }
     g_mc3_d3d_vblanks++;
     g_mc3_d3d_device = g_ecx;
+    if (ack)
+        xbox_Nv2aVblankTaken();
     sub_003E4FD0_gen();
 }
 
@@ -1014,6 +1030,12 @@ void sub_003E4EF0(void)
  * count +0x1C0). It showed the trap storm (targets millions of vblanks
  * ahead) and the menus' interval 2 (2026-10-18). First 40 calls, then
  * every 120th. */
+/* The 60 fps mode (src/mc3_extras.c sets it): a flip asking for interval
+ * 2 (30 fps) asks for 1, so D3D's own pacing targets every vblank. The
+ * game's frame time follows the real time (its snapping to 1/30 is off
+ * then, mc3_extras.c), so driving keeps its speed at any rate. */
+volatile int g_mc3_fps60;
+
 extern void sub_003E52D0_gen(void);
 void sub_003E52D0(void)
 {
@@ -1023,6 +1045,22 @@ void sub_003E52D0(void)
     if (on < 0) {
         const char *e = getenv("MC3_FLIP_TRACE");
         on = e && e[0] == '1';
+    }
+    if ((param & 0x1F) == 1) {
+        /* A flip: the interval in vblanks, 2 at MC3's 30 fps. The 60 fps mode
+         * asks for 1; a faster virtual vblank (g_vblank_mult) scales it, so
+         * the rate in frames per second stays what the game asked for. */
+        extern volatile int g_vblank_mult;          /* kernel_bridge.c */
+        uint32_t iv = (param >> 5) & 7, want;
+        want = g_mc3_fps60 && iv == 2 ? 1 : iv;
+        if (want && g_vblank_mult > 1)
+            want *= (uint32_t)g_vblank_mult;
+        if (want > 7)
+            want = 7;
+        if (want != iv) {
+            param = (param & ~(7u << 5)) | (want << 5);
+            MEM32(g_esp + 4) = param;
+        }
     }
     if (on && dev) { t_before = MEM32(dev + 0x1C8); vb = MEM32(dev + 0x1C0); }
     sub_003E52D0_gen();
@@ -1303,10 +1341,15 @@ void recomp_icall_not_code_log(uint32_t va)
  * cause rather than wherever the damage surfaces. */
 void recomp_unimpl(const char *text, uint32_t va)
 {
-    static int printed;
-    const char *trap = getenv("RECOMP_UNIMPL_TRAP");
-    int stop = trap && *trap && *trap != '0';
+    static int printed, stop = -1;
 
+    /* Read once: D3D's `in al, dx` (0x003E504D) and cli/sti run thousands of
+     * times a second, and a getenv walk each time was ~6% of a race's CPU
+     * time (perf, 2026-10-24). */
+    if (stop < 0) {
+        const char *trap = getenv("RECOMP_UNIMPL_TRAP");
+        stop = trap && *trap && *trap != '0';
+    }
     if (printed < 50 || stop) {
         printed++;
         fprintf(stderr,
@@ -1568,4 +1611,196 @@ void sub_00251D40(void)
 {
     if (!listener_fix_on()) { sub_00251D40_gen(); return; }
     listener_broadcast(g_ecx, 0x2C, "race event");
+}
+
+/* ── Extras: the free camera (src/mc3_freecam.c) ─────────────── */
+
+/* camViewCS's apply, 0x00120F90 (thiscall, no arguments): the active
+ * camera's matrix to the renderer (sub_002A4560), then the projection. The
+ * free camera stands in for that matrix during this call only. */
+void mc3_freecam_apply(uint32_t view, int before);
+int  mc3_freecam_setter(uint32_t va, int is44, int before);
+extern void sub_00120F90_gen(void);
+void sub_00120F90(void)
+{
+    uint32_t view = g_ecx;
+    mc3_freecam_apply(view, 1);
+    sub_00120F90_gen();
+    mc3_freecam_apply(view, 0);
+}
+
+/* The renderer's camera setters, cdecl (matrix at [esp+4]): 0x002A4560
+ * takes a Matrix34 (a camera's), 0x002A4530 a 4x4 (a copy a viewport or a
+ * pass kept). The free camera stands in when the game's camera is set. */
+extern void sub_002A4560_gen(void);
+void sub_002A4560(void)
+{
+    uint32_t m = MEM32(g_esp + 4);
+    int sw = mc3_freecam_setter(m, 0, 1);
+    sub_002A4560_gen();
+    if (sw)
+        mc3_freecam_setter(m, 0, 0);
+}
+
+extern void sub_002A4530_gen(void);
+void sub_002A4530(void)
+{
+    uint32_t m = MEM32(g_esp + 4);
+    int sw = mc3_freecam_setter(m, 1, 1);
+    sub_002A4530_gen();
+    if (sw)
+        mc3_freecam_setter(m, 1, 0);
+}
+
+/* ── MC3's timer thread: a busy wait made a sleep ─────────────────
+ *
+ * sub_00196230 (thread entry, from sub_00196470) calls sub_00044B90 once a
+ * second: in a loop it takes a critical section (0x004F00F8), reads the
+ * clock, checks whether a second has passed, leaves, and calls Sleep(0)
+ * (sub_0001739C) -- up to 580k turns a second. Each turn is a kernel call
+ * that gives up the guest lock and takes it back, against the main thread
+ * (41% of a race's CPU time in one thread, perf, 2026-10-24; on the Switch
+ * every hand-over is a scheduler round trip). On this thread only, Sleep(0)
+ * sleeps MC3_TIMER_SLEEP_MS (default 20): the second still ends on time to
+ * within 20 ms. MC3_TIMER_SLEEP_MS=0 keeps the busy wait. */
+static RECOMP_TLS int t_mc3_timer_thread;
+
+extern void sub_00196230_gen(void);
+void sub_00196230(void)
+{
+    t_mc3_timer_thread = 1;
+    sub_00196230_gen();
+    t_mc3_timer_thread = 0;
+}
+
+/* Sleep(ms), stdcall: the argument at [esp+4]. */
+extern void sub_0001739C_gen(void);
+void sub_0001739C(void)
+{
+    static int ms = -1;
+    if (ms < 0) {
+        const char *e = getenv("MC3_TIMER_SLEEP_MS");
+        ms = e && *e ? atoi(e) : 20;
+        if (ms < 0) ms = 0;
+    }
+    if (t_mc3_timer_thread && ms && MEM32(g_esp + 4) == 0)
+        MEM32(g_esp + 4) = (uint32_t)ms;
+    sub_0001739C_gen();
+}
+
+/* ── Developer parameters: MC3_ARGS ───────────────────────────────
+ *
+ * The retail game still parses Rockstar's developer parameters from its
+ * command line (sub_001ED9D0(argc, argv), called by main sub_000121A2):
+ * "-name" or "-name=value", matched against a list of 172 parameter
+ * objects ({name, value, default, next}, head 0x004FCF0C). On the Xbox the
+ * command line is just the XBE. MC3_ARGS="-notraffic -weather=..." adds to
+ * it: the strings and the new argv go into guest memory that stays (the
+ * parameters keep pointers to them). */
+uint32_t xbox_ContiguousAlloc(uint32_t size, uint32_t alignment);   /* xbox_memory_layout.c */
+
+extern void sub_001ED9D0_gen(void);
+void sub_001ED9D0(void)
+{
+    const char *extra = getenv("MC3_ARGS");
+    uint32_t argc = MEM32(g_esp + 4), argv = MEM32(g_esp + 8);
+    char buf[1024], *tok, *save;
+    uint32_t n = 0, i, add = 0, nargv, sbuf;
+
+    if (extra && *extra) {
+        snprintf(buf, sizeof buf, "%s", extra);
+        for (tok = strtok_r(buf, " \t", &save); tok; tok = strtok_r(NULL, " \t", &save))
+            add++;
+    }
+    if (!add || argc > 64) {
+        sub_001ED9D0_gen();
+        return;
+    }
+    nargv = xbox_ContiguousAlloc((argc + add + 1) * 4, 16);
+    sbuf = xbox_ContiguousAlloc((uint32_t)strlen(extra) + add + 16, 16);
+    if (!nargv || !sbuf) {
+        sub_001ED9D0_gen();
+        return;
+    }
+    for (i = 0; i < argc; i++)
+        MEM32(nargv + 4 * i) = argv ? MEM32(argv + 4 * i) : 0;
+    snprintf(buf, sizeof buf, "%s", extra);
+    for (tok = strtok_r(buf, " \t", &save); tok; tok = strtok_r(NULL, " \t", &save)) {
+        size_t len = strlen(tok) + 1;
+        memcpy((void *)XBOX_PTR(sbuf), tok, len);
+        MEM32(nargv + 4 * (argc + n)) = sbuf;
+        fprintf(stderr, "[ARGS] %s\n", tok);
+        sbuf += (uint32_t)len;
+        n++;
+    }
+    MEM32(nargv + 4 * (argc + n)) = 0;
+    MEM32(g_esp + 4) = argc + n;
+    MEM32(g_esp + 8) = nargv;
+    sub_001ED9D0_gen();
+}
+
+/* ── Extras: the vehicle switcher (src/mc3_extras.c) ──────────────
+ *
+ * Four player set-ups turn the vehicle name at this+4 into the vehicle
+ * table's index (sub_002426E0, table [0x0051885C], 0x1C per vehicle) and
+ * build the car: sub_0029CF30 (sets this+0xE0 = 1), sub_0029D090 (sets it
+ * to 0), and two virtual ones (vtable 0x004402F8/FC). The switcher may put
+ * another name there first. thiscall, no arguments. */
+void mc3_vehicle_hook(int which, uint32_t name_va);
+extern void sub_0029CF30_gen(void);
+void sub_0029CF30(void) { mc3_vehicle_hook(0, g_ecx + 4); sub_0029CF30_gen(); }
+extern void sub_0029D090_gen(void);
+void sub_0029D090(void) { mc3_vehicle_hook(1, g_ecx + 4); sub_0029D090_gen(); }
+extern void sub_0029D2E0_gen(void);
+void sub_0029D2E0(void) { mc3_vehicle_hook(2, g_ecx + 4); sub_0029D2E0_gen(); }
+extern void sub_0029D3B0_gen(void);
+void sub_0029D3B0(void) { mc3_vehicle_hook(3, g_ecx + 4); sub_0029D3B0_gen(); }
+
+/* The game's step, sub_001EDBE0: it measures the real frame time
+ * (0x0047C408), snaps it up to 1/60, 1/30, 1/20 or 1/15 s while 0x004FCF42
+ * is set (-> 0x0047C404), and then -- in races and most game states, where
+ * sub_00020490 -> sub_001EE0B0 turned on the fixed-step mode ([0x004FCF3C]
+ * = 1) -- steps the world by the fixed step [0x0047C3EC] (1/30) times the
+ * time factor [0x0047C400]; the step lands in 0x0047C3DC. So at 57 fps a
+ * race ran 1.9x fast. The 60 fps mode sets the fixed step to the real time
+ * since the last frame (clamped to 1/60..1/20 s, measured here on the host)
+ * right before each frame, and turns the snapping off: the world keeps real
+ * time at any rate up to 60. The game's own step comes back when the mode
+ * ends. MC3_DT_TRACE=1 logs it. */
+extern void sub_001EDBE0_gen(void);
+void sub_001EDBE0(void)
+{
+    static long n;
+    static int trace = -1, saved;
+    static uint32_t fixed0;
+    static struct timespec last;
+    struct timespec now;
+    double dt;
+
+    if (trace < 0) {
+        const char *e = getenv("MC3_DT_TRACE");
+        trace = e && *e == '1';
+    }
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    dt = (double)(now.tv_sec - last.tv_sec) + (now.tv_nsec - last.tv_nsec) * 1e-9;
+    last = now;
+    if (g_mc3_fps60) {
+        float step = (float)(dt < 1.0 / 60.0 ? 1.0 / 60.0 : dt > 1.0 / 20.0 ? 1.0 / 20.0 : dt);
+        MEM8(0x004FCF42u) = 0;
+        if (MEM32(0x004FCF3Cu)) {
+            if (!saved) {
+                fixed0 = MEM32(0x0047C3ECu);
+                saved = 1;
+            }
+            MEMF(0x0047C3ECu) = step;
+        }
+    } else if (saved) {
+        MEM32(0x0047C3ECu) = fixed0;
+        saved = 0;
+    }
+    sub_001EDBE0_gen();
+    if (trace && (++n % 60) == 0)
+        fprintf(stderr, "[DT] #%ld step %.5f raw %.5f fixed-mode %u fixed %.5f scale %.3f fps60 %d\n",
+                n, MEMF(0x0047C3DCu), MEMF(0x0047C408u), MEM32(0x004FCF3Cu), MEMF(0x0047C3ECu),
+                MEMF(0x0047C400u), g_mc3_fps60);
 }

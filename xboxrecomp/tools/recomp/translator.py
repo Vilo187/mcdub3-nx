@@ -3083,6 +3083,7 @@ class BatchTranslator:
         import sys
         from .mmio_rewrite import rewrite as mmio_rewrite
         from .spin_hint import rewrite as spin_hint
+        from .loop_barrier import rewrite as loop_barrier
 
         os.makedirs(output_dir, exist_ok=True)
         mmio_sections = set(mmio_sections or ())
@@ -3130,6 +3131,9 @@ class BatchTranslator:
                 code, spins = spin_hint(code)
                 if spins:
                     stats["spin_loops"] = stats.get("spin_loops", 0) + spins
+                code, backs = loop_barrier(code)
+                if backs:
+                    stats["loop_barriers"] = stats.get("loop_barriers", 0) + backs
             if code:
                 translations.append((addr, name, code))
                 stats["translated"] += 1

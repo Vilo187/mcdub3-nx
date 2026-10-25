@@ -4,6 +4,58 @@
 
 <hr>
 
+> [!NOTE]
+> **This is a fork** of [laureladastra/mcdub3-nx](https://github.com/laureladastra/mcdub3-nx), based on its **v0.2.0** release, focused on Switch performance (a 60 FPS driving mode) and an in-game Extras menu. Upstream has moved on since (Remix edition, packaging); this branch does not include those changes.
+> **The changes in this fork were vibe-coded with Claude Opus 5.5** (Anthropic), working in Claude Code on the repository and testing on a real Switch (HOS 21.2, Atmosphère). Expect rough edges; read the code before you trust it.
+
+## About this fork
+
+### No game data
+
+Nothing from the game is in this repository: no disc files, no `default.xbe`, no lifted C (`work/gen/`, generated on your machine by `make lift`), no keys, no cover art. The `.gitignore` keeps `game/`, `work/`, `keys/` and personal assets out. You need your own copy of the original Xbox disc.
+
+### Which game version
+
+*Midnight Club 3: DUB Edition* for the **original Xbox**, **NTSC-U (USA)** disc, `default.xbe` matching Redump's USA entry (title TT-121). The boot check accepts that disc and the European (PAL) one ([config/xbe_editions.h](config/xbe_editions.h)); this fork was only tested with the **USA** disc.
+
+### Unpacking the game (short)
+
+1. Make an ISO of **your own** disc (any Xbox-capable dumping method; the result should match Redump's USA entry).
+2. Unpack it into the repo's `game/` folder:
+
+   ```sh
+   make extract ISO=<your-disc.iso>
+   ```
+
+   `game/` then holds `default.xbe` and the disc's folders, not the ISO.
+3. Lift the code and build (see the platform sections below): `make lift`, then `make build run` on a computer or `make switch` for the Switch NRO.
+4. Switch: copy `game/` to `sdmc:/switch/mcdub3-nx/game/` and the NRO to `sdmc:/switch/mcdub3-nx/`. Start it with a full-memory launch (hbmenu over a game with R held, or a forwarder / sphaira as an application), not the album applet.
+
+### What this fork changes
+
+Measured on a Switch (V1) in a career race; numbers are frames per second.
+
+| | Upstream v0.2.0 | This fork |
+| --- | --- | --- |
+| Without overclock | ~20 (30 FPS cap) | ~30 (30 FPS mode) |
+| With overclock | 20-25 (30 FPS cap) | 45-60 in the 60 FPS driving mode |
+
+Performance (all switchable, see the comments in the code):
+
+- **60 FPS driving mode**: the game's fixed 1/30 s step follows the real frame time, so driving speed is right at any rate; flips at interval 1, triple buffering in the executor, and a 120 Hz virtual vblank so a late frame waits less.
+- **GPU path**: zero-copy vertex data (the executor writes straight into a persistently mapped GL buffer), persistent vertex/index rings, vertex attribute bindings set once, only changed render state and uniforms sent to the driver, version-numbered shader constants, cached texture and surface lookups, copy-and-compare instead of hashing for rewritten textures.
+- **CPU / threads**: the game's timer thread and D3D's vblank handler no longer spin; guest-lock wake-ups and condition-variable broadcasts only when someone waits (each one is a system call on Horizon); `getenv` removed from per-call paths; unused per-method statistics made optional; a learned fast path for pushbuffer methods that only update the register shadow; the lifted code reads its thread pointer from `TPIDR_EL0` instead of a libnx call per register access (`MC3_TP_EL0`).
+- **Build**: hidden visibility, `-fomit-frame-pointer`, `-fno-plt`, optional LTO and plain (non-volatile) guest memory with loop barriers (`make switch LTO=1 MEMFAST=1`), rootless Switch builds with bubblewrap (`BWRAP=1`).
+- **Diagnostics**: `MC3_PERF=10` writes where every thread spends its time (GL thread, executor waits, guest lock); `MC3_PROF=1` is a sampling profiler on the Switch (`prof.bin` and `prof_threads.txt` on the SD card; `python3 tools/prof_nx.py prof.bin prof_threads.txt work/elf/<build>.elf` names the hot functions).
+
+Features: the **Extras menu** (R3 in the pause menu) with free camera, frame rate counter, vehicle switcher (all 69 vehicles, including unused police cars and bikes), graphics, world (traffic, pedestrians, weather, slow motion), developer switches and career-only cheats; a **mods folder** (`mods/`) for replacement files, textures and settings; `MC3_ARGS` for Rockstar's developer parameters. Details are in the [Extras Menu](#extras-menu) and [Mods](#mods) sections.
+
+Known limits: the free camera shows only the part of the city loaded around the car; a vehicle change applies from the next race, not instantly.
+
+The upstream README follows.
+
+<hr>
+
 The original Xbox release of *Midnight Club 3: DUB Edition*, recompiled and lifted instruction by instruction to C with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp) and compiled natively for the Nintendo Switch, Linux, macOS and Windows without the requirement of emulation.
 
 Organised after the release of [nfsu2-sw](https://github.com/antoxa2584x/nfsu2-sw), whose Switch layer has been a great inspiration for this engine.
@@ -187,6 +239,41 @@ The PS2 release of the same game (SLUS-21029) stores its profiles in its own lay
 | Texture packs | Optional HD replacements. Dumped from the game, upscaled (Real-ESRGAN), loaded in the background and DXT-compressed.                                                |
 | Input         | Nintendo Switch controllers; on Mac/Linux the keyboard and SDL pads (DualSense, Xbox). Vibration supported.                                                         |
 
+## Extras Menu
+
+Press the **right stick (R3)** while the game is paused to open **Extras**: a menu in the style of the game's own, available everywhere the pause menu is (**L3+R3** together opens it outside the pause menu too; `MC3_EXTRAS_COMBO=0` turns that off).
+
+| Entry              | What it does                                                                                                                                                                                                     |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Free Camera        | Fly freely through the city while the game stands still. Left stick or d-pad: move, right stick (or d-pad left/right): look, LT/RT: down/up, A: faster, L3: slower, B: back to the pause menu. The game's menus and HUD are hidden while you fly. |
+| Frame Rate Counter | Frames per second and frame time in the top left corner.                                                                                                                                                        |
+| Vehicle            | Drive any of the game's 69 vehicles, including the ones career never sells: the police Impalas, the police motorcycle (`KWZ COP '98`), Skully's chopper, the Monster. Takes effect at the next race or garage exit; *Game's Choice* gives your own car back. |
+| Frame Rate         | (Graphics page) *30 FPS* as the game was made, *60 FPS Driving* (60 while the world is on screen, menus and pause stay at 30) or *60 FPS Always* (menus then run twice as fast). The game's step follows the real frame time, so driving keeps its speed at any rate between 30 and 60. Needs a fast enough console: on the Switch realistically only with overclocking. |
+| World              | Traffic, pedestrians and street props on or off (fewer of them is also less work for the CPU), the weather (clear, cloudy, rain) and the game speed (slow motion: 75, 50 or 25%). From the next race or city load. |
+| Developer          | Rockstar's developer switches still in the game: developer menus, police everywhere, skipping the intro movies. After a restart. |
+| Graphics           | Resolution, anti-aliasing, sharpening and texture filtering. Anti-aliasing and sharpening change at once; resolution and filtering after a restart. *Save Settings* writes them to `mcdub3_env.txt`.               |
+| Cheats             | Only in Career mode: **Unlock All** (cities, cars, parts, races; the game's own unlock switches), **Infinite Money** (kept at $9,999,999) and **Add $100,000**. Both switches stay on until you turn them off. |
+
+### Developer parameters
+
+The game still reads Rockstar's 172 developer parameters from its command line. `MC3_ARGS` in `mcdub3_env.txt` passes them, space-separated, e.g. `MC3_ARGS=-notraffic -weather=rainy`. Some useful ones: `-weather=clear|cloudy|rainy`, `-notraffic`, `-nopeds`, `-noprops`, `-forcecops`, `-devmenus`, `-skipintro`, `-nocinematics`. The log lists what was passed as `[ARGS]` lines.
+
+## Mods
+
+Files of the game, textures and settings can be replaced from a `mods` folder beside the `game` folder, without changing the disc or the code. The folder is read when the game starts.
+
+```
+sdmc:/switch/mcdub3-nx/mods/
+├── files/                 replaces a file of the disc at the same path,
+│                          e.g. files/video/rockstar.bik, files/flash/pause_x.xbck
+├── packs/<name>/files/    the same, one folder per mod (later names win, files/ wins over all)
+├── textures/<hash>.png    replacement textures, named like an HD pack's
+├── ui/font.ttf            the font of the Extras menu
+└── settings.txt           more KEY=VALUE settings, applied after mcdub3_env.txt
+```
+
+Names are matched without regard to upper or lower case, as on the Xbox. The log (`mcdub3_log.txt`) lists every replaced file as a `[MODS]` line. Textures are found by the hash of their content: `RECOMP_GL_TEX_DUMP=1` on a computer writes every texture the game uses, named by that hash, to start from.
+
 ## ⚠️ &nbsp;Known Bugs
 
 * loading screen can hang sometimes with a restart required
@@ -232,6 +319,8 @@ default, is [switch/mcdub3_env.example.txt](switch/mcdub3_env.example.txt). The 
 | Setting               | Default       | What it does                                                                                                                                                                                                               |
 | --------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `RECOMP_GL_THREAD`    | `1` on Switch | Draws on a thread of its own.                                                                                                                                                                                              |
+| `RECOMP_GL_PERSIST`   | `1`           | Vertex and index data go straight into buffers mapped once, instead of mapping and unmapping them for every draw. `0` brings back the old way, for a driver that has trouble with it.                                     |
+| `MC3_FPS_COUNTER`     | `0`           | Frame rate counter on screen (also in the Extras menu).                                                                                                                                                                    |
 | `RECOMP_PROG_PREWARM` | *(unset)*     | Shader compiling. By default the remembered shaders compile one per frame behind the legal screen. `boot` compiles them all at start (a few seconds of black); `0` compiles none ahead (stutters when each is first used). |
 | `RECOMP_FPS_LOG`      | `0`           | Writes the frame rate to the log every 10 seconds.                                                                                                                                                                         |
 | `MC3_PERF`            | *(unset)*     | Writes a performance report every N seconds: where the game waits, CPU use per thread, audio pacing.                                                                                                                       |

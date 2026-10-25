@@ -982,6 +982,16 @@ static void framebuffer_probe_tick(void)
 /* Pushbuffer executor load over the last second, in percent. */
 static int s_exec_busy_pct;
 int nv2a_exec_busy_percent(void) { return s_exec_busy_pct; }
+/* For the perf report: the ack thread's time walking the pushbuffer and
+ * asleep with nothing to do, in QueryPerformanceCounter ticks. */
+static LONGLONG s_ack_scan_ticks, s_ack_idle_ticks;
+void nv2a_ack_times(double *scan_s, double *idle_s)
+{
+    LARGE_INTEGER f;
+    QueryPerformanceFrequency(&f);
+    *scan_s = (double)__atomic_exchange_n(&s_ack_scan_ticks, 0, __ATOMIC_RELAXED) / (double)f.QuadPart;
+    *idle_s = (double)__atomic_exchange_n(&s_ack_idle_ticks, 0, __ATOMIC_RELAXED) / (double)f.QuadPart;
+}
 
 /* Non-zero while a device model has raised a GPU interrupt the title has not
  * serviced yet. The table above holds the interrupt-status registers at zero
@@ -1134,6 +1144,11 @@ static pthread_mutex_t s_hw_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  s_hw_cond = PTHREAD_COND_INITIALIZER;
 static volatile int    s_hw_sleepers;
 static volatile unsigned s_hw_wakes;
+/* Set by a thread going to sleep, cleared by the wake that follows: one
+ * broadcast per sleep, not one per turn of every poll loop -- on Horizon a
+ * broadcast is a system call, and MC3's main thread spent 12.7% of its time
+ * in them (2026-10-25). */
+static volatile int    s_hw_armed;
 
 /* The kickoff's write-combine flush (NV2A_ACK's first entry) is answered
  * here as well, on the thread that polls for it. Waking the flag thread and
@@ -1156,6 +1171,8 @@ void recomp_spin_wake(void)
     spin_ack_flush();
     if (!__atomic_load_n(&s_hw_sleepers, __ATOMIC_RELAXED))
         return;
+    if (!__atomic_exchange_n(&s_hw_armed, 0, __ATOMIC_ACQ_REL))
+        return;                         /* woken already since they slept */
     pthread_mutex_lock(&s_hw_lock);
     s_hw_wakes++;
     pthread_cond_broadcast(&s_hw_cond);
@@ -1188,6 +1205,7 @@ static void nv2a_thread_pause(int busy)
         pthread_mutex_lock(&s_hw_lock);
         seen = s_hw_wakes;
         __atomic_add_fetch(&s_hw_sleepers, 1, __ATOMIC_RELAXED);
+        __atomic_store_n(&s_hw_armed, 1, __ATOMIC_RELEASE);
         while (seen == s_hw_wakes)
             if (pthread_cond_timedwait(&s_hw_cond, &s_hw_lock, &ts) != 0)
                 break;
@@ -1310,6 +1328,7 @@ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
                         nv2a_pb_scan(put);
                         QueryPerformanceCounter(&b);
                         busy += b.QuadPart - a.QuadPart;
+                        __atomic_add_fetch(&s_ack_scan_ticks, b.QuadPart - a.QuadPart, __ATOMIC_RELAXED);
                         if (b.QuadPart - t_last.QuadPart > f.QuadPart) {
                             s_exec_busy_pct = (int)(100.0 * busy / (double)(b.QuadPart - t_last.QuadPart));
                             busy = 0;
@@ -1386,7 +1405,15 @@ static DWORD WINAPI nv2a_ack_thread(LPVOID param)
             static uint32_t prev_put;
             uint32_t put = *(volatile uint32_t *)((char *)regs + NV2A_USER_DMA_PUT);
             uint32_t get = *(volatile uint32_t *)((char *)regs + NV2A_USER_DMA_GET);
-            nv2a_thread_pause(put != prev_put || get != put);
+            int busy = put != prev_put || get != put;
+            LARGE_INTEGER a, b;
+            if (!busy)
+                QueryPerformanceCounter(&a);
+            nv2a_thread_pause(busy);
+            if (!busy) {
+                QueryPerformanceCounter(&b);
+                __atomic_add_fetch(&s_ack_idle_ticks, b.QuadPart - a.QuadPart, __ATOMIC_RELAXED);
+            }
             prev_put = put;
         }
     }

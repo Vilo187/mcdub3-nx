@@ -1021,17 +1021,105 @@ void xbox_nx_thread_report(double interval_s)
         len += snprintf(line + len, sizeof line - len, " (thread tick counts unavailable)");
     fprintf(stderr, "%s\n", line);
 }
+
+/* ── Sampling profiler (Switch, MC3_PROF=1) ───────────────────────────
+ *
+ * Which functions the busy threads run, where perf cannot go: every
+ * millisecond a thread of its own pauses each tracked thread that used more
+ * than 15% of a core over the last second, reads its PC and LR
+ * (svcSetThreadActivity + svcGetThreadContext3, as libnx's threadDumpContext)
+ * and resumes it. Samples go to sdmc:/switch/mcdub3-nx/prof.bin as
+ * {thread index, PC - __start__, LR - __start__} triples of u32, and the
+ * index -> entry table to prof_threads.txt; addr2line on the build's ELF
+ * names them (tools/prof_nx.py). */
+#define NX_PROF_DIR "sdmc:/switch/mcdub3-nx/"
+static void *nx_prof_thread(void *arg)
+{
+    static uint32_t buf[3 * 8192];
+    static u64 last_t[NX_MAX_TRACKED];
+    static int hot[NX_MAX_TRACKED];
+    uint32_t n = 0;
+    u64 last_check = 0, written = 0;
+    FILE *f = fopen(NX_PROF_DIR "prof.bin", "wb");
+    (void)arg;
+    if (!f)
+        return NULL;
+    /* Above the guest and GL threads (59), so a sample is not late behind
+     * the thread it samples; it sleeps between rounds. */
+    svcSetThreadPriority(CUR_THREAD_HANDLE, 0x2C);
+    for (;;) {
+        int nt = s_nx_nthreads < NX_MAX_TRACKED ? s_nx_nthreads : NX_MAX_TRACKED, i;
+        u64 now = svcGetSystemTick();
+        if (now - last_check >= 19200000ull) {          /* once a second: who is hot */
+            FILE *t = fopen(NX_PROF_DIR "prof_threads.txt", "w");
+            for (i = 0; i < nt; i++) {
+                u64 ticks = 0;
+                hot[i] = 0;
+                if (s_nx_threads[i].h && nx_thread_ticks(s_nx_threads[i].h, &ticks)) {
+                    hot[i] = last_check && (ticks - last_t[i]) * 100 > (now - last_check) * 15;
+                    last_t[i] = ticks;
+                }
+                if (t)
+                    fprintf(t, "%d %lx %d\n", i, s_nx_threads[i].entry
+                            ? (unsigned long)(s_nx_threads[i].entry - (uintptr_t)__start__) : 0ul, hot[i]);
+            }
+            if (t)
+                fclose(t);
+            last_check = now;
+        }
+        for (i = 0; i < nt; i++) {
+            ThreadContext ctx;
+            Handle h = s_nx_threads[i].h;
+            if (!hot[i] || !h || h == threadGetCurHandle())
+                continue;
+            if (R_FAILED(svcSetThreadActivity(h, ThreadActivity_Paused)))
+                continue;
+            if (R_SUCCEEDED(svcGetThreadContext3(&ctx, h))) {
+                buf[n++] = (uint32_t)i;
+                buf[n++] = (uint32_t)(ctx.pc.x - (uintptr_t)__start__);
+                buf[n++] = (uint32_t)(ctx.lr - (uintptr_t)__start__);
+            }
+            svcSetThreadActivity(h, ThreadActivity_Runnable);
+            if (n + 3 > sizeof buf / sizeof buf[0]) {
+                fwrite(buf, 4, n, f);
+                fflush(f);
+                written += n;
+                n = 0;
+                if (written > (24u << 20) / 4) {      /* 24 MB: enough */
+                    fclose(f);
+                    return NULL;
+                }
+            }
+        }
+        svcSleepThread(1000000);
+    }
+}
+
+void xbox_nx_prof_start(void)
+{
+    pthread_t t;
+    const char *e = getenv("MC3_PROF");
+    if (!e || *e != '1')
+        return;
+    if (pthread_create(&t, NULL, nx_prof_thread, NULL) == 0) {
+        pthread_detach(t);
+        fprintf(stderr, "  [NX] sampling profiler on (MC3_PROF=1): " NX_PROF_DIR "prof.bin\n");
+    }
+}
 #else
 void xbox_nx_spread_thread(void) { }
 void xbox_nx_track_thread(void *entry) { (void)entry; }
 void xbox_nx_retag_thread(void *entry) { (void)entry; }
+void xbox_nx_prof_start(void) { }
 #endif
 
 static void host_priority_apply(w32_object *o);
 
+void xbox_nx_tp_el0(void);              /* kernel_bridge.c */
 static void *thread_trampoline(void *arg)
 {
     w32_object *o = (w32_object *)arg;
+    xbox_nx_tp_el0();
     xbox_nx_spread_thread();
     xbox_nx_track_thread((void *)o->start);
     t_self_obj = o;

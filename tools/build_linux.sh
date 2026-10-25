@@ -19,6 +19,8 @@ SUFFIX=""; ARGS=(-DMC3_VULKAN=OFF)
 TYPE=RelWithDebInfo
 [ "${DEBUG:-0}" = "1" ] && { TYPE=Debug; SUFFIX="$SUFFIX-dbg"; }
 ARGS+=(-DMC3_GEN_DEBUGINFO="$([ "${GEN_DEBUGINFO:-0}" = "1" ] && echo ON || echo OFF)")
+# Plain guest memory (CMakeLists.txt MC3_MEM_PLAIN): its own build tree.
+if [ "${MEMFAST:-0}" = "1" ]; then SUFFIX="$SUFFIX-fast"; ARGS+=(-DMC3_MEM_PLAIN=ON); else ARGS+=(-DMC3_MEM_PLAIN=OFF); fi
 BUILD="${BUILD_DIR:-$MC3_WORK/build-$MC3_HOST$SUFFIX}"
 
 # Library paths CMake remembered (pkg-config) that are gone: Homebrew's

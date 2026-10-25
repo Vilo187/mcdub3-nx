@@ -770,17 +770,41 @@ int xbox_gil_sample(uint32_t *tid, uint32_t *esp, int *is_main)
     return 1;
 }
 
+/* Threads in gil_yield_wait, under s_gil_cs. */
+static int s_gil_yielders;
+
 static void gil_unlock(void)
 {
     s_gil_holder_tid = 0;
     EnterCriticalSection(&s_gil_cs);
     s_gil_serving++;
-    WakeAllConditionVariable(&s_gil_cv);
+    /* Wake only when someone waits: on Horizon a broadcast is a system call
+     * whether or not anybody sleeps on it (3.7% of MC3's main thread on the
+     * console, most of its releases having nobody behind them). */
+    if (s_gil_next != s_gil_serving || s_gil_yielders)
+        WakeAllConditionVariable(&s_gil_cv);
     LeaveCriticalSection(&s_gil_cs);
+}
+
+/* The thread pointer in TPIDR_EL0 (Switch): a project may build its lifted
+ * code with -mtp=el0 (mcdub3-nx's CMakeLists, MC3_TP_EL0) so a thread-local
+ * register is one system-register read instead of a call to libnx's
+ * __aarch64_read_tp. Horizon keeps TPIDR_EL0 per thread and nothing else
+ * uses it; every thread that runs guest code takes the guest lock first, so
+ * it is set here (and at thread start, platform/win32_compat.c). */
+void xbox_nx_tp_el0(void)
+{
+#if defined(__SWITCH__)
+    uint64_t cur, tp = (uint64_t)(uintptr_t)__builtin_thread_pointer();
+    __asm__ volatile("mrs %0, tpidr_el0" : "=r"(cur));
+    if (cur != tp)
+        __asm__ volatile("msr tpidr_el0, %0" : : "r"(tp));
+#endif
 }
 
 void xbox_gil_enter(void)
 {
+    xbox_nx_tp_el0();
     if (!gil_enabled())
         return;
     if (t_gil_depth++ == 0)
@@ -808,6 +832,7 @@ int xbox_gil_suspend(void)
 
 void xbox_gil_resume(int depth)
 {
+    xbox_nx_tp_el0();
     if (depth > 0 && gil_enabled()) {
         gil_lock();
         t_gil_depth = depth;
@@ -840,12 +865,14 @@ static void gil_yield_wait(void)
         return;
     t0 = GetTickCount();
     EnterCriticalSection(&s_gil_cs);
+    s_gil_yielders++;
     while (s_gil_next != s_gil_serving) {
         DWORD el = GetTickCount() - t0;
         if (el >= (DWORD)q)
             break;
         SleepConditionVariableCS(&s_gil_cv, &s_gil_cs, (DWORD)q - el);
     }
+    s_gil_yielders--;
     LeaveCriticalSection(&s_gil_cs);
 }
 
@@ -2237,6 +2264,8 @@ static void bridge_KeSetEvent(void)
         g_eax = 0;
 }
 
+void recomp_spin_wake(void);             /* xbox_memory_layout.c */
+
 /* ── KeWaitForSingleObject (ordinal 159) ─────────────────── */
 static void bridge_KeWaitForSingleObject(void)
 {
@@ -2247,6 +2276,11 @@ static void bridge_KeWaitForSingleObject(void)
     uint32_t timeout_ptr = STACK_ARG(4);
     HANDLE h;
 
+    /* D3D's fence wait comes here (~50 a second in a race, 115-138 ms/s of
+     * MC3's main thread on the console): wake the sleeping pushbuffer
+     * executor now -- it would notice the kickoff only at its next 1 ms
+     * timeout. Free when nobody sleeps. */
+    recomp_spin_wake();
     if (kdisp_is_guest(object)) {
         HANDLE none = NULL;
         (void)wait_reason; (void)wait_mode; (void)alertable;
@@ -3034,7 +3068,13 @@ static int kernel_raise_interrupt(uint32_t vector)
  * Late frames need nothing more: NFSU2's D3D flips a frame that missed its
  * vblank as soon as it is queued (sub_002F2080, the immediate-when-late
  * flag), so frame times are not quantised to whole vblanks. */
-#define VBLANK_PERIOD_US 16683                    /* 59.94 Hz */
+#define VBLANK_PERIOD_US_60 16683                 /* 59.94 Hz */
+/* A project may raise the virtual display's rate (2: 119.88 Hz) and scale
+ * its titles' presentation intervals to match: flips then retire at an 8.3
+ * instead of a 16.7 ms grid, so a frame that misses a vblank by a little
+ * waits less (mcdub3-nx's 60 fps mode, src/recomp_manual.c). */
+volatile int g_vblank_mult = 1;
+#define VBLANK_PERIOD_US (VBLANK_PERIOD_US_60 / (g_vblank_mult > 1 ? g_vblank_mult : 1))
 
 static long long vb_now_us(void)
 {
@@ -10332,9 +10372,13 @@ static int kernel_call_tries_first(int slot)
     if (slot < 0 || slot >= XBOX_KERNEL_THUNK_TABLE_SIZE)
         return 0;
     {
-        const char *e = getenv("RECOMP_KERNEL_FAST");
+        /* getenv only the first time: this runs on every kernel call
+         * (~1% of the console's main thread when it read it each time). */
         static int on = -1;
-        if (on < 0) on = !(e && *e == '0');
+        if (on < 0) {
+            const char *e = getenv("RECOMP_KERNEL_FAST");
+            on = !(e && *e == '0');
+        }
         if (!on) return 0;
     }
     ord = g_slot_ordinals[slot];
@@ -10347,6 +10391,10 @@ static int kernel_call_tries_first(int slot)
 static int bridge_block_begin(void)
 {
     int d;
+    /* About to block -- often on the GPU (D3D's fence wait, ~50 a second
+     * in a race): the pushbuffer executor sleeps up to a millisecond between
+     * passes, so wake it now rather than at its next timeout. */
+    recomp_spin_wake();
     if (!t_kernel_gil_kept)
         return -1;
     t_kernel_gil_kept = 0;

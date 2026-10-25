@@ -1203,6 +1203,8 @@ static uint32_t s_prog_made, s_prog_live;
 uint32_t nv2a_gl_program_count(void) { return s_prog_live; }
 /* The GL renderer's thread statistics; the Vulkan one records on the
  * executor's thread. */
+void nv2a_gl_perf_report(double secs) { (void)secs; }
+
 void nv2a_gl_queue_stats(double secs, int *gl_idle_pct, int *exec_wait_pct)
 {
     (void)secs;

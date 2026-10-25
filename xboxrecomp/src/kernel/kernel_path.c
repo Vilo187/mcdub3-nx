@@ -22,6 +22,16 @@
  * Returns the number of chars consumed from the prefix, or 0 if no match.
  * Platform-independent.
  */
+/* The project's say over a path on the disc (game_dir): given the path
+ * relative to the disc, '/'-separated as the title spelled it, it may
+ * rewrite host_path to a file of its own -- a mod -- and return 1. Called
+ * for every translation, so it must be cheap. Default: no overrides. */
+__attribute__((weak)) int xbox_path_override(const char *disc_rel, char *host_path, size_t size)
+{
+    (void)disc_rel; (void)host_path; (void)size;
+    return 0;
+}
+
 static int match_prefix(const char* path, const char* prefix)
 {
     int i = 0;
@@ -752,6 +762,9 @@ translate:
                 host_path_buf[--n] = '\0';
         }
         fix_case(host_path_buf, strlen(base_dir));
+        /* A file of the disc the project replaces (its mods folder). */
+        if (base_dir == s_game_dir && !sub_dir)
+            xbox_path_override(remainder_posix, host_path_buf, buf_size);
 
         XBOX_TRACE(XBOX_LOG_PATH, "%s -> %s", xbox_path, host_path_buf);
         return TRUE;

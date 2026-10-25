@@ -70,6 +70,67 @@
 #RECOMP_GL_TEX_MB=256
 
 # ============================================================================
+# Extras menu (R3 in the pause menu, or L3+R3 anywhere)
+# ============================================================================
+
+# Frame rate counter in the top left corner (also in Extras).
+#MC3_FPS_COUNTER=0
+
+# L3+R3 opens Extras outside the pause menu too (0 = only R3 while paused).
+#MC3_EXTRAS_COMBO=1
+
+# Career cheats, kept on while set (also in Extras > Cheats, career only):
+# everything unlocked (cities, cars, parts, races), money at $9,999,999.
+#MC3_CHEAT_UNLOCK=0
+#MC3_CHEAT_MONEY=0
+
+# Frame rate: 0 = 30 fps (the game's), 1 = 60 fps while driving, 2 = 60 fps
+# everywhere (menus run twice as fast). Driving keeps its speed either way.
+#MC3_FPS60=0
+
+# Vehicle switcher: the vehicle you drive (a vp_... name; empty: your own).
+#MC3_VEHICLE=
+
+# World: traffic, pedestrians, street props (1 on, 0 off), weather (0 the
+# game's, 1 clear, 2 cloudy, 3 rain), game speed in percent (slow motion).
+#MC3_TRAFFIC=1
+#MC3_PEDS=1
+#MC3_PROPS=1
+#MC3_WEATHER=0
+#MC3_SLOWMO=100
+
+# Rockstar's developer parameters, space-separated, as on the game's command
+# line: -devmenus -forcecops -skipintro -notraffic -weather=rainy ...
+#MC3_ARGS=
+
+# MC3's timer thread waits by sleeping this long instead of spinning with
+# Sleep(0) (0 = the original busy wait, a whole CPU core).
+#MC3_TIMER_SLEEP_MS=20
+
+# D3D's vblank handler: interrupt bits cleared before it runs instead of
+# spinning on them (0 = the old spin).
+#MC3_VBLANK_ACK=1
+
+# The menu's font: a .ttf/.otf file. Default: mods/ui/font.ttf, else the
+# Switch's system font.
+#MC3_UI_FONT=
+
+# ============================================================================
+# Mods (sdmc:/switch/mcdub3-nx/mods/, read at start)
+# ============================================================================
+#
+#   mods/files/<path>             replaces <path> of the disc, e.g.
+#                                 mods/files/video/rockstar.bik
+#   mods/packs/<name>/files/...   the same, one folder per mod (later names win;
+#                                 mods/files/ wins over all packs)
+#   mods/textures/<hash>.png      replacement textures (as an HD pack)
+#   mods/ui/font.ttf              the Extras menu's font
+#   mods/settings.txt             more KEY=VALUE lines, applied after this file
+#
+# Another mods folder:
+#MC3_MODS_DIR=sdmc:/switch/mcdub3-nx/mods
+
+# ============================================================================
 # Movies
 # ============================================================================
 
@@ -133,6 +194,10 @@
 
 # Draw on a thread of its own (faster on the Switch).
 #RECOMP_GL_THREAD=1
+
+# Vertex and index data written straight into buffers mapped once
+# (0 = map and unmap them for every draw, the old way).
+#RECOMP_GL_PERSIST=1
 
 # Shader compiling: the remembered shaders are compiled one a frame behind
 # the legal screen. boot = all at start (a few seconds of black), 0 = none

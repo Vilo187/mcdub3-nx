@@ -12,3 +12,4 @@ void xbox_nx_raise_host_thread(void)        { }
 void xbox_nx_spread_thread(void)            { }
 void xbox_nx_track_thread(void *entry)      { (void)entry; }
 void xbox_nx_retag_thread(void *entry)      { (void)entry; }
+void xbox_nx_prof_start(void)               { }

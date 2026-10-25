@@ -291,6 +291,115 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   RECOMP_GL_ERRORS=2, RECOMP_GL_PROBE=1, RECOMP_WATCHDOG_SECS (+ every
   thread's native stack; tools/windows/symbolize.sh resolves it).
 
+- Extras menu (2026-10-24, src/mc3_extras.c): drawn by the toolkit's host
+  overlay (nv2a_gl/gl_overlay.c: rects, slanted bars, stb_truetype text in
+  a 1280x720 canvas, one draw call, after the title's picture), driven by
+  the input filter hook (xinput_device.c xbox_input_filter; usb_gamepad.c
+  now merges pad scripts *before* it, so RECOMP_PAD_SCRIPT drives the menu
+  too). Game facts it uses, all found by disassembly:
+  mcMenuPause vtable 0x00427B68 (object found by scanning RAM for it; +0x44
+  bit 0 = menu active, tested first by its input/update methods
+  sub_001524E0/sub_001526E0); game mode 0x00507B14 (2 = career, >100
+  compares); money = [[0x0051893C]+0x0C]+0x838 (save field "Money",
+  sub_002598B0); unlock flags 0x00507B2C..32 (races, cities, vehicles,
+  customisation, abilities, difficulty, perf parts), set by the developer
+  parameter -unlockall (param objects + list head 0x004FCF0C, sub_00241670)
+  and by the game's own cheat screen (sub_001794F0), read live by the
+  unlocking rules (0x2607xx). Camera: camViewCS (vtable 0x00421200) +0x2C
+  active camera, camera +0x0C Matrix34 (rows right, up, back, position;
+  looks along -c), +0x84 FOV, +0x88/+0x8C clip; camViewCS::apply
+  sub_00120F90 -> sub_002A4560(Matrix34*) sets camera 0x0051A3C0, view
+  0x0051A2B8, frustum, D3D view. The player's camera set holds POV +0x28,
+  chase1-4 +0x2C..+0x38, reverse +0x3C, wipeout +0x44, cinematic +0x50
+  (sub_00297000). The free camera (src/mc3_freecam.c): camViewCS::apply
+  (wrapped) records the game camera each frame; the view is set from that
+  camera more than once a frame (viewports keep copies at +0x84 and reload
+  them, sub_002A57D0 SetCurrentViewport), so both setters are wrapped --
+  sub_002A4560 (Matrix34*) and sub_002A4530 (4x4*) -- and swap in ours
+  whenever their matrix is at the game camera's position. While paused the
+  world is not updated, so flying from the pause menu needs no freeze; for
+  flying while driving the frame time clamps 0x0047C3F0/F4 (min/max of
+  sub_001EDBE0's dt) are set to 1e-5 s. Menus and HUD are hidden in the
+  executor (nv2a_pb_exec.c raw_batch_is_2d: pre-transformed, orthographic
+  fixed function, or a vertex program whose first vertex has w=1, z=0 --
+  MC3's fonts). MC3_FREECAM_TRACE=1 logs game/ours/renderer positions.
+  The camera object keeps our matrix for the whole frame while flying
+  (MC3_FREECAM_KEEP): only then does the city's visibility follow the free
+  camera (with the matrix restored after the view call the city vanished
+  ~150 m from the car).
+- CPU (2026-10-24, Linux, same race scene at 30 fps: 160% -> 94% of a
+  core): MC3's timer thread sub_00196230 calls sub_00044B90 once a second
+  and waits for it with Sleep(0) (sub_0001739C) in a loop -- 41% of all CPU,
+  every turn a guest-lock hand-over against the main thread; on that thread
+  Sleep(0) now sleeps MC3_TIMER_SLEEP_MS (20). D3D's vblank handler
+  sub_003E4FD0 spun at 0x003E5080 for PMC_INTR bit 24 (runtime's 300 us
+  grace, under the guest lock): the wrapper calls xbox_Nv2aVblankTaken
+  first (MC3_VBLANK_ACK=0 off) -- the runtime had it, nothing called it.
+- 60 fps (2026-10-24): the menus ask D3D for presentation interval 2;
+  the pushbuffer callback wrapper (sub_003E52D0) turns a flip's interval 2
+  into 1 while g_mc3_fps60. The world's step: sub_001EDBE0 measures the real
+  frame time (0x0047C408), snaps it up to 1/60..1/15 while 0x004FCF42 (raw
+  -> 0x0047C404), and in races and most states runs in fixed-step mode
+  ([0x004FCF3C] = 1 via sub_00020490 -> sub_001EE0B0): step 0x0047C3DC =
+  fixed step [0x0047C3EC] (1/30) x time factor [0x0047C400]. At 57 fps a
+  race ran 1.9x fast; the wrapper now sets the fixed step to the host-
+  measured frame time (1/60..1/20) before each frame -- race timer within 1%
+  of the wall clock at ~54 fps. Slow motion and the free camera's freeze
+  scale [0x0047C400] (the dt clamps 0x0047C3F0 max / 0x0047C3F4 min do
+  nothing in fixed-step mode). Restarting a race reuses the player vehicle
+  (no set-up call): the vehicle switcher applies at the next race load.
+- 60 fps profile (Linux, 2026-10-24, ~58 fps): the main thread waits 36%
+  of the time in D3D's GPU wait (KeWait.. from 0x003DF62F): the executor
+  thread (pushbuffer walk + methods + draw assembly) is the limit, then
+  Mesa's driver thread. Switch hardware log (OC, 60 fps mode): 45-53 fps.
+  Done: tex_get no longer hashes unchanged textures every frame (static ones
+  every 4th frame after 120 frames unchanged, RECOMP_GL_TEX_CHECK_EVERY;
+  rewritten ones compared with memcmp against a copy), the pushbuffer
+  method survey note() only with RECOMP_PB_SURVEY=1, vertex formats via
+  glVertexAttribFormat once + glBindVertexBuffer per draw (RECOMP_GL_VAB).
+  Next candidate: a side-effect table in nv2a_pb_exec_method (most method
+  words only update the register shadow).
+- Developer parameters: 172 of them (list work/re/params.txt; objects
+  {name, value, default, next}, head 0x004FCF0C, registered by static
+  initialisers calling sub_001ED930), parsed from main's argv by
+  sub_001ED9D0. MC3_ARGS adds arguments (wrapper builds a new argv in
+  xbox_ContiguousAlloc memory). Boot-time effects: sub_00241670 (unlock
+  flags, world switches 0x0047CD40 props / 41 traffic / 42 pedestrians /
+  43 AI / 44 "cpvs"), sub_002408E0 (game state [0x00507B24]: +0x10C
+  devmenus, weather by name {clear, cloudy, rainy} at 0x0047CDB0 -> +8).
+  Sessions copy the world switches into the state (sub_00241120: +0x106..
+  +0x10A).
+- Vehicles: 69 player vehicles (the "_base" models in assets_x.dat), table
+  [0x0051885C] (count word [0x00518860], 0x1C each, name first), lookup by
+  name sub_002426E0. The local player's car is built by sub_0029D090 then
+  the virtual sub_0029D2E0/sub_0029D3B0 on one set-up struct (name at
+  this+4; sub_0029CF30 is the variant that sets +0xE0 = 1): the switcher
+  (MC3_VEHICLE) rewrites that name. Not career-only.
+- Guest addresses: the game's heap is in the contiguous window
+  0x80000000-0x84000000 (kernel.h XBOX_CONTIG_BASE, its own storage, not an
+  alias of low RAM); read both through g_xbox_mem_offset + VA.
+- Mods (2026-10-24, src/mc3_mods.c): mods/ beside game/ -- files/ and
+  packs/<name>/files/ replace disc files (kernel_path.c xbox_path_override,
+  index built once, case-insensitive), textures/ is the HD-pack folder,
+  ui/font.ttf the menu font, settings.txt extra settings.
+- Hot spots found with perf on Linux (2026-10-24, career race): getenv
+  5.7% (recomp_unimpl read RECOMP_UNIMPL_TRAP on every executed untranslated
+  instruction -- D3D's `in al, dx` at 0x003E504D and cli/sti run constantly;
+  now cached) and swizzle_index 5.3% (per-texel bit loop for textures the
+  game rewrites each frame; now two lookup tables, nv2a_gl.c unswizzle32).
+  Lifted-code loops: tools/recomp/loop_barrier.py puts RECOMP_LOOP_BARRIER()
+  on every backward goto (15k), a compiler barrier only in MC3_MEM_PLAIN
+  builds -- D3D's vblank wait at 0x003E5080 stores and loads in one loop with
+  no call and no spin hint, and would hang with plain memory otherwise.
+- Performance work 2026-10-24: persistent coherent vertex/index rings with
+  per-quarter fences (nv2a_gl.c ring_alloc_persist, RECOMP_GL_PERSIST=0
+  off) instead of a map/unmap pair per draw; Switch lifted code built with
+  hidden visibility (src/nx_hidden.h: globals PC-relative, not via the
+  GOT), -fomit-frame-pointer, -fno-plt; MC3_MEM_PLAIN=ON builds plain
+  (non-volatile) guest memory with the spin hint as a compiler barrier.
+- Building without root or Docker: `make switch BWRAP=1`
+  (switch/bwrap_build.sh unpacks the pinned image into work/toolchain).
+
 ### First lift (2026-10-14)
 
 21,585 functions, 0 failed, 2.98 M lines of C in 87 chunks (`--split 250`).

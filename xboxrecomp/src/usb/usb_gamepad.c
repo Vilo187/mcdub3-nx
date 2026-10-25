@@ -429,6 +429,9 @@ static void apply_held(int dev, uint8_t *out)
             out[4 + i] = 0xFF;
 }
 
+DWORD xbox_InputGetStateRaw(DWORD dwPort, XBOX_INPUT_STATE *pState);  /* xinput_device.c */
+void  xbox_input_filter(DWORD port, XBOX_INPUT_STATE *state);
+
 int usb_gamepad_report(int dev, uint8_t *out, int max)
 {
     XBOX_INPUT_STATE state;
@@ -478,15 +481,28 @@ int usb_gamepad_report(int dev, uint8_t *out, int max)
         }
     }
 
-    if (xbox_InputGetState((DWORD)dev, &state) != 0) {
-        out[2] = synth;
-        pad_script(dev, &out[2], &out[4]);
-        apply_held(dev, out);
-        return 20;
+    /* The host pad, then everything synthetic on top of it (script, held
+     * buttons, the start-up pulses), then the project's filter over the
+     * whole -- so a scripted press reaches an overlay menu like a real one. */
+    if (xbox_InputGetStateRaw((DWORD)dev, &state) != 0)
+        memset(&state, 0, sizeof state);
+    {
+        uint8_t dig = (uint8_t)(state.Gamepad.wButtons & 0xFF) | synth;
+        uint8_t ana[8], held[20];
+        memcpy(ana, state.Gamepad.bAnalogButtons, 8);
+        pad_script(dev, &dig, ana);
+        memset(held, 0, sizeof held);
+        apply_held(dev, held);
+        dig |= held[2];
+        for (i = 0; i < 8; i++)
+            if (held[4 + i]) ana[i] = held[4 + i];
+        state.Gamepad.wButtons = (WORD)((state.Gamepad.wButtons & 0xFF00) | dig);
+        memcpy(state.Gamepad.bAnalogButtons, ana, 8);
     }
+    xbox_input_filter((DWORD)dev, &state);
 
     g = &state.Gamepad;
-    out[2] = (uint8_t)((g->wButtons & 0xFF) | synth);
+    out[2] = (uint8_t)(g->wButtons & 0xFF);
     out[3] = (uint8_t)((g->wButtons >> 8) & 0xFF);
     for (i = 0; i < 8; i++)
         out[4 + i] = g->bAnalogButtons[i];
@@ -498,8 +514,6 @@ int usb_gamepad_report(int dev, uint8_t *out, int max)
     out[17] = (uint8_t)((g->sThumbRX >> 8) & 0xFF);
     out[18] = (uint8_t)(g->sThumbRY & 0xFF);
     out[19] = (uint8_t)((g->sThumbRY >> 8) & 0xFF);
-    pad_script(dev, &out[2], &out[4]);
-    apply_held(dev, out);
     return 20;
 }
 

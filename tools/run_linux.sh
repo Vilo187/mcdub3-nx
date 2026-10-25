@@ -19,6 +19,7 @@ mc3_mac_native "$0" "$@"
 SUFFIX=""
 [ "${VULKAN:-0}" = "1" ] && SUFFIX="-vk"
 [ "${DEBUG:-0}" = "1" ] && SUFFIX="$SUFFIX-dbg"
+[ "${MEMFAST:-0}" = "1" ] && SUFFIX="$SUFFIX-fast"
 if [ "$MC3_HOST" = windows ]; then
     BIN="${BIN:-$MC3_WORK/build-windows-$MC3_WIN_ARCH/dist/mcdub3.exe}"   # beside its DLLs
 else

@@ -46,6 +46,8 @@ static int setenv(const char *name, const char *value, int overwrite)
 #endif
 #include <xbox/xboxrecomp.h>
 
+#include "mc3_extras.h"
+#include "mc3_mods.h"
 #include "xbe_editions.h"   /* every disc this lift runs (config/) */
 #if __has_include("xbe_facts.h")
 #  include "xbe_facts.h"            /* config/, written by tools/first_lift.sh */
@@ -363,6 +365,17 @@ static void *perf_thread(void *arg)
             memcpy(&dt, &raw, sizeof dt);
             fprintf(stderr, "[perf] game frame time (0x47C404): %.4f s\n", dt);
         }
+        {   /* the GPU side: the executor's waits and the GL thread's time */
+            extern void nv2a_pb_wait_report(double secs);   /* nv2a_pb_exec.c */
+            extern void nv2a_gl_perf_report(double secs);   /* nv2a_gl.c */
+            extern void nv2a_ack_times(double *scan_s, double *idle_s);
+            double scan, idle;
+            nv2a_ack_times(&scan, &idle);
+            fprintf(stderr, "[perf] executor thread (ms/s): pushbuffer %.0f, asleep with nothing to do %.0f\n",
+                    scan * 1000.0 / secs, idle * 1000.0 / secs);
+            nv2a_pb_wait_report(secs);
+            nv2a_gl_perf_report(secs);
+        }
         {   /* main-loop passes against frames presented, per second */
             extern volatile long g_mc3_loop_passes;
             extern uint32_t nv2a_gl_frame_count(void);   /* nv2a_gl.c */
@@ -615,6 +628,9 @@ static int game_main(void)
 #endif
     }
     snprintf(xbe_path, sizeof(xbe_path), "%s/default.xbe", game_dir);
+    /* The mods folder beside the disc (mc3_mods.c): its settings.txt first,
+     * so everything below sees them; textures there may set the HD folder. */
+    mc3_mods_init(game_dir);
     {
         /* Replacement textures (renderer, hd_pack.c) live beside the game,
          * never inside it: <game_dir>/../hd -- sdmc:/switch/mcdub3-nx/hd on
@@ -660,6 +676,7 @@ static int game_main(void)
     g_xbox_mem_offset = xbox_GetMemoryOffset();
     printf("Xbox memory mapped at host offset 0x%llX\n",
            (unsigned long long)g_xbox_mem_offset);
+    mc3_extras_init();      /* the Extras menu (mc3_extras.c) */
 
     /* The emulated APU. With RECOMP_AC97_READY=plain its registers stay plain
      * memory and the code lifted with --mmio-sections reaches it through the
@@ -751,13 +768,17 @@ static int game_main(void)
 
 void xbox_nx_spread_thread(void);
 void xbox_nx_track_thread(void *entry);
+void xbox_nx_prof_start(void);
 
 /* Horizon's main-thread stack is small for recompiled code: boot the title on
  * a thread with a desktop-sized stack, spread off core 0. */
+void xbox_nx_tp_el0(void);              /* kernel_bridge.c */
 static void *game_thread(void *arg)
 {
+    xbox_nx_tp_el0();                           /* before any lifted code */
     xbox_nx_spread_thread();
     xbox_nx_track_thread(NULL);
+    xbox_nx_prof_start();                       /* MC3_PROF=1 */
     *(int *)arg = game_main();
     return NULL;
 }

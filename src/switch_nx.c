@@ -189,8 +189,10 @@ static void log_open(void)
         s_sockets = 1;
         s_nxlink_fd = nxlinkStdio();       /* -1 unless launched by nxlink */
     }
-    if (s_nxlink_fd >= 0)
-        return;
+    /* The card's log also when launched by nxlink (stdout is taken over
+     * below): copying the whole log to the nxlink socket as well froze the
+     * console's network twice within two minutes (2026-10-25), so the PC
+     * gets nothing -- read the card's log after the run. */
 
     s_t0 = armGetSystemTick();
     mkdir(APP_DIR, 0777);
@@ -307,6 +309,28 @@ void __libnx_exception_handler(ThreadExceptionDump *ctx)
 /* Entry points used by main.c                                         */
 /* ------------------------------------------------------------------ */
 
+/* The console's own font (the Extras menu's text when no font is in the
+ * mods folder): shared memory, mapped by pl, never freed. */
+static PlFontData s_font;
+static int        s_font_state;         /* 0 untried, 1 ok, -1 none */
+static int        s_pl_up;
+
+const void *switch_system_font(size_t *len)
+{
+    if (!s_font_state) {
+        s_font_state = -1;
+        if (R_SUCCEEDED(plInitialize(PlServiceType_User))) {
+            s_pl_up = 1;
+            if (R_SUCCEEDED(plGetSharedFontByType(&s_font, PlSharedFontType_Standard)))
+                s_font_state = 1;
+        }
+    }
+    if (s_font_state < 0)
+        return NULL;
+    *len = s_font.size;
+    return s_font.address;
+}
+
 void switch_error_dialog(const char *msg)
 {
     ErrorApplicationConfig c;
@@ -336,6 +360,8 @@ void switch_shutdown(void)
         threadClose(&s_writer);
     }
     log_flush();
+    if (s_pl_up)
+        plExit();
     if (s_log_fd >= 0)
         close(s_log_fd);
     if (s_sockets)

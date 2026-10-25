@@ -445,7 +445,14 @@ static uint16_t s_unhandled_slot[0x2000 / 4];
 static void note_unhandled(uint32_t method, uint32_t param)
 {
     uint16_t *slot = &s_unhandled_slot[(method & 0x1FFC) / 4];
+    static int on = -1;
 
+    /* Only for the report (verbose runs, RECOMP_PB_UNHANDLED=1): counting
+     * was 2% of the executor's thread on the console. */
+    if (on < 0)
+        on = pb_verbose() || getenv("RECOMP_PB_UNHANDLED") != NULL;
+    if (!on)
+        return;
     s_gpu.unhandled_total++;
     if (*slot) {
         s_unhandled[*slot - 1].count++;
@@ -845,6 +852,29 @@ int nv2a_vp_debug_vertex(uint32_t index, float pos[4], float d0[4], float t0[4])
     memcpy(d0, o->d0, sizeof o->d0);
     memcpy(t0, o->t0, sizeof o->t0);
     return o->ok;
+}
+
+/* A host's free camera hides the title's screen-space draws -- menus and
+ * HUD -- so only the world shows (nv2a_gl_set_hide_2d). Screen space is:
+ * pre-transformed vertices; the fixed-function unit through an orthographic
+ * matrix (its w row, composite[12..14], ignores x, y and z); or a vertex
+ * program whose first vertex comes out at w = 1, z = 0 (MC3's fonts and HUD
+ * quads; a perspective view gives w = the depth). Decided here, where the
+ * program's state is this batch's -- the renderer may run a frame behind. */
+volatile int g_nv2a_hide_2d;
+
+static int raw_batch_is_2d(const Nv2aRawBatch *rb)
+{
+    if (rb->xform == 0)
+        return 1;
+    if (rb->xform == 1)
+        return rb->composite[12] == 0.0f && rb->composite[13] == 0.0f
+            && rb->composite[14] == 0.0f;
+    if (rb->vertex_count) {
+        const VpOut *o = vp_vertex(0);
+        return o->ok && o->pos[3] == 1.0f && o->pos[2] == 0.0f;
+    }
+    return 0;
 }
 
 /* Is this batch transformed by the fixed-function unit? */
@@ -3346,7 +3376,8 @@ static void raw_batch(void)
     rb.vp_const_gen = s_vp.const_gen ? s_vp.const_gen : 1;
     if (nv2a_raw_batch_hook)
         nv2a_raw_batch_hook(&rb, s_raw_attrs);
-    s_backend->draw_raw(&rb);
+    if (!(g_nv2a_hide_2d && raw_batch_is_2d(&rb)))   /* free camera: no menus, HUD */
+        s_backend->draw_raw(&rb);
     s_gpu.tris_drawn += s_gpu.idx_count / 3;
     s_gpu.drawn_offset = s_gpu.color_offset;
     s_gpu.drawn_pitch = s_gpu.pitch;
@@ -3969,6 +4000,29 @@ static volatile LONG s_trap_hooked, s_trap_lock, s_trap_taken;
  * millisecond, so a missed signal costs a millisecond, not a hang. */
 static HANDLE s_driver_event;
 
+/* MC3_PERF/RECOMP perf report: how long the executor waited on the driver,
+ * by what for (ns, summed; nv2a_pb_wait_report reads and clears them). */
+static uint64_t s_xw_trap_ns, s_xw_stall_ns, s_xw_vbl_ns;
+static uint32_t s_xw_traps, s_xw_stalls;
+static uint64_t xw_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+
+void nv2a_pb_wait_report(double secs)
+{
+    uint64_t trap = __atomic_exchange_n(&s_xw_trap_ns, 0, __ATOMIC_RELAXED);
+    uint64_t stall = __atomic_exchange_n(&s_xw_stall_ns, 0, __ATOMIC_RELAXED);
+    uint64_t vbl = __atomic_exchange_n(&s_xw_vbl_ns, 0, __ATOMIC_RELAXED);
+    uint32_t nt = __atomic_exchange_n(&s_xw_traps, 0, __ATOMIC_RELAXED);
+    uint32_t ns = __atomic_exchange_n(&s_xw_stalls, 0, __ATOMIC_RELAXED);
+    fprintf(stderr, "[perf] executor waits: traps %.0f ms/s (%.0f/s, %.2f ms each), flip stall %.0f ms/s"
+            " (%.0f/s), vblank %.0f ms/s\n", trap / secs / 1e6, nt / secs, nt ? trap / 1e6 / nt : 0.0,
+            stall / secs / 1e6, ns / secs, vbl / secs / 1e6);
+}
+
 static HANDLE driver_event(void)
 {
     if (!s_driver_event) {
@@ -4011,6 +4065,7 @@ static void trap_deliver_hooked(volatile uint32_t *nv, uint32_t method,
     extern void xbox_Nv2aHoldInterrupts(int on);
     ULONGLONG give_up = GetTickCount64() + 2000;
     static unsigned handled_n;
+    uint64_t t0 = xw_now();
 
     xbox_Nv2aHoldInterrupts(1);        /* the ack thread leaves PGRAPH alone */
     while (InterlockedCompareExchange(&s_trap_lock, 1, 0) != 0)
@@ -4044,6 +4099,8 @@ static void trap_deliver_hooked(volatile uint32_t *nv, uint32_t method,
         WaitForSingleObject(driver_event(), 1);
     }
     xbox_set_irq_line(3, 0);
+    __atomic_add_fetch(&s_xw_trap_ns, xw_now() - t0, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&s_xw_traps, 1, __ATOMIC_RELAXED);
     if ((++handled_n & 1023) == 0)
         fprintf(stderr, "  [PB] NOP trap handled, %u so far\n", handled_n);
     xbox_Nv2aHoldInterrupts(0);
@@ -4087,24 +4144,52 @@ static void flip_wait_vblank(void)
     if (!on)
         return;
     give_up = GetTickCount64() + 50;            /* a stopped vblank: go on */
-    while (xbox_vblank_count() == last && GetTickCount64() < give_up)
-        Sleep(1);
+    if (xbox_vblank_count() == last) {
+        uint64_t t0 = xw_now();
+        while (xbox_vblank_count() == last && GetTickCount64() < give_up)
+            Sleep(1);
+        __atomic_add_fetch(&s_xw_vbl_ns, xw_now() - t0, __ATOMIC_RELAXED);
+    }
     last = xbox_vblank_count();
 }
+
+/* Flips written and not yet retired, counted rather than read off the
+ * modular indices (which cannot tell 0 pending from `modulo` pending).
+ *
+ * g_nv2a_flip_ahead: -1 (default) stalls as the hardware does, while the
+ * buffer about to be drawn is the one on screen. 0 or more: stall while more
+ * than that many flips are pending -- 1 is triple buffering. The window here
+ * shows a copy made at the flip, so drawing on into the "front" buffer is
+ * invisible; D3D's own flip queue has two entries, so one ahead is all it
+ * holds. A frame that misses its vblank by a little then costs that little,
+ * not a whole vblank (MC3's 60 fps mode: 52 fps with the executor stalled
+ * ~400 ms/s and the GL thread idle 30% of the time, 2026-10-25). */
+volatile int g_nv2a_flip_ahead = -1;
+static int s_flip_pending;
 
 /* On the executor's thread: fold reported retires into the read index. */
 static void flip_apply_retired(void)
 {
     LONG n = InterlockedExchange(&s_flip_retired, 0);
+    s_flip_pending -= n;
+    if (s_flip_pending < 0)
+        s_flip_pending = 0;
     while (n-- > 0)
         s_gpu.flip_read = s_gpu.flip_modulo
                         ? (s_gpu.flip_read + 1) % s_gpu.flip_modulo
                         : s_gpu.flip_read + 1;
 }
 
+/* Methods found to need nothing beyond the register shadow: they went the
+ * whole way through the switch's default branch -- a dozen range tests --
+ * to note_unhandled. That depends on the method alone, so after the first
+ * time they return right after the shadow write (most combiner, light and
+ * material registers, which the GL back end reads from the shadow). */
+static uint8_t s_pure[0x2000 / 4];
+
 void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
 {
-    static int inited;
+    static int inited, verbose = -1;
 
     /* The shadow is the 3D class's register file: methods to the other
      * subchannels (2D surfaces, blits) share its offsets and must not land
@@ -4119,7 +4204,9 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             s_reg_dirty[w >> 4] = 1;
         }
     }
-    if (pb_verbose() && (method == 0x17C4 || (method >= 0x0C00 && method < 0x0C24))) {
+    if (verbose < 0)
+        verbose = pb_verbose();
+    if (verbose && (method == 0x17C4 || (method >= 0x0C00 && method < 0x0C24))) {
         static int shown;
         if (shown++ < 20)
             fprintf(stderr, "  [GPU] back-light method 0x%04X = 0x%08X\n", method, param);
@@ -4253,7 +4340,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     /* Bring-up: the first parameters each surface method carries. A wrong
      * pitch or clip is indistinguishable from a method never arriving unless
      * the values are visible. */
-    if (pb_verbose()) {
+    if (verbose) {
         static int shown[8];
         int slot = -1;
         switch (method) {
@@ -4275,6 +4362,8 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
         note_unhandled(method, param);
         return;
     }
+    if (s_pure[(method & 0x1FFCu) / 4])    /* after every special case above */
+        return;
     switch (method) {
     case NV097_SET_SURFACE_CLIP_HORIZONTAL:
         s_gpu.clip_raw_h = param;
@@ -4381,6 +4470,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     case NV097_SET_FLIP_READ:
         s_gpu.flip_read = param;
         InterlockedExchange(&s_flip_retired, 0);
+        s_flip_pending = 0;
         return;
 
     case NV097_SET_FLIP_WRITE:
@@ -4396,6 +4486,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
                          ? (s_gpu.flip_write + 1) % s_gpu.flip_modulo
                          : s_gpu.flip_write + 1;
         s_gpu.flips++;
+        s_flip_pending++;
         /* Verbose runs: the ranked unhandled-method report every 600 flips,
          * so a run that is killed rather than exits still leaves one. */
         if (pb_verbose() && s_gpu.flips % 600 == 0)
@@ -4411,9 +4502,12 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
              * NFSU2's PersistDisplay then waited on a flip whose vblank had
              * gone by. */
             ULONGLONG give_up = GetTickCount64() + 250;
+            uint64_t t0 = xw_now();
+            __atomic_add_fetch(&s_xw_stalls, 1, __ATOMIC_RELAXED);
             for (;;) {
+                int ahead = g_nv2a_flip_ahead;
                 flip_apply_retired();
-                if (s_gpu.flip_read != s_gpu.flip_write)
+                if (ahead >= 0 ? s_flip_pending <= ahead : s_gpu.flip_read != s_gpu.flip_write)
                     break;
                 if (GetTickCount64() > give_up) {
                     static unsigned timeouts;
@@ -4430,9 +4524,24 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
                     s_gpu.flip_read = s_gpu.flip_modulo
                                     ? (s_gpu.flip_read + 1) % s_gpu.flip_modulo
                                     : s_gpu.flip_read + 1;
+                    if (s_flip_pending > 0)
+                        s_flip_pending--;
                     break;
                 }
                 WaitForSingleObject(driver_event(), 1);
+            }
+            __atomic_add_fetch(&s_xw_stall_ns, xw_now() - t0, __ATOMIC_RELAXED);
+            {
+                /* RECOMP_FLIP_PENDING_TRACE=1: the pending count after each
+                 * stall, every 120th (it must stay within 0..ahead). */
+                static int tr = -1;
+                static unsigned n;
+                if (tr < 0)
+                    tr = getenv("RECOMP_FLIP_PENDING_TRACE") != NULL;
+                if (tr && n++ % 120 == 0)
+                    fprintf(stderr, "  [PB] flip stall %u: pending %d (ahead %d), read %u write %u mod %u\n",
+                            n, s_flip_pending, g_nv2a_flip_ahead, s_gpu.flip_read, s_gpu.flip_write,
+                            s_gpu.flip_modulo);
             }
         } else {
             /* The stall ends when the buffer being read is the one just
@@ -4571,6 +4680,8 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
             a->stride = (param >> 8)  & 0xFF;
         } else if (!imm_vertex_method(method, param)) {
             note_unhandled(method, param);
+            if (!(method >= NV_TEX_FIRST && method <= NV_TEX_LAST) && !verbose)
+                s_pure[(method & 0x1FFCu) / 4] = 1;
         }
         break;
     }

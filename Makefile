@@ -22,7 +22,7 @@ LOGS := $(WORK)/logs
 NOW   = $(shell date +%Y%m%d_%H%M%S)
 
 # Command-line settings that the scripts read from the environment.
-export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
+export VULKAN DEBUG GEN_DEBUGINFO JOBS SECS HEADLESS GDB LTO LTO_JOBS MEMFAST NO_GAME WINDOW VIDEO KEEP EVERY NATIVE KEYS TRACE \
        MC3_WORK MC3_GAME_DIR MC3_MMIO_SECTIONS MC3_RECOMP_ARGS MC3_DISASM_ARGS FACTOR MIN FILES HD SCALE UI_SCALE SETTINGS GAME \
        RELEASE_DIR MC3_BUILD_ID EDITION WIN_ARCH
 
@@ -156,14 +156,14 @@ hd-upscale:  ## hd/dump -> hd/textures, new ones only (FACTOR=2|3|4, MIN=px, FIL
 	set -o pipefail; bash tools/hd_upscale.sh $(or $(FACTOR),2) 2>&1 | tee $(LOGS)/hd_upscale_$(NOW).log
 
 ## Switch
-switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work/switch_sd; HD=1: with hd/textures; NATIVE=1: local devkitPro
+switch:  ## Build the NRO in devkitPro's pinned container (switch/devkitpro-image) and stage work/switch_sd; HD=1: with hd/textures; NATIVE=1: local devkitPro; BWRAP=1: no Docker/root (bubblewrap)
 	@mkdir -p $(LOGS)
-	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),build.sh,docker_build.sh) 2>&1 | tee $(LOGS)/switch_$(NOW).log
+	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),build.sh,$(if $(filter 1,$(BWRAP)),bwrap_build.sh,docker_build.sh)) 2>&1 | tee $(LOGS)/switch_$(NOW).log
 
 nsp:  ## NSP forwarders (home-menu apps), one per edition, from switch/app.env, in the container; EDITION=usa for one, KEYS=keys/prod.keys
 	@mkdir -p $(LOGS)
 	set -o pipefail; bash switch/nsp.sh prepare 2>&1 | tee $(LOGS)/nsp_$(NOW).log
-	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),nsp.sh,docker_build.sh switch/nsp.sh) 2>&1 | tee -a $(LOGS)/nsp_$(NOW).log
+	set -o pipefail; bash switch/$(if $(filter 1,$(NATIVE)),nsp.sh,$(if $(filter 1,$(BWRAP)),bwrap_build.sh,docker_build.sh) switch/nsp.sh) 2>&1 | tee -a $(LOGS)/nsp_$(NOW).log
 
 switch-vk:  ## Switch build with Vulkan (NVK)
 	$(MAKE) switch VULKAN=1

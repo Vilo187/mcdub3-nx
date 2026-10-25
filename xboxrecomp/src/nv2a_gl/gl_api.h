@@ -30,6 +30,8 @@ typedef char          GLchar;
 typedef unsigned char GLubyte;
 typedef ptrdiff_t     GLsizeiptr;
 typedef ptrdiff_t     GLintptr;
+typedef uint64_t      GLuint64;
+typedef struct __GLsync *GLsync;
 
 #define GL_FALSE                          0
 #define GL_NO_ERROR                       0
@@ -181,6 +183,7 @@ typedef ptrdiff_t     GLintptr;
     X(void, glGenBuffers, (GLsizei, GLuint *)) \
     X(void, glBindBuffer, (GLenum, GLuint)) \
     X(void, glBufferData, (GLenum, GLsizeiptr, const void *, GLenum)) \
+X(void, glDeleteBuffers, (GLsizei, const GLuint *)) \
 X(void, glBufferSubData, (GLenum, GLintptr, GLsizeiptr, const void *)) \
 X(void *, glMapBufferRange, (GLenum, GLintptr, GLsizeiptr, GLbitfield)) \
 X(GLboolean, glUnmapBuffer, (GLenum)) \
@@ -198,7 +201,25 @@ X(GLboolean, glUnmapBuffer, (GLenum)) \
     X(void, glProgramBinary, (GLuint, GLenum, const void *, GLsizei)) \
     X(void, glProgramParameteri, (GLuint, GLenum, GLint)) \
     X(void, glTexParameterf, (GLenum, GLenum, GLfloat)) \
-    X(void, glGenerateMipmap, (GLenum))
+    X(void, glGenerateMipmap, (GLenum)) \
+    X(const GLubyte *, glGetStringi, (GLenum, GLuint)) \
+    X(void, glBufferStorage, (GLenum, GLsizeiptr, const void *, GLbitfield)) \
+    X(GLsync, glFenceSync, (GLenum, GLbitfield)) \
+    X(GLenum, glClientWaitSync, (GLsync, GLbitfield, GLuint64)) \
+    X(void, glDeleteSync, (GLsync)) \
+    X(void, glVertexAttribFormat, (GLuint, GLint, GLenum, GLboolean, GLuint)) \
+    X(void, glVertexAttribBinding, (GLuint, GLuint)) \
+    X(void, glBindVertexBuffer, (GLuint, GLuint, GLintptr, GLsizei))
+/* Persistent mapping (GL 4.4 / ARB_buffer_storage) and fences. */
+#define GL_EXTENSIONS                     0x1F03
+#define GL_NUM_EXTENSIONS                 0x821D
+#define GL_MAP_PERSISTENT_BIT             0x0040
+#define GL_MAP_COHERENT_BIT               0x0080
+#define GL_DYNAMIC_STORAGE_BIT            0x0100
+#define GL_SYNC_GPU_COMMANDS_COMPLETE     0x9117
+#define GL_SYNC_FLUSH_COMMANDS_BIT        0x00000001
+#define GL_TIMEOUT_EXPIRED                0x911B
+#define GL_WAIT_FAILED                    0x911D
 #define GL_TEXTURE_BASE_LEVEL             0x813C
 #define GL_TEXTURE_MAX_LEVEL              0x813D
 #define GL_TEXTURE_LOD_BIAS               0x8501
@@ -293,6 +314,7 @@ int nv2a_gl_load(void *(*getproc)(const char *name));
 #define glBindBuffer             p_glBindBuffer
 #define glBufferData             p_glBufferData
 #define glBufferSubData          p_glBufferSubData
+#define glDeleteBuffers          p_glDeleteBuffers
 #define glMapBufferRange         p_glMapBufferRange
 #define glUnmapBuffer            p_glUnmapBuffer
 #define glVertexAttribPointer    p_glVertexAttribPointer
@@ -306,5 +328,13 @@ int nv2a_gl_load(void *(*getproc)(const char *name));
 #define glProgramParameteri      p_glProgramParameteri
 #define glTexParameterf          p_glTexParameterf
 #define glGenerateMipmap         p_glGenerateMipmap
+#define glGetStringi             p_glGetStringi
+#define glBufferStorage          p_glBufferStorage
+#define glFenceSync              p_glFenceSync
+#define glClientWaitSync         p_glClientWaitSync
+#define glDeleteSync             p_glDeleteSync
+#define glVertexAttribFormat     p_glVertexAttribFormat
+#define glVertexAttribBinding    p_glVertexAttribBinding
+#define glBindVertexBuffer       p_glBindVertexBuffer
 
 #endif /* NV2A_GL_API_H */

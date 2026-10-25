@@ -299,10 +299,15 @@ void recomp_preempt(void);
 static inline void recomp_spin_hint(void)
 {
     static RECOMP_TLS unsigned turns;
+    /* A compiler barrier too: with plain guest memory (-DRECOMP_MEM_VOLATILE=)
+     * the loop's load of the flag it waits on must not be hoisted. */
 #if defined(__aarch64__)
-    __asm__ __volatile__("yield");
+    __asm__ __volatile__("yield" ::: "memory");
 #elif defined(__x86_64__) || defined(__i386__)
     __builtin_ia32_pause();
+    __asm__ __volatile__("" ::: "memory");
+#else
+    __asm__ __volatile__("" ::: "memory");
 #endif
     if ((++turns & 15u) == 0)
         recomp_spin_wake();         /* someone is waiting: answer now */
@@ -310,6 +315,16 @@ static inline void recomp_spin_hint(void)
         recomp_spin_yield();        /* lets other guest threads and ISRs run */
 }
 #define RECOMP_SPIN_HINT() recomp_spin_hint()
+#endif
+
+/* On every backward goto (tools/recomp/loop_barrier.py). With plain guest
+ * memory (-DRECOMP_MEM_VOLATILE= -DRECOMP_MEM_PLAIN) a compiler barrier, so a loop re-reads
+ * memory each turn as the x86 code does; with volatile memory (the default)
+ * nothing. */
+#if defined(RECOMP_MEM_PLAIN) && defined(__GNUC__)
+#  define RECOMP_LOOP_BARRIER() __asm__ __volatile__("" ::: "memory")
+#else
+#  define RECOMP_LOOP_BARRIER() ((void)0)
 #endif
 
 #include <setjmp.h>
