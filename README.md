@@ -5,22 +5,45 @@
 <hr>
 
 > [!NOTE]
-> **This is a fork** of [laureladastra/mcdub3-nx](https://github.com/laureladastra/mcdub3-nx), based on its **v0.2.0** release, focused on Switch performance (a 60 FPS driving mode) and an in-game Extras menu. Upstream has moved on since (Remix edition, packaging); this branch does not include those changes.
-> **The changes in this fork were vibe-coded with Claude Opus 5.5** (Anthropic), working in Claude Code on the repository and testing on a real Switch (HOS 21.2, Atmosphère). Expect rough edges; read the code before you trust it.
+> **This is a fork** of [laureladastra/mcdub3-nx](https://github.com/laureladastra/mcdub3-nx), based on its **v0.2.0** release: a **60 FPS driving mode** for the Switch, a long list of CPU optimisations, and an in-game **Extras menu** (free camera, vehicle switcher, cheats, graphics and world settings).
+>
+> 🤖 **Vibe-coded with Claude Opus 5.5.** Every change in this fork was written by Claude Opus 5.5 (Anthropic) in Claude Code, profiled on Linux and tested on a real Nintendo Switch (HOS 21.2, Atmosphère) that Claude drove over the network. Expect rough edges and read the code before you trust it.
 
-## About this fork
+## ⚡ About this fork
+
+| | Upstream v0.2.0 | This fork |
+| --- | --- | --- |
+| Switch, no overclock | ~20 FPS (30 FPS cap) | ~30 FPS (30 FPS mode) |
+| Switch, overclocked | 20-25 FPS (30 FPS cap) | **45-60 FPS** in the 60 FPS driving mode (dense city at the race start ~45-55, open roads 60) |
+| Extras menu, free camera, vehicle switcher | - | ✅ |
+| Mods folder (`mods/`) | - | ✅ |
+
+Measured in a career race on a Switch V1. The complete list of changes is in **[CHANGELOG.md](CHANGELOG.md)**.
+
+<p align="center">
+  <img src="docs/fork/extras-main.jpg" width="32%" alt="Extras menu">
+  <img src="docs/fork/extras-graphics.jpg" width="32%" alt="Graphics page with the 60 FPS mode">
+  <img src="docs/fork/extras-vehicle.jpg" width="32%" alt="Vehicle switcher">
+</p>
+<p align="center">
+  <img src="docs/fork/extras-world.jpg" width="32%" alt="World page">
+  <img src="docs/fork/extras-developer.jpg" width="32%" alt="Rockstar's developer switches">
+  <img src="docs/fork/extras-cheats.jpg" width="32%" alt="Career cheats">
+</p>
+<p align="center"><img src="docs/fork/freecam.jpg" width="80%" alt="Free camera above San Diego"></p>
+<p align="center"><sub>The Extras menu (R3 in the pause menu) and the free camera. Screenshots from the Linux build.</sub></p>
 
 ### No game data
 
-Nothing from the game is in this repository: no disc files, no `default.xbe`, no lifted C (`work/gen/`, generated on your machine by `make lift`), no keys, no cover art. The `.gitignore` keeps `game/`, `work/`, `keys/` and personal assets out. You need your own copy of the original Xbox disc.
+Nothing from the game is in this repository: no disc files, no `default.xbe`, no lifted C (`work/gen/`, generated on your machine by `make lift`), no keys, no cover art, and no prebuilt NROs (they contain code translated from the game). The `.gitignore` keeps `game/`, `work/`, `keys/` and personal assets out. You need your own copy of the original Xbox disc.
 
 ### Which game version
 
-*Midnight Club 3: DUB Edition* for the **original Xbox**, **NTSC-U (USA)** disc, `default.xbe` matching Redump's USA entry (title TT-121). The boot check accepts that disc and the European (PAL) one ([config/xbe_editions.h](config/xbe_editions.h)); this fork was only tested with the **USA** disc.
+*Midnight Club 3: DUB Edition* for the **original Xbox**, **NTSC-U (USA)** disc, `default.xbe` matching Redump's USA entry (title TT-121). The boot check also accepts the European (PAL) disc ([config/xbe_editions.h](config/xbe_editions.h)); this fork was only tested with the **USA** disc. Upstream's newer *Remix* support is not part of this branch.
 
 ### Unpacking the game (short)
 
-1. Make an ISO of **your own** disc (any Xbox-capable dumping method; the result should match Redump's USA entry).
+1. Make an ISO of **your own** disc (any Xbox-capable dumping method; it should match Redump's USA entry).
 2. Unpack it into the repo's `game/` folder:
 
    ```sh
@@ -28,29 +51,13 @@ Nothing from the game is in this repository: no disc files, no `default.xbe`, no
    ```
 
    `game/` then holds `default.xbe` and the disc's folders, not the ISO.
-3. Lift the code and build (see the platform sections below): `make lift`, then `make build run` on a computer or `make switch` for the Switch NRO.
-4. Switch: copy `game/` to `sdmc:/switch/mcdub3-nx/game/` and the NRO to `sdmc:/switch/mcdub3-nx/`. Start it with a full-memory launch (hbmenu over a game with R held, or a forwarder / sphaira as an application), not the album applet.
+3. Lift the code and build (details in the platform sections below): `make lift`, then `make build run` on a computer, or `make switch` for the Switch NRO (`make switch LTO=1 MEMFAST=1` for the fastest one; `BWRAP=1` builds without Docker or root).
+4. Switch: copy `game/` to `sdmc:/switch/mcdub3-nx/game/` and the NRO to `sdmc:/switch/mcdub3-nx/`. Start it as an application (hbmenu over a game with R held, a forwarder, or sphaira), not from the album applet. Turn on *Extras → Graphics → Frame Rate → 60 FPS Driving* (or `MC3_FPS60=1` in `mcdub3_env.txt`) with your overclock profile.
 
-### What this fork changes
+### Known limits
 
-Measured on a Switch (V1) in a career race; numbers are frames per second.
-
-| | Upstream v0.2.0 | This fork |
-| --- | --- | --- |
-| Without overclock | ~20 (30 FPS cap) | ~30 (30 FPS mode) |
-| With overclock | 20-25 (30 FPS cap) | 45-60 in the 60 FPS driving mode |
-
-Performance (all switchable, see the comments in the code):
-
-- **60 FPS driving mode**: the game's fixed 1/30 s step follows the real frame time, so driving speed is right at any rate; flips at interval 1, triple buffering in the executor, and a 120 Hz virtual vblank so a late frame waits less.
-- **GPU path**: zero-copy vertex data (the executor writes straight into a persistently mapped GL buffer), persistent vertex/index rings, vertex attribute bindings set once, only changed render state and uniforms sent to the driver, version-numbered shader constants, cached texture and surface lookups, copy-and-compare instead of hashing for rewritten textures.
-- **CPU / threads**: the game's timer thread and D3D's vblank handler no longer spin; guest-lock wake-ups and condition-variable broadcasts only when someone waits (each one is a system call on Horizon); `getenv` removed from per-call paths; unused per-method statistics made optional; a learned fast path for pushbuffer methods that only update the register shadow; the lifted code reads its thread pointer from `TPIDR_EL0` instead of a libnx call per register access (`MC3_TP_EL0`).
-- **Build**: hidden visibility, `-fomit-frame-pointer`, `-fno-plt`, optional LTO and plain (non-volatile) guest memory with loop barriers (`make switch LTO=1 MEMFAST=1`), rootless Switch builds with bubblewrap (`BWRAP=1`).
-- **Diagnostics**: `MC3_PERF=10` writes where every thread spends its time (GL thread, executor waits, guest lock); `MC3_PROF=1` is a sampling profiler on the Switch (`prof.bin` and `prof_threads.txt` on the SD card; `python3 tools/prof_nx.py prof.bin prof_threads.txt work/elf/<build>.elf` names the hot functions).
-
-Features: the **Extras menu** (R3 in the pause menu) with free camera, frame rate counter, vehicle switcher (all 69 vehicles, including unused police cars and bikes), graphics, world (traffic, pedestrians, weather, slow motion), developer switches and career-only cheats; a **mods folder** (`mods/`) for replacement files, textures and settings; `MC3_ARGS` for Rockstar's developer parameters. Details are in the [Extras Menu](#extras-menu) and [Mods](#mods) sections.
-
-Known limits: the free camera shows only the part of the city loaded around the car; a vehicle change applies from the next race, not instantly.
+- The free camera shows only the part of the city that is loaded around the car.
+- A vehicle change applies from the next race or garage exit, not instantly.
 
 The upstream README follows.
 

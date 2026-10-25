@@ -158,6 +158,7 @@ static void fence_spin_hook(void)
 }
 
 extern void sub_003DF4D0_gen(void);
+extern volatile int g_mc3_fps60;              /* below: the 60 fps mode */
 extern void nv2a_pb_set_semaphore_target(uint32_t guest_va);
 void sub_003DF4D0(void)
 {
@@ -165,6 +166,27 @@ void sub_003DF4D0(void)
     static int fix = -1;
     uint32_t save_target = t_fence_target, save_saved = t_fence_saved;
     int save_fixed = t_fence_fixed;
+
+    {
+        /* sub_000A97B0, which picks one of the game's render objects, calls
+         * D3D's BlockUntilIdle first (sub_003DB2E0 -> sub_003DF7E0 -> here,
+         * returning to 0x000A97D5): twice a frame, 120 times a second at
+         * 60 fps. On the Xbox the GPU is idle by then anyway; here it drains
+         * the executor and the GL thread each time, and the main thread waited
+         * ~390 ms a second in it (Linux, 2026-10-25). Nothing the game does
+         * next reads what the GPU wrote, and our GL thread reads textures up to
+         * two frames late regardless, so the wait buys nothing here.
+         * MC3_IDLE_WAIT=1 keeps it. */
+        static int keep = -1;
+        if (keep < 0) {
+            const char *e = getenv("MC3_IDLE_WAIT");
+            keep = e && *e == '1';
+        }
+        if (!keep && MEM32(g_esp) == 0x003DF7F0u && MEM32(g_esp + 12) == 0x000A97D5u) {
+            g_esp += 4 + 8;                    /* ret 8: return address, time, flags */
+            return;
+        }
+    }
 
     if (!sem_va) {
         uint32_t device = MEM32(0x003ECAE8u);
@@ -185,10 +207,73 @@ void sub_003DF4D0(void)
         sub_003DF4D0_gen();
         return;
     }
+    {
+        /* D3D's Swap (sub_003E2520, returning to 0x003E2580 / 0x003E25C0)
+         * waits for the previous frame's fence ([device + 0x1974 + ((n-1)&1)*4]):
+         * the CPU at most one frame ahead of the GPU. Our GPU is a pushbuffer
+         * executor and a GL thread that work in bursts, and MC3's main thread
+         * waited ~2.4 ms a frame there (100-140 ms/s at 50-57 fps on the
+         * console) while the executor slept a third of the time. In the 60 fps
+         * mode it waits for the fence of the frame before that (the other
+         * entry of D3D's two, not yet overwritten): two frames ahead, one
+         * frame more input latency. Resources keep their own fences, so a
+         * Lock still waits for the GPU. MC3_FRAMES_AHEAD=1: as before. */
+        static int ahead = -1;
+        uint32_t ret = MEM32(g_esp);
+        if (ahead < 0) {
+            const char *e = getenv("MC3_FRAMES_AHEAD");
+            ahead = e && *e ? atoi(e) : 2;
+        }
+        if (ahead >= 2 && g_mc3_fps60 && (ret == 0x003E2580u || ret == 0x003E25C0u)) {
+            uint32_t dev = MEM32(0x003ECAE8u);
+            if (dev) {
+                uint32_t n = MEM32(dev + 0x2478u);
+                MEM32(g_esp + 4) = MEM32(dev + 0x1974u + (n & 1u) * 4u);
+            }
+        }
+    }
     t_fence_target = MEM32(g_esp + 4);         /* (time, flags), stdcall */
     t_fence_fixed = 0;
     recomp_set_spin_hook(fence_spin_hook);
+    {
+        /* MC3_FENCE_STATS=1: every 10 s, the fence waits by the caller of
+         * this function -- D3D's Swap, a resource lock, ... -- and their time. */
+        static int stats = -1;
+        static struct { uint32_t ret, n; uint64_t us; } st[16];
+        static uint64_t last;
+        uint32_t ret = MEM32(g_esp);
+        struct timespec a, b;
+        if (ret == 0x003DF7F0u)                /* BlockUntilIdle: its caller */
+            ret = MEM32(g_esp + 12);
+        uint64_t t0, us;
+        int k;
+        if (stats < 0) {
+            const char *e = getenv("MC3_FENCE_STATS");
+            stats = e && *e == '1';
+        }
+        if (stats) {
+            clock_gettime(CLOCK_MONOTONIC, &a);
+            t0 = (uint64_t)a.tv_sec * 1000000u + (uint64_t)a.tv_nsec / 1000u;
+            sub_003DF4D0_gen();
+            clock_gettime(CLOCK_MONOTONIC, &b);
+            us = (uint64_t)b.tv_sec * 1000000u + (uint64_t)b.tv_nsec / 1000u - t0;
+            for (k = 0; k < 16 && st[k].ret && st[k].ret != ret; k++) { }
+            if (k < 16) { st[k].ret = ret; st[k].n++; st[k].us += us; }
+            if (!last) last = t0;
+            if (t0 - last > 10000000u) {
+                fprintf(stderr, "[fence] by caller (10 s):");
+                for (k = 0; k < 16 && st[k].ret; k++)
+                    if (st[k].us > 1000)
+                        fprintf(stderr, " %08X %u x %.1f ms", st[k].ret, st[k].n, st[k].us / 1000.0);
+                fprintf(stderr, "\n");
+                memset(st, 0, sizeof st);
+                last = t0;
+            }
+            goto waited;
+        }
+    }
     sub_003DF4D0_gen();
+waited:
     if (t_fence_fixed)
         fence_cas(s_fence_sem_va, t_fence_target, t_fence_saved);
     t_fence_target = save_target;
