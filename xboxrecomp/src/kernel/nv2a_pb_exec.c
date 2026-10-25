@@ -438,6 +438,51 @@ static uint32_t s_sem_va;
 static uint32_t s_vtx_epoch;            /* Nv2aRawBatch.vtx_epoch */
 void nv2a_pb_set_semaphore_target(uint32_t guest_va) { s_sem_va = guest_va; }
 
+/* Waiting for the GPU's semaphore without spinning. D3D's fence wait polls
+ * the semaphore in a loop that yields at every turn -- 200,000 times a
+ * second in MC3, each a lock hand-over and system calls, on the cores the
+ * executor and the GL thread need to get there. A project's spin hook can
+ * sleep here instead (src/recomp_manual.c): woken by the executor's write,
+ * at the latest after `ms`. */
+static CRITICAL_SECTION s_sem_cs;
+static CONDITION_VARIABLE s_sem_cv;
+static volatile LONG s_sem_init, s_sem_waiters;
+
+static void sem_init(void)
+{
+    if (InterlockedCompareExchange(&s_sem_init, 1, 0) == 0) {
+        InitializeCriticalSection(&s_sem_cs);
+        InitializeConditionVariable(&s_sem_cv);
+        InterlockedExchange(&s_sem_init, 2);
+    }
+    while (InterlockedCompareExchange(&s_sem_init, 2, 2) != 2) { }
+}
+
+static void nv2a_sem_signal(void)
+{
+    if (!InterlockedCompareExchange(&s_sem_waiters, 0, 0))
+        return;
+    EnterCriticalSection(&s_sem_cs);
+    WakeAllConditionVariable(&s_sem_cv);
+    LeaveCriticalSection(&s_sem_cs);
+}
+
+/* 1 once the semaphore at `va` has reached `target` (wrapping compare). */
+int nv2a_sem_wait(uint32_t va, uint32_t target, unsigned ms)
+{
+    volatile uint32_t *p = (volatile uint32_t *)((uint8_t *)xbox_GetMemoryOffset() + va);
+    int ok;
+    sem_init();
+    EnterCriticalSection(&s_sem_cs);
+    InterlockedIncrement(&s_sem_waiters);
+    if ((int32_t)(*p - target) < 0)
+        SleepConditionVariableCS(&s_sem_cv, &s_sem_cs, ms);
+    InterlockedDecrement(&s_sem_waiters);
+    ok = (int32_t)(*p - target) >= 0;
+    LeaveCriticalSection(&s_sem_cs);
+    return ok;
+}
+
 /* Slot + 1 of each method in s_unhandled: this runs millions of times a
  * second, so no search. The report sorts s_unhandled and rebuilds it. */
 static uint16_t s_unhandled_slot[0x2000 / 4];
@@ -4219,6 +4264,7 @@ void nv2a_pb_exec_method(uint32_t subch, uint32_t method, uint32_t param)
     if (method == 0x1D70 && s_sem_va) {
         uint8_t *mem = (uint8_t *)xbox_GetMemoryOffset();
         *(volatile uint32_t *)(mem + s_sem_va) = param;
+        nv2a_sem_signal();
         return;
     }
     /* The pattern object's SET_MONOCHROME_COLOR0 (0x0310) latches into

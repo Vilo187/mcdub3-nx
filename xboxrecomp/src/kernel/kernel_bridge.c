@@ -883,12 +883,53 @@ static void gil_yield_wait(void)
 static RECOMP_TLS void (*t_spin_hook)(void);
 void recomp_set_spin_hook(void (*fn)(void)) { t_spin_hook = fn; }
 
+/* And what the yield itself does for such a loop: a project can sleep until
+ * the condition it waits for may have changed (MC3: the GPU semaphore,
+ * nv2a_sem_wait) instead of a bare yield. NULL: SwitchToThread. */
+static RECOMP_TLS void (*t_spin_wait)(void);
+void recomp_set_spin_wait(void (*fn)(void)) { t_spin_wait = fn; }
+
 /* RECOMP_SPIN_HINT's periodic yield: a poll loop waits for another thread,
  * an interrupt or a DPC -- all of which need the lock. */
+/* RECOMP_YIELD_STATS=1: every 10 s, the places a guest thread yielded
+ * from (the return address into lifted code, as an offset from this
+ * function: add the ELF's address of xbox_yield_stat to name it). */
+void xbox_yield_stat(void *ra)
+{
+    static int on = -1;
+    static struct { uintptr_t ra; unsigned n; } st[32];
+    static DWORD last;
+    DWORD now;
+    int k;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_YIELD_STATS");
+        on = e && *e == '1';
+    }
+    if (!on || !t_gil_main)
+        return;
+    for (k = 0; k < 32 && st[k].ra && st[k].ra != (uintptr_t)ra; k++) { }
+    if (k < 32) { st[k].ra = (uintptr_t)ra; st[k].n++; }
+    now = GetTickCount();
+    if (!last) last = now;
+    if (now - last >= 10000) {
+        fprintf(stderr, "[yield] main thread yields by place (10 s, offset from xbox_yield_stat):");
+        for (k = 0; k < 32 && st[k].ra; k++)
+            if (st[k].n >= 100)
+                fprintf(stderr, " %+lld x%u", (long long)(st[k].ra - (uintptr_t)xbox_yield_stat), st[k].n);
+        fprintf(stderr, "\n");
+        memset(st, 0, sizeof st);
+        last = now;
+    }
+}
+
 void recomp_spin_yield(void)
 {
+    xbox_yield_stat(__builtin_return_address(0));
     int d = xbox_gil_suspend();
-    SwitchToThread();
+    if (t_spin_wait)
+        t_spin_wait();
+    else
+        SwitchToThread();
     xbox_gil_resume(d);
     if (t_spin_hook)
         t_spin_hook();
@@ -2088,6 +2129,7 @@ static HANDLE bridge_resolve_handle(uint32_t token);
 
 static CRITICAL_SECTION   g_kdisp_cs;
 static CONDITION_VARIABLE g_kdisp_cv;
+static int g_kdisp_waiters;                 /* asleep on g_kdisp_cv, under g_kdisp_cs */
 static volatile LONG      g_kdisp_state;   /* 0 = not yet, 1 = busy, 2 = ready */
 
 static void kdisp_init(void)
@@ -2209,7 +2251,9 @@ static NTSTATUS kdisp_wait(uint32_t count, const uint32_t *vas,
                 if (ms - spent < slice)
                     slice = ms - spent;
             }
+            g_kdisp_waiters++;
             SleepConditionVariableCS(&g_kdisp_cv, &g_kdisp_cs, slice);
+            g_kdisp_waiters--;
         }
     }
 }
@@ -2223,7 +2267,8 @@ static int32_t kdisp_signal(uint32_t va, int32_t add, int set_to_one)
     EnterCriticalSection(&g_kdisp_cs);
     prev = (int32_t)BRIDGE_MEM32(va + 4);
     BRIDGE_MEM32(va + 4) = (uint32_t)(set_to_one ? 1 : prev + add);
-    WakeAllConditionVariable(&g_kdisp_cv);
+    if (g_kdisp_waiters)                   /* a system call on Horizon */
+        WakeAllConditionVariable(&g_kdisp_cv);
     LeaveCriticalSection(&g_kdisp_cs);
     return prev;
 }

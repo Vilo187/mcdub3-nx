@@ -132,6 +132,18 @@ static uint32_t fence_cas(uint32_t va, uint32_t expect, uint32_t want)
     return expect;                            /* the value found */
 }
 
+/* While D3D waits for the GPU (sub_003DF4D0's poll loop): sleep until the
+ * executor writes the semaphore, at most 2 ms, instead of yielding -- the
+ * loop turned 200,000 times a second, each turn a lock hand-over and system
+ * calls on the cores the executor and the GL thread need. MC3_FENCE_SLEEP=0:
+ * yield as before. */
+extern int nv2a_sem_wait(uint32_t va, uint32_t target, unsigned ms);
+extern void recomp_set_spin_wait(void (*fn)(void));
+static void fence_spin_wait(void)
+{
+    (void)nv2a_sem_wait(s_fence_sem_va, t_fence_target, 2);
+}
+
 static void fence_spin_hook(void)
 {
     uint32_t gpu;
@@ -236,6 +248,15 @@ void sub_003DF4D0(void)
     t_fence_fixed = 0;
     recomp_set_spin_hook(fence_spin_hook);
     {
+        static int sleep = -1;
+        if (sleep < 0) {
+            const char *e = getenv("MC3_FENCE_SLEEP");
+            sleep = !(e && *e == '0');
+        }
+        if (sleep)
+            recomp_set_spin_wait(fence_spin_wait);
+    }
+    {
         /* MC3_FENCE_STATS=1: every 10 s, the fence waits by the caller of
          * this function -- D3D's Swap, a resource lock, ... -- and their time. */
         static int stats = -1;
@@ -280,6 +301,7 @@ waited:
     t_fence_saved = save_saved;
     t_fence_fixed = save_fixed;
     recomp_set_spin_hook(save_target ? fence_spin_hook : NULL);
+    recomp_set_spin_wait(save_target ? fence_spin_wait : NULL);
 }
 
 /* ── Differential tests (src/difftest.c, tools/difftest.py) ── */

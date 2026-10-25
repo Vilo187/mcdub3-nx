@@ -711,6 +711,25 @@ static void unswizzle32(const uint32_t *src, uint32_t *out, uint32_t w, uint32_t
 static uint32_t s_palette_reg, s_palette_va;   /* stage being bound */
 static const Nv2aRawBatch *s_batch;          /* draw being executed */
 
+/* The byte order paletted textures are decoded to and uploaded in: what
+ * the driver stores without converting. nouveau (Switch) converted GL_BGRA
+ * data texel by texel (~4% of the GL thread with MC3's HUD atlas rewritten
+ * every frame); Intel's Mesa is the other way round (58 -> 49 fps on Linux
+ * with RGBA). RECOMP_GL_PAL_RGBA=0/1 overrides. */
+static int pal_rgba(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("RECOMP_GL_PAL_RGBA");
+#if defined(__SWITCH__)
+        on = !(e && *e == '0');
+#else
+        on = e && *e == '1';
+#endif
+    }
+    return on;
+}
+
 static int decode_indexed(uint32_t va, uint32_t w, uint32_t h, uint32_t *out)
 {
     const uint8_t *mem = (const uint8_t *)xbox_GetMemoryOffset();
@@ -724,8 +743,14 @@ static int decode_indexed(uint32_t va, uint32_t w, uint32_t h, uint32_t *out)
 
     if (!(s_palette_reg & ~0x3Fu))
         return 0;
-    /* The palette once into a local table (index 0 for one past its end). */
+    /* The palette once into a local table (index 0 for one past its end),
+     * in the byte order the driver takes as it is (pal_rgba). */
     memcpy(pal, mem + pal_va, entries * 4);
+    if (pal_rgba())
+        for (x = 0; x < entries; x++) {
+            uint32_t v = pal[x];
+            pal[x] = (v & 0xFF00FF00u) | ((v >> 16) & 0xFFu) | ((v & 0xFFu) << 16);
+        }
     for (x = entries; x < 256; x++)
         pal[x] = pal[0];
     fast = swizzle_tables(w, h);
@@ -1162,8 +1187,12 @@ static GLuint tex_get(uint32_t va, uint32_t color, uint32_t w, uint32_t h,
         gl_step_done("texture upload");
     } else if (s_decode && (color == 0x0B ? decode_indexed(va, w, h, s_decode)
                                     : nv2a_backend_decode_texture(&nt, s_decode))) {
+        GLenum order = color == 0x0B && pal_rgba() ? GL_RGBA : GL_BGRA;
+        /* Always new storage: refreshing it in place (glTexSubImage2D) made
+         * the driver wait for the GPU to finish with the old contents -- the
+         * HUD atlas changes every frame -- and was slower. */
         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)w, (GLsizei)h, 0,
-                     GL_BGRA, GL_UNSIGNED_BYTE, s_decode);
+                     order, GL_UNSIGNED_BYTE, s_decode);
         tex_account(t, w * h * 4);
         tex_mips_generate(t);
         gl_step_done("texture upload");
@@ -1243,6 +1272,13 @@ static void tex_hd(GlTex *t)
         nt.addr_u = nt.addr_v = 1;
         ok = t->color == 0x0B ? decode_indexed(t->va, t->w, t->h, s_decode)
                               : nv2a_backend_decode_texture(&nt, s_decode);
+        if (ok && t->color == 0x0B && pal_rgba()) {   /* back to BGRA for the dump */
+            size_t i, n = (size_t)t->w * t->h;
+            for (i = 0; i < n; i++) {
+                uint32_t v = s_decode[i];
+                s_decode[i] = (v & 0xFF00FF00u) | ((v >> 16) & 0xFFu) | ((v & 0xFFu) << 16);
+            }
+        }
         if (ok)
             hd_pack_dump(key, s_decode, (int)t->w, (int)t->h);
     }
@@ -5705,10 +5741,10 @@ static void qv_reclaim(int flush)
 
 static void *q_gl_thread(void *arg)
 {
-    extern void xbox_nx_spread_thread(void);
+    extern void xbox_nx_pin_gl_thread(void);
     extern void xbox_nx_track_thread(void *entry);
     (void)arg;
-    xbox_nx_spread_thread();
+    xbox_nx_pin_gl_thread();               /* a core of its own (Switch) */
     xbox_nx_track_thread((void *)q_gl_thread);
     for (;;) {
         size_t avail = __atomic_load_n(&s_q_head, __ATOMIC_SEQ_CST) - s_q_tail;

@@ -275,6 +275,10 @@ typedef struct w32_object {
     LONG            refcount;
     pthread_mutex_t lock;
     pthread_cond_t  cond;
+    /* Threads asleep on cond, under lock: signalling an object nobody waits
+     * on skips the broadcast, a system call on Horizon (MC3's main thread
+     * sets events for its worker threads thousands of times a second). */
+    int             waiters;
 
     /* event */
     int             signaled;
@@ -601,8 +605,10 @@ static DWORD wait_single(w32_object *o, DWORD ms)
             until = o->waitable_due_time;
             bounded = 1;
         }
+        o->waiters++;
         int rc = bounded ? pthread_cond_timedwait(&o->cond, &o->lock, &until)
                          : pthread_cond_wait(&o->cond, &o->lock);
+        o->waiters--;
         if (rc == ETIMEDOUT && timed && !timespec_before(&until, &ts)) {
             result = WAIT_TIMEOUT; break;
         }
@@ -715,7 +721,8 @@ BOOL SetEvent(HANDLE h)
     if (!o || o->kind != K_EVENT) return FALSE;
     pthread_mutex_lock(&o->lock);
     o->signaled = 1;
-    pthread_cond_broadcast(&o->cond);
+    if (o->waiters)
+        pthread_cond_broadcast(&o->cond);
     pthread_mutex_unlock(&o->lock);
     return TRUE;
 }
@@ -768,7 +775,8 @@ BOOL ReleaseSemaphore(HANDLE h, LONG releaseCount, PLONG previousCount)
     if (previousCount) *previousCount = (LONG)o->sem_count;
     o->sem_count += releaseCount;
     if (o->sem_max && o->sem_count > o->sem_max) o->sem_count = o->sem_max;
-    pthread_cond_broadcast(&o->cond);
+    if (o->waiters)
+        pthread_cond_broadcast(&o->cond);
     pthread_mutex_unlock(&o->lock);
     return TRUE;
 }
@@ -806,7 +814,8 @@ BOOL ReleaseMutex(HANDLE h)
     if (--o->mtx_recursion <= 0) {
         o->mtx_owner = 0;
         o->mtx_recursion = 0;
-        pthread_cond_broadcast(&o->cond);
+        if (o->waiters)
+            pthread_cond_broadcast(&o->cond);
     }
     pthread_mutex_unlock(&o->lock);
     return TRUE;
@@ -913,6 +922,34 @@ void xbox_nx_raise_host_thread(void)
 }
 
 #if defined(__SWITCH__)
+/* The GL thread's core of its own (RECOMP_NX_GL_CORE, default 0; -1: shared
+ * like any other thread). In a race on the console it and the game's thread
+ * were both the limit, and the GL thread's time per draw rose from 12 to
+ * 15-17 us when the game thread got busier: it shared its core with the
+ * audio and helper threads. Every other thread keeps off that core. */
+static int nx_gl_core(void)
+{
+    static int core = -2;
+    if (core == -2) {
+        const char *e = getenv("RECOMP_NX_GL_CORE");
+        core = e && *e ? atoi(e) : 0;
+        if (core > 2) core = -1;
+    }
+    return core;
+}
+
+void xbox_nx_spread_thread(void);
+void xbox_nx_pin_gl_thread(void)
+{
+    int core = nx_gl_core();
+    if (core < 0) {
+        xbox_nx_spread_thread();
+        return;
+    }
+    svcSetThreadCoreMask(CUR_THREAD_HANDLE, core, 1u << core);
+    fprintf(stderr, "  [NX] GL thread on core %d of its own (RECOMP_NX_GL_CORE)\n", core);
+}
+
 void xbox_nx_spread_thread(void)
 {
     static int next = 1;                 /* core 0 is the loader's main thread */
@@ -922,6 +959,8 @@ void xbox_nx_spread_thread(void)
     if (R_FAILED(svcGetInfo(&mask, InfoType_CoreMask, CUR_PROCESS_HANDLE, 0)))
         return;
     mask &= 0x7u;
+    if (nx_gl_core() >= 0 && (mask & ~(1u << nx_gl_core())) & ((mask & ~(1u << nx_gl_core())) - 1))
+        mask &= ~(1u << nx_gl_core());   /* the GL thread's alone */
     if (xbox_guest_core() >= 0 && (mask & ~(1u << xbox_guest_core())))
         mask &= ~(1u << xbox_guest_core());   /* that core is the guest's */
     if (!mask || !(mask & (mask - 1)))
@@ -1108,6 +1147,7 @@ void xbox_nx_prof_start(void)
 }
 #else
 void xbox_nx_spread_thread(void) { }
+void xbox_nx_pin_gl_thread(void) { }
 void xbox_nx_track_thread(void *entry) { (void)entry; }
 void xbox_nx_retag_thread(void *entry) { (void)entry; }
 void xbox_nx_prof_start(void) { }

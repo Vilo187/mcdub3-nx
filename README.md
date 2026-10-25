@@ -41,18 +41,9 @@ Nothing from the game is in this repository: no disc files, no `default.xbe`, no
 
 *Midnight Club 3: DUB Edition* for the **original Xbox**, **NTSC-U (USA)** disc, `default.xbe` matching Redump's USA entry (title TT-121). The boot check also accepts the European (PAL) disc ([config/xbe_editions.h](config/xbe_editions.h)); this fork was only tested with the **USA** disc. Upstream's newer *Remix* support is not part of this branch.
 
-### Unpacking the game (short)
+### Setting up the game
 
-1. Make an ISO of **your own** disc (any Xbox-capable dumping method; it should match Redump's USA entry).
-2. Unpack it into the repo's `game/` folder:
-
-   ```sh
-   make extract ISO=<your-disc.iso>
-   ```
-
-   `game/` then holds `default.xbe` and the disc's folders, not the ISO.
-3. Lift the code and build (details in the platform sections below): `make lift`, then `make build run` on a computer, or `make switch` for the Switch NRO (`make switch LTO=1 MEMFAST=1` for the fastest one; `BWRAP=1` builds without Docker or root).
-4. Switch: copy `game/` to `sdmc:/switch/mcdub3-nx/game/` and the NRO to `sdmc:/switch/mcdub3-nx/`. Start it as an application (hbmenu over a game with R held, a forwarder, or sphaira), not from the album applet. Turn on *Extras → Graphics → Frame Rate → 60 FPS Driving* (or `MC3_FPS60=1` in `mcdub3_env.txt`) with your overclock profile.
+Put **your own extracted copy** of the disc into the `game/` folder (`default.xbe` and the disc's folders, not the ISO). Then lift and build as described in the platform sections below (`make lift`, then `make build run`, or `make switch` for the Switch NRO; `make switch LTO=1 MEMFAST=1` builds the fastest one, `BWRAP=1` works without Docker or root). On the Switch the folder is `sdmc:/switch/mcdub3-nx/game/`, with the NRO beside it; turn on *Extras → Graphics → Frame Rate → 60 FPS Driving* (or `MC3_FPS60=1` in `mcdub3_env.txt`) together with your overclock profile.
 
 ### Known limits
 

@@ -38,6 +38,7 @@ On the Switch the game now runs into a plain CPU limit: in the dense city at the
 | Vertex shader constants: per-row version numbers instead of comparing 3 KB per draw | |
 | Combiner colours converted only when they change; surface lookups memoised | |
 | Texture checks: static textures every 4th frame, rewritten ones by copy-and-compare instead of hashing, linear and paletted ones included; a texture rewritten within a frame is checked at every 4th use instead of every use (MC3's HUD atlas: 24 uses, ~1 change a frame) | `RECOMP_GL_TEX_CHECK_EVERY=1`, `RECOMP_GL_TEX_EVERY_USE=1` |
+| Paletted textures decoded in the byte order the driver stores as it is: RGBA on the Switch (nouveau converted BGRA texel by texel), BGRA elsewhere | `RECOMP_GL_PAL_RGBA=0/1` |
 | Faster texture unswizzling (lookup tables) | |
 | A cheaper clock for the GL thread's own statistics | |
 
@@ -50,6 +51,9 @@ On the Switch the game now runs into a plain CPU limit: in the dense city at the
 | The guest lock wakes waiters only when someone waits (every broadcast is a system call on Horizon) | |
 | Wake-ups of the executor's helper threads once per sleep instead of at every turn of every poll loop of the game (12.7% of the main thread on the console) | |
 | The executor is woken before the game blocks on the GPU, not at its next 1 ms timeout | |
+| Events, semaphores, mutexes and the game's kernel events wake only when a thread waits on them (each wake is a system call on Horizon) | |
+| D3D's GPU fence wait sleeps until the executor writes the semaphore instead of yielding in a loop (200,000 turns a second, each a lock hand-over) | `MC3_FENCE_SLEEP=0` |
+| The GL thread gets a CPU core of its own; every other thread keeps off it | `RECOMP_NX_GL_CORE=-1` |
 | `getenv` out of hot paths (it ran on every kernel call and every untranslated instruction) | |
 | Pushbuffer methods that only update the register shadow are learned and skip the method switch | |
 | Statistics about unhandled methods only on request | `RECOMP_PB_UNHANDLED=1` |
@@ -71,6 +75,7 @@ On the Switch the game now runs into a plain CPU limit: in the dense city at the
 
 - `MC3_PERF=10`: a report every 10 s, now with the GL thread's time (idle, draws, µs per draw, texture work, swap), the executor's waits (traps, flip stalls, vblank) and the CPU per thread.
 - `MC3_FENCE_STATS=1`: the game's waits for the GPU by caller.
+- `RECOMP_YIELD_STATS=1`: where the game's main thread yields in poll loops.
 - `MC3_PROF=1`: a sampling profiler on the Switch (`prof.bin`, `prof_threads.txt`); `tools/prof_nx.py` and `tools/prof_lines.py` name the hot functions and source lines against the build's ELF.
 - The log goes to the SD card also when the game is started over nxlink.
 
