@@ -158,6 +158,10 @@ volatile uint32_t g_icall_trace[16]; volatile uint32_t g_icall_trace_idx;
 volatile uint64_t g_icall_count;
 ptrdiff_t g_xbox_mem_offset;
 void recomp_icall_fail_log(uint32_t va) { (void)va; }
+/* An instruction the lifter has no translation for: a no-op that the
+ * comparison then shows as a mismatch, rather than a harness that fails to
+ * link and hides every other case. */
+void recomp_unimpl(const char *what, uint32_t va) { (void)what; (void)va; }
 
 extern unsigned int g_in_a, g_in_b;
 extern unsigned int g_out_eax;
@@ -341,6 +345,8 @@ def harness_source(prepared, why_of, tol_of):
     uint32_t _fa = 0, _fb = 0; int32_t _fas = 0, _fbs = 0;
     (void)ebp; (void)_cf; (void)_flags;
     (void)_fa; (void)_fb; (void)_fas; (void)_fbs;
+    double _fca = 0.0, _fcb = 0.0;      /* comiss/ucomiss operands, as translator.py declares them */
+    (void)_fca; (void)_fcb;
 {_LIFTED_PROLOGUE[kind]}
     g_esp = (uint32_t)(uintptr_t)(g_guest_stack + sizeof(g_guest_stack) / 2);
 {body}

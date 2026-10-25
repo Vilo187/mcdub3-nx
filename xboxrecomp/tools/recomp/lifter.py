@@ -628,23 +628,33 @@ def _make_condition(jcc, flag_setter, flag_ops):
         )
         desc = f"{desc} ({void_a} vs {void_b})" if desc else desc
         a, b = "_fca", "_fcb"
-        # comiss uses unsigned condition codes (CF, ZF)
+        # comiss/ucomiss set ZF, PF, CF to 1,1,1 when either operand is a NaN
+        # (unordered), and the unsigned condition codes read those flags. A
+        # plain C compare is false for every relation with a NaN, which is
+        # right for ja/jae (CF=0 asked: false when unordered) but wrong for
+        # jb/jbe/je, which are TRUE on the hardware when unordered, for jne
+        # (false), and for jp/jnp, which are exactly "unordered" / "ordered"
+        # -- they were hard-wired to never / always. MSVC compiles if (a > b)
+        # as comiss a,b; jbe else: with a NaN the console takes the else
+        # branch, the lifted code took the then branch (MC3 Remix's SSE
+        # camera and physics, 2026-10-25; conformance sse_comiss_*).
+        un = f"({a} != {a} || {b} != {b})"
         if jcc in ("ja", "jnbe"):
             return f"({a} > {b})", desc
         if jcc in ("jae", "jnb", "jnc"):
             return f"({a} >= {b})", desc
         if jcc in ("jb", "jnae", "jc"):
-            return f"({a} < {b})", desc
+            return f"({a} < {b} || {un})", desc
         if jcc in ("jbe", "jna"):
-            return f"({a} <= {b})", desc
+            return f"({a} <= {b} || {un})", desc
         if jcc in ("je", "jz"):
-            return f"({a} == {b})", desc
+            return f"({a} == {b} || {un})", desc
         if jcc in ("jne", "jnz"):
-            return f"({a} != {b})", desc
-        if jcc == "jp":
-            return f"0 /* {jcc}: unordered/NaN */", desc
-        if jcc == "jnp":
-            return f"1 /* {jcc}: ordered */", desc
+            return f"({a} < {b} || {a} > {b})", desc
+        if jcc in ("jp", "jpe"):
+            return f"{un}", desc
+        if jcc in ("jnp", "jpo"):
+            return f"(!{un})", desc
         return None
 
     # SF is the sign bit of the result at the OPERAND's width, not at 32 bits.
@@ -1603,11 +1613,16 @@ class Lifter:
             else:
                 address = "ebx + LO8(eax)"
             return [f"SET_LO8(eax, MEM8({address})); /* xlatb */"]
+        # The parity forms are what MSVC's SSE code asks after ucomiss:
+        # "was it unordered (a NaN)?" (setp/jp). They were missing, so setp
+        # after a compare was an unimplemented no-op (2026-10-25).
         if m in ("sete", "setne", "setb", "setae", "setbe", "seta",
-                 "setl", "setge", "setle", "setg", "sets", "setns"):
+                 "setl", "setge", "setle", "setg", "sets", "setns",
+                 "setp", "setnp", "setpe", "setpo"):
             return self._lift_setcc(insn, ops, m)
         if m in ("cmove", "cmovne", "cmovb", "cmovae", "cmovbe", "cmova",
-                 "cmovl", "cmovge", "cmovle", "cmovg", "cmovs", "cmovns"):
+                 "cmovl", "cmovge", "cmovle", "cmovg", "cmovs", "cmovns",
+                 "cmovp", "cmovnp", "cmovpe", "cmovpo"):
             return self._lift_cmovcc(insn, ops, m)
 
         # ── SSE (scalar float) ──
@@ -3897,7 +3912,7 @@ def lift_basic_block(lifter, bb, flag_state=None):
 
         if (curr.mnemonic in ("sete", "setne", "setb", "setae", "setbe",
                               "seta", "setl", "setge", "setle", "setg",
-                              "sets", "setns")
+                              "sets", "setns", "setp", "setnp", "setpe", "setpo")
                 and last_flag_setter and len(curr.operands) >= 1):
             cond = _make_setcc_value(
                 curr.mnemonic, last_flag_setter, last_flag_ops)
