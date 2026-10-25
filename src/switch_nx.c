@@ -220,10 +220,23 @@ static void log_open(void)
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stderr, NULL, _IONBF, 0);
     s_writer_on = 1;
-    /* Core 2, low priority: off the game's cores, never ahead of them. */
-    if (R_FAILED(threadCreate(&s_writer, log_writer, NULL, NULL, 0x4000, 0x3B, 2))
+    /* Core 2, low priority: off the game's cores, never ahead of them --
+     * except in a measuring run (MC3_PERF): a hang in a race (2026-10-25)
+     * left no line at all, not even the perf thread's, so the log has to
+     * keep going while something spins above priority 59 (the interrupt
+     * and APU threads run at 0x2C). The writer sleeps between 200 ms
+     * blocks, so 0x28 costs the game little. */
+    if (R_FAILED(threadCreate(&s_writer, log_writer, NULL, NULL, 0x4000,
+                              getenv("MC3_PERF") ? 0x28 : 0x3B, 2))
             || R_FAILED(threadStart(&s_writer)))
         s_writer_on = 0;                /* still works: full ring drains inline */
+}
+
+/* The calling thread above the interrupt and APU threads (0x2C), for the
+ * diagnostics that must keep running through a hang (MC3_PERF's report). */
+void switch_raise_thread(void)
+{
+    svcSetThreadPriority(CUR_THREAD_HANDLE, 0x28);
 }
 
 /* The crash path: the faulting thread may hold a log lock, so no locks --

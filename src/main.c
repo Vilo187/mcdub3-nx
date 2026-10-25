@@ -78,6 +78,7 @@ static int setenv(const char *name, const char *value, int overwrite)
 void switch_boot(void);
 void switch_shutdown(void);
 void switch_error_dialog(const char *msg);
+void switch_raise_thread(void);
 #  define MC3_DEFAULT_GAME_DIR "sdmc:/switch/" MC3_SD_DIR "/game"
 #  define MC3_DEFAULT_SAVE_DIR "sdmc:/switch/" MC3_SD_DIR "/save"
 #else
@@ -343,6 +344,12 @@ static void gil_sample_report(void)
 static void *perf_thread(void *arg)
 {
     double secs = *(double *)arg;
+#if defined(__SWITCH__)
+    /* Above the interrupt and APU threads (0x2C): the report has to come
+     * through when a hang keeps every core busy -- that is when it is
+     * wanted. It sleeps between reports. */
+    switch_raise_thread();
+#endif
     for (;;) {
         long long wait_us, long_waits;
         char pace[320];
