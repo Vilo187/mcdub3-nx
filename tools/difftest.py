@@ -330,7 +330,56 @@ def main():
               % (va, xv, lv, pc, f or 0, sec, syms.ident.get(f, ""), txt))
         seen_pc.add(pc)
     print("\n%d distinct writing instruction(s) above; inspect their lifted C in work/gen" % len(seen_pc))
+    if os.environ.get("DIFFTEST_ORDER") == "time":
+        report_by_time(before, after, syms, ordinals, md)
     return 1
+
+
+def report_by_time(before, after, syms, ordinals, md):
+    """DIFFTEST_ORDER=time: the differing bytes in the order the x86 replay
+    last wrote them. The earliest is closest to the cause; the rest are
+    usually its consequences. Bytes below the stack pointer the call
+    returns with (dead frames of callees, saved ebp) are left out."""
+    esp_end = after["gpr"][4]
+    esp_lo = esp_end - 0x10000
+    uc, state = make_emulator(before, syms, ordinals, [])
+    lastw = {}
+    n = [0]
+
+    def on_code(uc_, addr, size, _):
+        n[0] += 1
+    def on_write(uc_, access, addr, size, value, _):
+        pc = uc_.reg_read(UC_X86_REG_EIP)
+        for k in range(size):
+            lastw[addr + k] = (n[0], pc)
+    uc.hook_add(UC_HOOK_CODE, on_code)
+    uc.hook_add(UC_HOOK_MEM_WRITE, on_write)
+    run(before, uc, state)
+    rows = []
+    for (va, b), (_, a) in zip(before["regions"], after["regions"]):
+        x86 = np.frombuffer(bytes(uc.mem_read(va, len(b))), dtype=np.uint8)
+        for i in np.nonzero((x86 != a) & (x86 != b))[0]:
+            addr = va + int(i)
+            if esp_lo <= addr < esp_end:
+                continue
+            w = lastw.get(addr)
+            if w:
+                rows.append((w[0], addr, w[1], int(x86[i]), int(a[i])))
+    rows.sort()
+    print("\n== differing bytes in the order x86 last wrote them (live memory only)")
+    seen = set()
+    for t, addr, pc, xv, lv in rows:
+        key = (pc, addr & ~3)
+        if key in seen:
+            continue
+        seen.add(key)
+        sec, f = syms.where(pc)
+        ins = next(md.disasm(bytes(uc.mem_read(pc, 16)), pc), None)
+        txt = "%s %s" % (ins.mnemonic, ins.op_str) if ins else "?"
+        print("   #%-9d 0x%08X x86=%02X lifted=%02X  at 0x%08X in sub_%08X: %s"
+              % (t, addr, xv, lv, pc, f or 0, txt))
+        if len(seen) >= 40:
+            break
 
 
 if __name__ == "__main__":

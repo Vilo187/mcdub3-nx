@@ -1345,6 +1345,135 @@ void sub_000847B0(void)
     }
 }
 
+/* ── Race cameras, traced and capturable ──
+ *
+ * The camera classes (camTrackCS, camPolarCS, camPovCS, camPointCS; their
+ * vtables in .rdata at 0x00476500-0x00476E40 and 0x004A4200-0x004A4E60)
+ * share a 15-slot layout; wrapped here are their own methods (slots 3, 4,
+ * 8-10, 13, 14) and the camera base's (sub_001383F0 tune/camera,
+ * sub_00138470 CameraFOV, sub_00138510). The DUB Edition's are x87, the
+ * Remix's SSE.
+ *
+ * MC3_CAM_TRACE=1: once a second, each method called that second, how
+ * often, and its object and vtable (which class is active).
+ * MC3_DIFFTEST_CALL=key (src/difftest.c): F10 captures the next call of
+ * each, for tools/difftest.py. */
+extern void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls);
+
+#define CAM_N 36
+static uint32_t cam_addr[CAM_N], cam_this[CAM_N];
+static long cam_calls[CAM_N], cam_count[CAM_N];
+
+static void cam_call(int slot, uint32_t addr, void (*lifted)(void))
+{
+    static int on = -1;
+    static time_t last;
+    time_t now;
+    int i;
+    if (on < 0) {
+        const char *e = getenv("MC3_CAM_TRACE");
+        on = e && e[0] == '1';
+    }
+    if (on) {
+        cam_addr[slot] = addr;
+        cam_this[slot] = g_ecx;
+        cam_count[slot]++;
+        now = time(NULL);
+        if (now != last) {
+            for (i = 0; i < CAM_N; i++)
+                if (cam_count[i]) {
+                    uint32_t t = cam_this[i];
+                    uint32_t vt = (t >= 0x10000u && t < 0x08000000u) || (t >= 0x80000000u && t < 0x84000000u) ? MEM32(t) : 0;
+                    fprintf(stderr, "[CAM] sub_%08X x%ld this=%08X vtable=%08X\n",
+                            cam_addr[i], cam_count[i], cam_this[i], vt);
+                    cam_count[i] = 0;
+                }
+            fprintf(stderr, "[CAM] --\n");
+            last = now;
+        }
+    }
+    mc3_difftest_call(addr, lifted, &cam_calls[slot]);
+}
+
+extern void sub_000AF930_gen(void);
+void sub_000AF930(void) { cam_call(0, 0x000AF930u, sub_000AF930_gen); }
+extern void sub_001383F0_gen(void);
+void sub_001383F0(void) { cam_call(1, 0x001383F0u, sub_001383F0_gen); }
+extern void sub_00138470_gen(void);
+void sub_00138470(void) { cam_call(2, 0x00138470u, sub_00138470_gen); }
+extern void sub_00138510_gen(void);
+void sub_00138510(void) { cam_call(3, 0x00138510u, sub_00138510_gen); }
+extern void sub_001E28A0_gen(void);
+void sub_001E28A0(void) { cam_call(4, 0x001E28A0u, sub_001E28A0_gen); }
+extern void sub_002CDDE0_gen(void);
+void sub_002CDDE0(void) { cam_call(5, 0x002CDDE0u, sub_002CDDE0_gen); }
+extern void sub_002CE2E0_gen(void);
+void sub_002CE2E0(void) { cam_call(6, 0x002CE2E0u, sub_002CE2E0_gen); }
+extern void sub_002CE300_gen(void);
+void sub_002CE300(void) { cam_call(7, 0x002CE300u, sub_002CE300_gen); }
+extern void sub_002CE650_gen(void);
+void sub_002CE650(void) { cam_call(8, 0x002CE650u, sub_002CE650_gen); }
+extern void sub_002CF080_gen(void);
+void sub_002CF080(void) { cam_call(9, 0x002CF080u, sub_002CF080_gen); }
+extern void sub_002CF4A0_gen(void);
+void sub_002CF4A0(void) { cam_call(10, 0x002CF4A0u, sub_002CF4A0_gen); }
+extern void sub_002CF6C0_gen(void);
+void sub_002CF6C0(void) { cam_call(11, 0x002CF6C0u, sub_002CF6C0_gen); }
+extern void sub_002CF710_gen(void);
+void sub_002CF710(void) { cam_call(12, 0x002CF710u, sub_002CF710_gen); }
+extern void sub_002CF760_gen(void);
+void sub_002CF760(void) { cam_call(13, 0x002CF760u, sub_002CF760_gen); }
+extern void sub_002CF970_gen(void);
+void sub_002CF970(void) { cam_call(14, 0x002CF970u, sub_002CF970_gen); }
+extern void sub_002CFED0_gen(void);
+void sub_002CFED0(void) { cam_call(15, 0x002CFED0u, sub_002CFED0_gen); }
+extern void sub_002CFF50_gen(void);
+void sub_002CFF50(void) { cam_call(16, 0x002CFF50u, sub_002CFF50_gen); }
+extern void sub_002CFF60_gen(void);
+void sub_002CFF60(void) { cam_call(17, 0x002CFF60u, sub_002CFF60_gen); }
+extern void sub_002D01C0_gen(void);
+void sub_002D01C0(void) { cam_call(18, 0x002D01C0u, sub_002D01C0_gen); }
+extern void sub_00354C90_gen(void);
+void sub_00354C90(void) { cam_call(19, 0x00354C90u, sub_00354C90_gen); }
+extern void sub_00355140_gen(void);
+void sub_00355140(void) { cam_call(20, 0x00355140u, sub_00355140_gen); }
+extern void sub_00355170_gen(void);
+void sub_00355170(void) { cam_call(21, 0x00355170u, sub_00355170_gen); }
+extern void sub_00357410_gen(void);
+void sub_00357410(void) { cam_call(22, 0x00357410u, sub_00357410_gen); }
+extern void sub_00357960_gen(void);
+void sub_00357960(void) { cam_call(23, 0x00357960u, sub_00357960_gen); }
+extern void sub_00357D10_gen(void);
+void sub_00357D10(void) { cam_call(24, 0x00357D10u, sub_00357D10_gen); }
+extern void sub_00357FF0_gen(void);
+void sub_00357FF0(void) { cam_call(25, 0x00357FF0u, sub_00357FF0_gen); }
+extern void sub_003580C0_gen(void);
+void sub_003580C0(void) { cam_call(26, 0x003580C0u, sub_003580C0_gen); }
+extern void sub_00358110_gen(void);
+void sub_00358110(void) { cam_call(27, 0x00358110u, sub_00358110_gen); }
+extern void sub_00362200_gen(void);
+void sub_00362200(void) { cam_call(28, 0x00362200u, sub_00362200_gen); }
+extern void sub_00363030_gen(void);
+void sub_00363030(void) { cam_call(29, 0x00363030u, sub_00363030_gen); }
+extern void sub_003635D0_gen(void);
+void sub_003635D0(void) { cam_call(30, 0x003635D0u, sub_003635D0_gen); }
+extern void sub_003636A0_gen(void);
+void sub_003636A0(void) { cam_call(31, 0x003636A0u, sub_003636A0_gen); }
+
+/* The race's per-frame path down to the cameras (from the stack of a
+ * capture in the spin, 2026-10-25): sub_00198E90 (world update) ->
+ * sub_002BDEC0 (player) -> sub_002C1520 (the player's camera control)
+ * -> sub_002C5B30 -> the camera's update. Wrapped for the census and for
+ * MC3_DIFFTEST_FUNC=198E90,2BDEC0,2C1520,2C5B30. */
+extern void sub_00198E90_gen(void);
+void sub_00198E90(void) { cam_call(32, 0x00198E90u, sub_00198E90_gen); }
+extern void sub_002BDEC0_gen(void);
+void sub_002BDEC0(void) { cam_call(33, 0x002BDEC0u, sub_002BDEC0_gen); }
+extern void sub_002C1520_gen(void);
+void sub_002C1520(void) { cam_call(34, 0x002C1520u, sub_002C1520_gen); }
+extern void sub_002C5B30_gen(void);
+void sub_002C5B30(void) { cam_call(35, 0x002C5B30u, sub_002C5B30_gen); }
+
 /* ── Manual function overrides ─────────────────────────────── */
 
 /*

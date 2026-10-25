@@ -23,6 +23,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <sys/stat.h>
 #ifdef _WIN32
 #include <direct.h>
@@ -86,10 +87,89 @@ static void within_init(void)
     }
 }
 
+/* MC3_DIFFTEST_CALL=key: capture on demand, from a run played by hand.
+ * After F10, the next call of each wrapped function (MC3_DIFFTEST_FUNC=all,
+ * or addresses: 2BDEC0,2C1520) is captured once; the run ends 2-3 s later or after 16
+ * captures. Desktop builds only (the SDL keyboard). */
+#if !defined(__SWITCH__)
+int xbox_sdl_keyboard_down(int scancode);
+#define DIFFTEST_KEY 67                     /* SDL_SCANCODE_F10 */
+#endif
+
+static int key_mode(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("MC3_DIFFTEST_CALL");
+        on = e && strcmp(e, "key") == 0;
+        if (on)
+            fprintf(stderr, "[DIFFTEST] armed by key: press F10 to capture the next call of %s\n",
+                    getenv("MC3_DIFFTEST_FUNC") ? getenv("MC3_DIFFTEST_FUNC") : "every wrapped function");
+    }
+    return on;
+}
+
+static int key_call(uint32_t func, void (*lifted)(void), long *calls)
+{
+#if defined(__SWITCH__)
+    (void)func; (void)calls;
+    lifted();
+    return 1;
+#else
+    static uint32_t done[16];
+    static int ndone;
+    static time_t armed_at;
+    const char *want = getenv("MC3_DIFFTEST_FUNC");
+    int i, all = !want || !*want || strcmp(want, "all") == 0;
+    int listed = all;
+
+    (*calls)++;
+    if (!armed_at && xbox_sdl_keyboard_down(DIFFTEST_KEY)) {
+        armed_at = time(NULL);
+        fprintf(stderr, "[DIFFTEST] F10: capturing\n");
+    }
+    if (!all) {                             /* "2BDEC0,2C1520": a list */
+        const char *p = want;
+        while (*p && !listed) {
+            char *end;
+            if ((uint32_t)strtoul(p, &end, 16) == func)
+                listed = 1;
+            p = *end == ',' ? end + 1 : end + (*end != 0);
+        }
+    }
+    if (!armed_at || !listed) {
+        lifted();
+        return 1;
+    }
+    for (i = 0; i < ndone; i++)
+        if (done[i] == func)
+            break;
+    if (i < ndone || ndone == 16) {
+        lifted();
+    } else {
+        done[ndone++] = func;
+        mc3_difftest_capture("before", func, *calls);
+        lifted();
+        mc3_difftest_capture("after", func, *calls);
+    }
+    if (ndone == 16 || time(NULL) - armed_at >= 3) {
+        fprintf(stderr, "[DIFFTEST] %d function(s) captured; ending the run\n", ndone);
+        fflush(stderr);
+        exit(0);
+    }
+    return 1;
+#endif
+}
+
 void mc3_difftest_call(uint32_t func, void (*lifted)(void), long *calls)
 {
-    long want = mc3_difftest_wanted();
+    long want;
 
+    if (key_mode()) {
+        key_call(func, lifted, calls);
+        return;
+    }
+    want = mc3_difftest_wanted();
     within_init();
     if (s_within_func && func == s_within_func) {
         (*calls)++;
@@ -124,7 +204,7 @@ long mc3_difftest_wanted(void)
     static long want = -1;
     if (want < 0) {
         const char *e = getenv("MC3_DIFFTEST_CALL");
-        want = e ? atol(e) : 0;
+        want = e && strcmp(e, "key") != 0 ? atol(e) : 0;
     }
     return want;
 }
