@@ -26,8 +26,10 @@ Keep this file current: findings, rules, status. It is the project's memory.
   upstream also change (ADR 0002). Note upstreamable fixes in
   docs/upstream.md (patch or issue, and which upstream: xboxrecomp or nfsu2-sw).
 - nfsu2-sw's `src/` is unlicensed: read it for ideas, don't copy it.
-- Upstream merges are deliberate (`git merge -X subtree=xboxrecomp
-  xboxrecomp-upstream/main`), never routine.
+- The toolkit is our fork without upstream history (ADR 0007): take an
+  upstream fix as a patch (`git format-patch` upstream, `git am
+  --directory=xboxrecomp` here), committed in our name with the original
+  author credited in the message. Deliberately, never routinely.
 - After toolkit header changes (`templates/runtime/recomp_types.h`), regen:
   it rewrites `gen/recomp_types.h`. Then rebuild all generated code.
 - Every seed added to `config/<game>/seed_functions.json` gets a note, and is
@@ -333,7 +335,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   unported -- port_overrides.py reads 6-8 digits now; (2) fault parsing
   tune/progress/unlockingrules.csv: the cell converter 0x0028B850 (vtable
   method after a switch's tables) was split into ten fragments by the
-  gap-prologue pass -- toolkit fix b869261 (padding after switch tables is
+  gap-prologue pass -- toolkit fix 15dcf3d (padding after switch tables is
   a boundary; DUB's lift changed too, still plays); (3) XACT's DSP command
   wait: the doorbell (DirectSound's command block + 0x810) moves with the
   allocations -- 0x83B10000 widescreen, 0x83A5C000 4:3 in the Remix -- so
@@ -349,7 +351,7 @@ in nfsu2-sw's README (Configuration section); the toolkit is the same.
   short because Bink's audio decoder sub_003AE8C0 was split by a false
   start at 0x003AEA35 (data in XGRPH's tail decoded as a call to it).
   Excluded in config/remix/not_functions.json (toolkit --exclude-functions,
-  644931a). (6) seeds 0x0013A770, 0x0016F9C0, 0x0018F9D0 (gap functions
+  9d7a8a4). (6) seeds 0x0013A770, 0x0016F9C0, 0x0018F9D0 (gap functions
   reached only through pointers; the first two are the DUB seeds
   0x00123420 / 0x00157850's twins). The Remix then plays its boot movies
   and reaches the title screen (PRESS START, city flythrough) at 30 fps.

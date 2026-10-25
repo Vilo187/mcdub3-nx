@@ -1,5 +1,9 @@
 # 2. Vendor the toolkit as our own snapshot, layered by origin
 
+Superseded in part by [0007](0007-toolkit-fork-without-upstream-history.md)
+(2026-10-25): the history is no longer imported and the subtree merge
+below no longer applies; the layers stay as described.
+
 Date: 2026-10-11
 
 ## Context
@@ -45,10 +49,10 @@ generic fixes upstream; the less we carry alone, the cheaper each merge.
 
 | Upstream | Ours | Why |
 |---|---|---|
-| 21d9ce7 Lift switch tables whose displacement is not slot 0 | 93f790f | jump tables inside CRT/XDK routines lifted as calls to non-functions (MC3: memmove, XNet checksum) |
-| c576d24 Measure jump tables down from the displacement | 4c55998 | same bug class, disassembler side |
-| 85d4f30 (#173) Lift arms that follow their inline jump tables | 8946896 | tables placed after the function's code (XNet checksum at 0x003A7F90) |
-| f4e3186 (#134) Lifter: a table counted down from its last slot keeps that slot | 8046d71 | completes c576d24 |
+| 21d9ce7 Lift switch tables whose displacement is not slot 0 | dc8be7d | jump tables inside CRT/XDK routines lifted as calls to non-functions (MC3: memmove, XNet checksum) |
+| c576d24 Measure jump tables down from the displacement | aa5f978 | same bug class, disassembler side |
+| 85d4f30 (#173) Lift arms that follow their inline jump tables | 8fc4bd7 | tables placed after the function's code (XNet checksum at 0x003A7F90) |
+| f4e3186 (#134) Lifter: a table counted down from its last slot keeps that slot | e06ca81 | completes c576d24 |
 
 Imported with `git format-patch -- tools | git am --directory=xboxrecomp`,
 original authors kept. A later full upstream merge sees the same changes.
