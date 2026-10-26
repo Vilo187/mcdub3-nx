@@ -558,7 +558,7 @@ enum {
     T_CAREER_ONLY, T_FREECAM_HELP, T_NA,
     T_WORLD, T_TRAFFIC, T_PEDS, T_PROPS, T_WEATHER, T_SPEED, T_DEV, T_DEVMENUS, T_COPS,
     T_SKIPINTRO, T_W_GAME, T_W_CLEAR, T_W_CLOUDY, T_W_RAINY, T_NEXTLOAD, T_VEHICLE,
-    T_FRAMERATE, T_FR_30, T_FR_60DRIVE, T_FR_60ALL, T_COUNT
+    T_FRAMERATE, T_FR_30, T_FR_60DRIVE, T_FR_60ALL, T_APPLYVEH, T_GARAGE_FAIL, T_COUNT
 };
 
 static const char *const TXT_EN[T_COUNT] = {
@@ -572,6 +572,7 @@ static const char *const TXT_EN[T_COUNT] = {
     "Developer Menus", "Cops Everywhere", "Skip Intro Movies", "Game's Choice", "Clear",
     "Cloudy", "Rain", "From the next race or city load", "Vehicle",
     "Frame Rate", "30 FPS", "60 FPS Driving", "60 FPS Always",
+    "Apply Vehicle Now (via Garage)", "The pause menu did not answer",
 };
 
 static const char *const TXT_DE[T_COUNT] = {
@@ -585,6 +586,7 @@ static const char *const TXT_DE[T_COUNT] = {
     "Entwicklermenüs", "Überall Polizei", "Intro-Videos überspringen", "Wie im Spiel", "Klar",
     "Bewölkt", "Regen", "Ab dem nächsten Rennen oder Stadtladen", "Fahrzeug",
     "Bildrate", "30 FPS", "60 FPS beim Fahren", "60 FPS immer",
+    "Fahrzeug jetzt laden (über Garage)", "Das Pausenmenü hat nicht reagiert",
 };
 
 static const char *const *s_txt = TXT_EN;
@@ -600,7 +602,7 @@ enum {
     IT_RES, IT_FXAA, IT_SHARPEN, IT_ANISO, IT_SAVE,
     IT_UNLOCK, IT_MONEY, IT_ADDMONEY,
     IT_WORLD, IT_DEV, IT_TRAFFIC, IT_PEDS, IT_PROPS, IT_WEATHER, IT_SPEED,
-    IT_DEVMENUS, IT_COPS, IT_SKIPINTRO, IT_VEHICLE, IT_FRAMERATE,
+    IT_DEVMENUS, IT_COPS, IT_SKIPINTRO, IT_VEHICLE, IT_FRAMERATE, IT_APPLYVEH,
 };
 
 static const int SPEEDS[] = { 100, 75, 50, 25 };
@@ -614,6 +616,7 @@ static int  s_page, s_sel;
 static char s_toast[96];
 static double s_toast_until;
 static int  s_freecam;              /* mc3_freecam.c owns the camera */
+static int  s_macro = -1;           /* the garage round trip's step, -1 when idle */
 
 
 static double now_s(void)
@@ -639,6 +642,8 @@ static int page_items(int page, int *out)
         out[n++] = IT_FREECAM;
         out[n++] = IT_FPS;
         out[n++] = IT_VEHICLE;
+        if (mc3_in_career() && mc3_game_paused())
+            out[n++] = IT_APPLYVEH;
         out[n++] = IT_WORLD;
         out[n++] = IT_GRAPHICS;
         out[n++] = IT_DEV;
@@ -693,6 +698,7 @@ static const char *item_label(int it)
     case IT_SKIPINTRO: return T(T_SKIPINTRO);
     case IT_VEHICLE: return T(T_VEHICLE);
     case IT_FRAMERATE: return T(T_FRAMERATE);
+    case IT_APPLYVEH: return T(T_APPLYVEH);
     }
     return "";
 }
@@ -824,6 +830,12 @@ static void item_act(int it, int dir)
         s_vehicle = (s_vehicle + (dir < 0 ? NVEHICLES : 1)) % (NVEHICLES + 1);
         toast(T(T_NEXTLOAD));
         break;
+    case IT_APPLYVEH:
+        if (!dir && mc3_in_career() && mc3_game_paused()) {
+            s_open = 0;
+            s_macro = 0;
+        }
+        break;
     case IT_UNLOCK: S.unlock = !S.unlock; apply_cheats(); break;
     case IT_MONEY: S.money = !S.money; apply_cheats(); break;
     case IT_ADDMONEY:
@@ -928,6 +940,96 @@ static void menu_input(unsigned press, unsigned held, double t)
     }
 }
 
+/* "Apply Vehicle Now": a car is only built when the game loads the city,
+ * so the pad goes the way a player would: the pause menu closed and opened
+ * again (which puts it on its first entry), up twice onto "Go to Garage"
+ * (the second-last entry; the menu wraps and has 5 or 6 entries) and Yes;
+ * in the garage (game mode 5) Back, Yes, and the city loads with the chosen
+ * car. A press lost in the garage leaves its question on No: harmless.
+ * Each step waits (-1: until the garage has been up for 10 s, past its intro),
+ * presses its buttons for 0.25 s and, where it has one, waits for the pause
+ * menu to be shown (1) or gone (0), pressing again every 2.5 s (the game
+ * drops a Start soon after the last one). */
+static const struct { float wait; unsigned keys; int paused; } MACRO[] = {
+    { 0.3f, K_START, 0 },                               /* resume */
+    { 1.0f, K_START, 1 },                               /* pause: on "Continue" */
+    { 1.5f, K_UP, -1 }, { 1.0f, K_UP, -1 },             /* "Go to Garage" */
+    { 1.0f, K_A, 0 },                                   /* its question replaces the menu */
+    { 1.5f, K_UP, -1 }, { 1.0f, K_A, -1 },              /* Yes (the answer starts on No) */
+    { -1.0f, K_B, -1 },                                 /* "Exit the garage?" */
+    { 2.0f, K_UP, -1 }, { 1.5f, K_A, -1 },              /* Yes */
+};
+#define NMACRO ((int)(sizeof MACRO / sizeof MACRO[0]))
+#define MACRO_RETRY 2.5
+#define MACRO_TRIES 4
+#define MACRO_GARAGE_TIMEOUT 120.0
+
+static void macro_input(XBOX_INPUT_STATE *st, double t)
+{
+    static double at, pressed_at, garage_since;
+    static int pressed, tries;
+    pad_clear(st);
+    if (!at && !pressed)
+        at = t + (MACRO[s_macro].wait < 0 ? 0 : MACRO[s_macro].wait);
+    if (!pressed && MACRO[s_macro].wait < 0) {
+        if (mc3_rd32(MC3_GAME_MODE) != MC3_MODE_CAREER_GARAGE) {
+            garage_since = 0;
+            if (t - at > MACRO_GARAGE_TIMEOUT) {
+                fprintf(stderr, "[EXTRAS] garage round trip: no garage\n");
+                s_macro = -1;
+                at = 0;
+            }
+            return;
+        }
+        if (!garage_since)
+            garage_since = t;
+        if (t - garage_since < 10.0)
+            return;
+        garage_since = 0;
+        pressed = 1;
+        pressed_at = t;
+        return;
+    }
+    if (pressed) {
+        int want = MACRO[s_macro].paused;
+        if (t < pressed_at + 0.25) {
+            unsigned k = MACRO[s_macro].keys;
+            if (k & K_START) st->Gamepad.wButtons |= XBOX_GAMEPAD_START;
+            if (k & K_UP) st->Gamepad.wButtons |= XBOX_GAMEPAD_DPAD_UP;
+            if (k & K_A) st->Gamepad.bAnalogButtons[0] = 255;
+            if (k & K_B) st->Gamepad.bAnalogButtons[1] = 255;
+            return;
+        }
+        if (want >= 0 && mc3_game_paused() != want) {
+            if (t < pressed_at + MACRO_RETRY)
+                return;
+            if (++tries >= MACRO_TRIES) {
+                fprintf(stderr, "[EXTRAS] garage round trip: step %d got no answer\n", s_macro);
+                toast(T(T_GARAGE_FAIL));
+                s_macro = -1;
+                pressed = 0;
+                at = 0;
+                return;
+            }
+            pressed_at = t;             /* press again */
+            return;
+        }
+        pressed = 0;
+        tries = 0;
+        if (++s_macro >= NMACRO) {
+            s_macro = -1;
+            at = 0;
+            return;
+        }
+        at = t + (MACRO[s_macro].wait < 0 ? 0 : MACRO[s_macro].wait);
+        return;
+    }
+    if (t >= at) {
+        pressed = 1;
+        pressed_at = t;
+    }
+}
+
 /* The toolkit's input filter: every pad report before the game reads it. */
 void xbox_input_filter(DWORD port, XBOX_INPUT_STATE *st)
 {
@@ -949,7 +1051,9 @@ void xbox_input_filter(DWORD port, XBOX_INPUT_STATE *st)
     apply_cheats();
     world_apply(0);
     time_apply();
-    if (s_freecam && !s_open) {
+    if (s_macro >= 0) {
+        macro_input(st, t);
+    } else if (s_freecam && !s_open) {
         /* The camera takes the pad; B (or Start) ends it, back in the pause
          * menu it was started from. */
         if (press & (K_B | K_START)) {
@@ -984,7 +1088,7 @@ void xbox_input_filter(DWORD port, XBOX_INPUT_STATE *st)
     }
     /* The button that closed the menu stays away from the game until it is
      * let go: B would otherwise also close the pause menu below. */
-    if (swallow) {
+    if (swallow && s_macro < 0) {
         if (k & (K_A | K_B | K_START))
             pad_clear(st);
         else

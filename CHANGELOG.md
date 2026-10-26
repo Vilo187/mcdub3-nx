@@ -46,6 +46,7 @@ On the Switch the game now runs into a plain CPU limit: in the dense city at the
 
 | Change | Setting |
 | --- | --- |
+| D3D's vertex transform used by the game everywhere (`sub_000818F0`, vector × 4x4 matrix on the emulated x87): native code instead of the lifted x87 stack | `MC3_NATIVE_XFORM=0` |
 | The game's timer thread polled with `Sleep(0)` in a loop (41% of the CPU on Linux); now sleeps | `MC3_TIMER_SLEEP_MS=0` |
 | D3D's vblank handler spun under the guest lock until the emulation acknowledged it; acknowledged at once | `MC3_VBLANK_ACK=0` |
 | The guest lock wakes waiters only when someone waits (every broadcast is a system call on Horizon) | |
@@ -68,6 +69,7 @@ On the Switch the game now runs into a plain CPU limit: in the dense city at the
 ## Features
 
 - **Extras menu** (R3 in the pause menu, L3+R3 anywhere): free camera (the game's menus and HUD hidden while flying), frame rate counter, vehicle switcher with all 69 vehicles (including the police Impalas, the police motorcycle and Skully's chopper), world (traffic, pedestrians, props, weather, slow motion), graphics (frame rate mode, resolution, FXAA, sharpening, texture filtering), Rockstar's developer switches and, in career mode only, cheats (unlock all, infinite money, +$100,000). *Save Settings* writes to `mcdub3_env.txt`.
+- **Apply Vehicle Now (via Garage)** (career mode, from the pause menu): the new car without waiting for the next race. The game only builds a car when it loads the city, so Extras drives the pause menu like a player would (*Go to Garage*, Yes, then *Exit the garage*, Yes) and checks the pause menu's state between the steps.
 - **Mods folder** `mods/`: replacement disc files (`files/`, `packs/<name>/files/`), textures, the menu font and extra settings.
 - `MC3_ARGS`: Rockstar's 172 developer command-line parameters.
 
@@ -82,5 +84,5 @@ On the Switch the game now runs into a plain CPU limit: in the dense city at the
 ## Known limits
 
 - The free camera shows only the part of the city loaded around the car; flying further shows an empty city.
-- A vehicle change applies from the next race or garage exit.
+- A vehicle change applies from the next race or garage exit; in career mode *Apply Vehicle Now* makes that garage visit for you.
 - Upstream's work after v0.2.0 (the *Remix* edition, packaging) is not merged into this branch.

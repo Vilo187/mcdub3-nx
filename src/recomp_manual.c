@@ -1911,3 +1911,55 @@ void sub_001EDBE0(void)
                 n, MEMF(0x0047C3DCu), MEMF(0x0047C408u), MEM32(0x004FCF3Cu), MEMF(0x0047C3ECu),
                 MEMF(0x0047C400u), g_mc3_fps60);
 }
+
+/* ── A vector times a 4x4 matrix, natively ──
+ *
+ * sub_000818F0(out, v, m) (cdecl): out[i] = v . column i of m, the hottest
+ * function of MC3's main thread in a race on the console (6%). Lifted, every
+ * x87 operation goes through the emulated register stack in memory; here the
+ * same products and sums in the same order, in double as the emulation
+ * computes them, rounded to float at the store: the same results, bit for
+ * bit. MC3_NATIVE_XFORM=0: the lifted body. */
+extern void sub_000818F0_gen(void);
+void sub_000818F0(void)
+{
+    static int on = -1;
+    uint32_t out, v, m;
+    double v0, v1, v2, v3;
+    if (on < 0) {
+        const char *e = getenv("MC3_NATIVE_XFORM");
+        on = !(e && *e == '0');
+    }
+    if (!on) {
+        sub_000818F0_gen();
+        return;
+    }
+    out = MEM32(g_esp + 4);
+    v = MEM32(g_esp + 8);
+    m = MEM32(g_esp + 12);
+    v0 = MEMF(v); v1 = MEMF(v + 4); v2 = MEMF(v + 8); v3 = MEMF(v + 12);
+    {
+        /* Column 0 adds v2's term before v0's; the other three the reverse. */
+        double a0 = (double)MEMF(m + 0x30) * v3;
+        double a1 = (double)MEMF(m + 0x34) * v3;
+        double a2 = (double)MEMF(m + 0x38) * v3;
+        double a3 = (double)MEMF(m + 0x3C) * v3;
+        a0 += (double)MEMF(m + 0x10) * v1;
+        a1 += (double)MEMF(m + 0x14) * v1;
+        a2 += (double)MEMF(m + 0x18) * v1;
+        a3 += (double)MEMF(m + 0x1C) * v1;
+        a0 += (double)MEMF(m + 0x20) * v2;
+        a0 += v0 * (double)MEMF(m);
+        a1 += (double)MEMF(m + 0x04) * v0;
+        a1 += (double)MEMF(m + 0x24) * v2;
+        a2 += (double)MEMF(m + 0x08) * v0;
+        a2 += (double)MEMF(m + 0x28) * v2;
+        a3 += (double)MEMF(m + 0x0C) * v0;
+        a3 += (double)MEMF(m + 0x2C) * v2;
+        MEMF(out) = (float)a0;
+        MEMF(out + 4) = (float)a1;
+        MEMF(out + 8) = (float)a2;
+        MEMF(out + 12) = (float)a3;
+    }
+    g_esp += 4;                                /* ret: cdecl, the caller pops */
+}

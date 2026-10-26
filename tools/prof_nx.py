@@ -35,9 +35,10 @@ for l in open(thrf):
 raw = open(binf, 'rb').read()
 n = len(raw) // 12
 import os
-k0 = int(n * float(os.environ.get('FROM', '0')))   # FROM=0.7: the last 30% only
-raw = raw[k0 * 12:]
-n -= k0
+k0 = int(n * float(os.environ.get('FROM', '0')))   # FROM=0.7: from 70% on
+k1 = int(n * float(os.environ.get('TO', '1')))     # TO=0.9: up to 90%
+raw = raw[k0 * 12:k1 * 12]
+n = k1 - k0
 per = defaultdict(Counter)
 callers = defaultdict(lambda: defaultdict(Counter))
 for k in range(n):

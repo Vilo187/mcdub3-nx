@@ -48,7 +48,7 @@ Put **your own extracted copy** of the disc into the `game/` folder (`default.xb
 ### Known limits
 
 - The free camera shows only the part of the city that is loaded around the car.
-- A vehicle change applies from the next race or garage exit, not instantly.
+- A vehicle change in career mode applies at once through a quick garage visit (*Apply Vehicle Now*); elsewhere from the next race.
 
 The upstream README follows.
 
@@ -245,7 +245,7 @@ Press the **right stick (R3)** while the game is paused to open **Extras**: a me
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Free Camera        | Fly freely through the city while the game stands still. Left stick or d-pad: move, right stick (or d-pad left/right): look, LT/RT: down/up, A: faster, L3: slower, B: back to the pause menu. The game's menus and HUD are hidden while you fly. |
 | Frame Rate Counter | Frames per second and frame time in the top left corner.                                                                                                                                                        |
-| Vehicle            | Drive any of the game's 69 vehicles, including the ones career never sells: the police Impalas, the police motorcycle (`KWZ COP '98`), Skully's chopper, the Monster. Takes effect at the next race or garage exit; *Game's Choice* gives your own car back. |
+| Vehicle            | Drive any of the game's 69 vehicles, including the ones career never sells: the police Impalas, the police motorcycle (`KWZ COP '98`), Skully's chopper, the Monster. Takes effect at the next race or garage exit; *Game's Choice* gives your own car back. In career mode, *Apply Vehicle Now (via Garage)* does the garage visit for you: it opens the garage from the pause menu and drives out again, and you are back in the city in the new car (your progress in the current cruise is lost, as with the game's own *Go to Garage*). |
 | Frame Rate         | (Graphics page) *30 FPS* as the game was made, *60 FPS Driving* (60 while the world is on screen, menus and pause stay at 30) or *60 FPS Always* (menus then run twice as fast). The game's step follows the real frame time, so driving keeps its speed at any rate between 30 and 60. Needs a fast enough console: on the Switch realistically only with overclocking. |
 | World              | Traffic, pedestrians and street props on or off (fewer of them is also less work for the CPU), the weather (clear, cloudy, rain) and the game speed (slow motion: 75, 50 or 25%). From the next race or city load. |
 | Developer          | Rockstar's developer switches still in the game: developer menus, police everywhere, skipping the intro movies. After a restart. |
